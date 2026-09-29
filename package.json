@@ -1,0 +1,32 @@
+{
+  "name": "@asynchronous-ventures/scrawl-api",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Scrawl backend-first documentation platform foundation.",
+  "type": "module",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "dev": "node --env-file-if-exists=.env --import tsx --watch src/server.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node --env-file-if-exists=.env dist/server.js",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test test/*.test.ts",
+    "test:db": "node --env-file-if-exists=.env --import tsx --test test/integration/*.test.ts",
+    "openapi:export": "node --import tsx scripts/export-openapi.ts",
+    "check": "npm run typecheck && npm test && npm run build"
+  },
+  "dependencies": {
+    "fastify": "5.12.5",
+    "@fastify/swagger": "9.9.0",
+    "pg": "8.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.0",
+    "@types/pg": "8.23.1",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3"
+  },
+  "license": "AGPL-3.0-only"
+}
