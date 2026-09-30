@@ -2,7 +2,7 @@
 
 An **Asynchronous Ventures** open-source project. Repository name: `scrawl`.
 
-**License: AGPL-3.0-only. Status: P2 document engine verified locally; pre-release.**
+**License: AGPL-3.0-only. Status: P3 Demo A verified locally; pre-release.**
 
 A self-hosted, private-by-default documentation platform with an independent API and optional publication of selected document revisions. No SaaS tenancy, billing, paid feature gates, or required vendor account. The source-code license does not automatically license users' independent documentation.
 
@@ -10,8 +10,8 @@ A self-hosted, private-by-default documentation platform with an independent API
 
 1. Read [the demo-first build plan](docs/plan.md).
 2. Give the development agent [the kickoff prompt](docs/agents/demo-kickoff.md).
-3. Review [P0: foundation verification](docs/agents/first-packet.md), then assign [the work packets](docs/backlog.md) one at a time. P2 is complete locally; P3 is next when assigned.
-4. Use [the demo walkthrough](docs/demo-walkthrough.md) as the acceptance script, not as a claim the demo exists today.
+3. Review [P0: foundation verification](docs/agents/first-packet.md), then assign [the work packets](docs/backlog.md) one at a time. P3 is complete locally; stop for review before assigning P4.
+4. Use [the demo walkthrough](docs/demo-walkthrough.md) for the implemented Demo A commands and later acceptance scripts.
 
 The [architecture](docs/architecture.md), [core schema brief](docs/core-schema.md), [API proposal](docs/api-design.md), and [publishing rules](docs/public-publishing.md) explain the hard boundaries. [Decisions](docs/decisions.md) distinguish requirements from implementation defaults. [VALIDATION.md](VALIDATION.md) states what has actually run.
 
@@ -23,7 +23,9 @@ P1 adds real local sessions, closed registration, host account commands, and adm
 
 P2 adds restricted headless content validation, document create/read/update, immutable revision history/restore, and archive/unarchive. Existing-document mutations require a current strong ETag; title/body saves and lifecycle lock versions remain separate.
 
-**Publishing, attachments, export, SSO, API keys, and the frontend are not implemented.** Do not put real documentation into this scaffold or expose it publicly.
+P3 adds a repeatable real HTTP Demo A runner, explicit disposable fixture setup/reset, and authorized native single-document JSON export. Follow [the walkthrough](docs/demo-walkthrough.md#run-demo-a) to run it and inspect a local export.
+
+**Publishing, attachments, bulk export/import, SSO, API keys, and the frontend are not implemented.** Do not put real documentation into this scaffold or expose it publicly.
 
 The incoming archive's history is recorded in [changes-v3.md](docs/changes-v3.md). Current checks and foundation fixes are recorded in [VALIDATION.md](VALIDATION.md).
 
@@ -70,7 +72,7 @@ curl -i http://127.0.0.1:3000/health/ready
 curl http://127.0.0.1:3000/openapi.json
 ```
 
-`npm test` covers configuration and injected HTTP tests. `npm run test:db` requires a real database and fails when it is unavailable. `npm run check` covers typecheck, unit/HTTP tests, and build; it does **not** include the database suite. CI runs both commands and OpenAPI export after `npm ci` and `npm run db:migrate`. `npm ci` regenerates the ignored Prisma client; `db:migrate` applies the single checked-in migration history. Generated OpenAPI describes implemented system and P1/P2 product routes and is written to ignored `artifacts/openapi.json`. There is no bundled interactive API explorer or product UI yet.
+`npm test` covers configuration and injected HTTP tests. `npm run test:db` requires local PostgreSQL with schema/database creation privileges and fails when it is unavailable. `npm run check` covers typecheck, unit/HTTP tests, and build; it does **not** include the database suite. CI runs both commands and OpenAPI export after `npm ci` and `npm run db:migrate`. `npm ci` regenerates the ignored Prisma client; `db:migrate` applies the single checked-in migration history. Generated OpenAPI describes implemented system and P1-P3 product routes and is written to ignored `artifacts/openapi.json`. There is no bundled interactive API explorer or product UI yet.
 
 Use `npm start` after `npm run build` to run the compiled backend. `docker compose down` stops the development database while preserving its data volume.
 

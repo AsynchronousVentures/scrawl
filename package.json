@@ -20,7 +20,12 @@
     "db:migrate": "node --env-file-if-exists=.env node_modules/prisma/build/index.js migrate deploy",
     "operator": "node --env-file-if-exists=.env --import tsx scripts/operator.ts",
     "postinstall": "npm run db:generate",
-    "check:boundaries": "node --import tsx scripts/check-boundaries.ts"
+    "check:boundaries": "node --import tsx scripts/check-boundaries.ts",
+    "demo:init": "node --import tsx scripts/demo-fixtures.ts init",
+    "demo:setup": "node --import tsx scripts/demo-fixtures.ts setup",
+    "demo:reset": "node --import tsx scripts/demo-fixtures.ts reset",
+    "demo:serve": "node --import tsx scripts/demo-server.ts",
+    "demo:a": "node --import tsx scripts/demo-a.ts"
   },
   "dependencies": {
     "@fastify/swagger": "9.9.0",

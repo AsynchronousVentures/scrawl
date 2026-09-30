@@ -1,6 +1,90 @@
 # Validation
 
-## P2, verified locally on 2026-09-30
+## P3, verified locally on 2026-09-30
+
+P3 is complete locally on P2 baseline `457784e`. Node.js `v24.20.0`, npm `10.9.9`, and real PostgreSQL `17.11` were used. No hosted CI, push, or deployment ran. P0-P2 historical results follow this section.
+
+### Baseline and migration effects
+
+No dependencies, overrides, lockfile entries, Prisma models, or migrations changed. The pinned Better Auth 1.7.6 / Prisma 7.10.0 / ProseMirror model 1.25.12 baseline remains. There are still exactly two migrations: `20260930000000_identity_spaces` and `20260930010000_documents_revisions`. Existing P2 instances need no new migration; normal `npm ci` and `npm run db:migrate` retain the existing history. Demo setup applies those same migrations with `migrate deploy` before provisioning, never schema push/reset. Explicit fixture reset deletes only demo rows and preserves `_prisma_migrations`.
+
+### Observed checks
+
+| Command/check | Result |
+| --- | --- |
+| `npm ci` | Exit 0; frozen install and Prisma client generation passed; lockfile unchanged |
+| `npm run check` | Exit 0; import boundaries, typecheck, all 50 unit/config/HTTP/CLI tests, build; original 44 tests retained |
+| `COMPOSE_PROJECT_NAME=scrawl-p3 docker compose up -d --wait postgres` | Exit 0; task-owned loopback PostgreSQL 17 healthy for required integration tests |
+| `NODE_ENV=test npm run test:db` | Exit 0; 48 reported tests, 0 skipped: original 37 plus six export and five demo tests including parent tests |
+| `DATABASE_URL=postgresql://unused@127.0.0.1:1/unused NODE_ENV=test npm run test:db` | Exit 1 as expected; six required database files failed visibly, 0 skipped |
+| `npm run openapi:export` and parsed spec assertions | Exit 0; 14 implemented paths / 18 operations; native export has its own response schema; future routes absent |
+| Compiled server probe | Readiness 200; anonymous me/export 401; live 14-path OpenAPI; SIGTERM exit 0 |
+| `npm audit` / `npm ls --depth=0` | Exit 0; zero advisories and unchanged exact pins |
+| `npm run demo:init` | Exit 0; private generated configuration created exclusively, no secret output |
+| `COMPOSE_PROJECT_NAME=scrawl-p3-demo docker compose --env-file .env.demo -f compose.demo.yaml up -d --wait postgres` | Exit 0; second fresh designated demo database healthy on loopback 5433 |
+| `npm run demo:setup -- --database scrawl_demo_a` | Exit 0; existing two migrations applied and four generated accounts provisioned |
+| `npm run demo:serve` then `npm run demo:a` twice | Both runners exit 0, each with 327 assertions; persisted four users, two spaces/documents, six revisions, zero active sessions |
+| Repeated setup / reset without confirmation | Exit 1 as expected; no implicit reset or reprovisioning |
+| `npm run demo:reset -- --database scrawl_demo_a` | Exit 0; users/documents/revisions/sessions cleared, credential manifest removed, both migrations retained |
+| Explicit setup/server/runner after reset | Exit 0; new generated accounts and another successful 327-assertion walkthrough |
+| `cat artifacts/demo/export.json` and `cat artifacts/demo/result.json` | Current restored revision 3, synthetic content, provenance IDs, and matching assertion count; no credentials/session data |
+
+The integration suite requires a local non-production PostgreSQL role able to create a disposable database, in addition to the previous isolated-schema permissions. Its P3 test reserves `scrawl_demo_a` on that server, refuses if it already exists, and drops only the database it created. Ordinary Compose and CI roles have these privileges. A separate demo can run on port 5433 while the suite uses ordinary PostgreSQL on 5432. Do not run two P3 suites against the same server simultaneously.
+
+One manual setup attempt was interrupted by running a dependency reinstall concurrently. It failed nonzero without an implicit reset. After the install finished, explicit demo reset/setup succeeded. Install first and keep fixture commands sequential.
+
+### Acceptance evidence
+
+The executable runner uses actual HTTP sockets, real library sign-in, independent in-memory cookie jars for administrator/editor/reader/outsider plus a second editor session, and the running application server. It asserts matching starting ETags, successful save then stale 412, missing 428, unchanged head/history after rejected writes, reader administration/mutation denial, and outsider document/list/revision denial without resource fields or ETags. Restoring appends revision 3 with original content and preserves intervening history. Archive/unarchive advances lifecycle versions only. After administrator revocation, existing editor cookies still authenticate `/me` but cannot read/write/history/export in that space. Successful runs sign out all five sessions.
+
+Authorized export is selected by the core's existing authorized current-head read, validated through the restricted content parser, and serialized with a separate allowlisted HTTP response schema. Runner and integration tests revalidate/reload exported JSON and compare it to the selected revision. Tests cover administrator/editor/reader export, archived export, outsider/anonymous/revoked-session denials, and unsupported selectors. Exact key checks and synthetic secret/token checks exclude authentication records, profiles, credentials, cookies, and sessions, including from captured CLI/server logs.
+
+P3's mandatory PostgreSQL test provisions a freshly migrated database, spawns the actual server and executable, runs twice, and checks persistent counts. It injects a revision-insert failure; the executable exits nonzero, one document is created and one save is attempted, proved with a rollback-independent sequence. No create or stale/failed write is retried. It rejects unsafe reset/configuration attempts without changing data, stops the server, resets explicitly, verifies migration retention, regenerates accounts/passwords, and runs again. P2's distinct overlapping-save and mid-write rollback tests remain unchanged and pass, as do all P0/P1 bootstrap/recovery/access/migration checks.
+
+Review found that the fixture coordinator needs a second pool connection; demo configuration now rejects `DB_POOL_MAX=1`, with focused coverage. The general application configuration and default pool size remain unchanged.
+
+### Exact Demo A and export commands
+
+From the repository root, use the separate generated demo configuration. No ordinary `.env` or manually supplied passwords are needed:
+
+```sh
+npm ci
+npm run demo:init
+docker compose --env-file .env.demo -f compose.demo.yaml up -d --wait postgres
+npm run demo:setup -- --database scrawl_demo_a
+npm run demo:serve
+```
+
+In a second terminal:
+
+```sh
+npm run demo:a
+npm run demo:a
+cat artifacts/demo/export.json
+cat artifacts/demo/result.json
+```
+
+Stop the server before an explicit reset/reseed:
+
+```sh
+npm run demo:reset -- --database scrawl_demo_a
+npm run demo:setup -- --database scrawl_demo_a
+npm run demo:serve
+```
+
+Run `npm run demo:a` again from the second terminal. Setup never resets implicitly; missing/wrong database confirmation fails. Production, remote/non-demo targets, missing designation, unsafe files, and URL options are refused. `.env.demo` and `artifacts/demo/credentials.json` contain locally generated secrets and must stay private/ignored. Only export/result files are safe synthetic inspection artifacts. See [the walkthrough](docs/demo-walkthrough.md) for fixture identities, repetition, port settings, and removal commands.
+
+Export supports only the current authorized single-document JSON snapshot, including archived documents. It identifies export format version 1 and content schema version 1 with minimal source provenance. It is not complete history, bulk export/import, Markdown conversion, or a database backup. There is no API explorer; existing generated OpenAPI is sufficient for this packet.
+
+### Remaining limits and cleanup
+
+No local P3 blocker remains. Hosted CI, production TLS/proxy operation, non-Linux loopback source addresses, workload/scalability, backup/import/restore, and release/source delivery remain unverified. The P1 limits on concurrent in-flight sign-in during recovery and process-restart rate-limit durability remain. Demo A's stale clients submit sequentially; real concurrent saves and forced transaction rollback are proven by the preserved PostgreSQL suite. Repeated runs create additional synthetic spaces/documents, and unchanged authentication rate limits can reject very rapid repeats. Failed runs retain partial data and sessions until expiry or explicit reset; there is no automatic destructive recovery.
+
+Task-owned PostgreSQL containers/networks/volumes, disposable database/test schemas, injected trigger/function/sequence objects, scratch directories, private demo configuration/credentials, and generated build/OpenAPI output were removed. The ignored synthetic latest `artifacts/demo/export.json` and `result.json` remain for inspection. Existing development configuration, dependencies, and generated Prisma client were preserved.
+
+Stop at P3 for review. No UI, publishing, uploads, search, nesting, Markdown conversion, bulk portability, or generic demo framework was implemented.
+
+## P2 baseline, historical results
 
 P2 is complete locally on the P1 baseline `208d4d0`. Node.js `v24.20.0`, npm `10.9.9`, and real PostgreSQL `17.11` were used. No hosted CI, push, or deployment ran. P0/P1 historical results follow this section.
 

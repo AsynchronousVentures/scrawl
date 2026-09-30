@@ -8,7 +8,7 @@
 
 **Revision:** 3, 2026-09-29
 
-**Status:** P2 document engine implemented and verified locally; subsequent packets remain planned
+**Status:** P3 Demo A and native single-document export implemented and verified locally; subsequent packets remain planned
 
 ## 1. What we are building
 

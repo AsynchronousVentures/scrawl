@@ -52,6 +52,27 @@ const documentSummarySchema = {
   type: 'object', additionalProperties: false, required: [...documentRequired, 'title'],
   properties: { ...documentProperties, title: { type: 'string' } },
 } as const;
+const nativeExportSchema = {
+  type: 'object', additionalProperties: false, required: ['format', 'exportVersion', 'document', 'revision', 'content'],
+  properties: {
+    format: { type: 'string', enum: ['scrawl-document'] }, exportVersion: { type: 'integer', enum: [1] },
+    document: {
+      type: 'object', additionalProperties: false, required: ['id', 'spaceId', 'createdAt', 'createdBy'],
+      properties: {
+        id: { type: 'string', format: 'uuid' }, spaceId: { type: 'string', format: 'uuid' },
+        createdAt: { type: 'string', format: 'date-time' }, createdBy: { type: 'string' },
+      },
+    },
+    revision: {
+      type: 'object', additionalProperties: false, required: ['id', 'revisionNumber', 'title', 'createdAt', 'authorId'],
+      properties: {
+        id: { type: 'string', format: 'uuid' }, revisionNumber: { type: 'integer', minimum: 1 },
+        title: { type: 'string' }, createdAt: { type: 'string', format: 'date-time' }, authorId: { type: 'string' },
+      },
+    },
+    content: contentSchema,
+  },
+} as const;
 const documentParams = {
   type: 'object', additionalProperties: false, required: ['id'],
   properties: { id: { type: 'string', format: 'uuid' } },
@@ -104,6 +125,17 @@ export function registerDocumentRoutes(app: FastifyInstance, core: Core) {
   } }, async (request, reply) => {
     const document = await core.documents.read(fromNodeHeaders(request.headers), request.params.id);
     return reply.header('etag', documentEtag(document)).send(document);
+  });
+
+  app.get<{ Params: { id: string } }>('/api/v1/documents/:id/export', { schema: {
+    operationId: 'exportNativeDocument', tags: ['Documents'], params: documentParams,
+    description: 'Export the current authorized snapshot as native JSON, including archived documents. No history or authentication data.',
+    querystring: { type: 'object', additionalProperties: false, properties: {} },
+    response: { 200: nativeExportSchema, ...errors },
+  } }, async (request, reply) => {
+    const exported = await core.documents.exportNative(fromNodeHeaders(request.headers), request.params.id);
+    return reply.header('content-disposition', `attachment; filename="scrawl-document-${exported.document.id}.json"`)
+      .type('application/json').send(exported);
   });
 
   app.patch<{ Params: { id: string }; Body: unknown }>('/api/v1/documents/:id', { schema: {

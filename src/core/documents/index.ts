@@ -171,6 +171,22 @@ export function createDocuments(prisma: PrismaClient, identity: Identity, spaces
       return { items, nextCursor: documents.length > limit ? items.at(-1)!.id : null };
     },
     async read(headers: Headers, id: string) { return documentDto(await readHead(headers, id)); },
+    async exportNative(headers: Headers, id: string) {
+      const document = await readHead(headers, id);
+      const revision = document.head;
+      return {
+        format: 'scrawl-document' as const, exportVersion: 1 as const,
+        document: {
+          id: document.id, spaceId: document.spaceId, createdAt: document.createdAt.toISOString(),
+          createdBy: document.createdBy,
+        },
+        revision: {
+          id: revision.id, revisionNumber: revision.revisionNumber, title: revision.title,
+          createdAt: revision.createdAt.toISOString(), authorId: revision.authorId,
+        },
+        content: content(revisionDto(revision).content).content,
+      };
+    },
     async update(headers: Headers, id: string, input: unknown, expectedEtag?: string) {
       const fields = record(input, ['title', 'content', 'changeNote']);
       if (fields.title === undefined && fields.content === undefined) throw new HttpProblem(400, 'INVALID_REQUEST');
