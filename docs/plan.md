@@ -8,7 +8,7 @@
 
 **Revision:** 3, 2026-09-29
 
-**Status:** P1 identity/access implemented and verified locally; subsequent packets remain planned
+**Status:** P2 document engine implemented and verified locally; subsequent packets remain planned
 
 ## 1. What we are building
 
@@ -53,7 +53,7 @@ Use Better Auth as the first authentication candidate. Its official integration 
 
 P1 retains Fastify, Swagger generation, and `pg`, and pins Better Auth 1.7.6 with Prisma/client/adapter-pg 7.10.0. Compatibility and targeted transitive advisory fixes are recorded in [VALIDATION.md](../VALIDATION.md). One migration history owns the entire schema. Auth model generation feeds reviewed Prisma migrations rather than a second migration engine. [S5]
 
-Use a restricted Tiptap/ProseMirror-compatible JSON body, validated on the server and versioned independently of the API. Existing libraries supply the editor and schema primitives; custom code defines product rules. JSON persistence is not a promise of future collaborative editing support. [S8]
+Use a restricted Tiptap/ProseMirror-compatible JSON body, validated on the server and versioned independently of the API. P2 pins `prosemirror-model@1.25.12` for native headless schema validation/round trips, adding no editor package. Existing libraries supply the editor and schema primitives; custom code defines product rules. JSON persistence is not a promise of future collaborative editing support. [S8]
 
 ## 5. The core/capability boundary
 

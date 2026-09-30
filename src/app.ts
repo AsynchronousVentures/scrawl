@@ -9,6 +9,7 @@ import { registerProblemHandlers } from './http/problems.js';
 import { registerSystemRoutes } from './modules/system/routes.js';
 import { registerAuthRoutes, registerCoreRoutes } from './http/core-routes.js';
 import type { Core } from './core/index.js';
+import { registerDocumentRoutes } from './http/document-routes.js';
 
 type BuildOptions = {
   config: AppConfig;
@@ -47,17 +48,28 @@ export async function buildApp({ config, checkDatabase, logging = true, core }: 
 
   // Register before routes: these schemas are the sole source for the live OpenAPI document.
   await app.register(swagger, {
+    transformObject(document) {
+      if ('swaggerObject' in document) return document.swaggerObject;
+      // Swagger assumes every body schema is required; these routes normalize an absent body to {}.
+      for (const operation of ['archive', 'unarchive']) {
+        const body = document.openapiObject.paths?.[`/api/v1/documents/{id}/${operation}`]?.post?.requestBody;
+        if (body && !('$ref' in body)) body.required = false;
+      }
+      return document.openapiObject;
+    },
     openapi: {
       openapi: '3.0.3',
       info: {
         title: 'Scrawl API',
         version: '0.0.0',
-        description: 'System health, local identity, and authorized space access.',
+        description: 'System health, local identity, authorized spaces, documents, and immutable revisions.',
       },
       tags: [
         { name: 'System', description: 'Operational health' },
         { name: 'Identity', description: 'Current authenticated user' },
         { name: 'Spaces', description: 'Authorized spaces and administrator membership changes' },
+        { name: 'Documents', description: 'Authorized document content and lifecycle' },
+        { name: 'Revisions', description: 'Immutable document history and restore' },
       ],
     },
   });
@@ -65,6 +77,7 @@ export async function buildApp({ config, checkDatabase, logging = true, core }: 
   if (core) {
     registerAuthRoutes(app, core);
     registerCoreRoutes(app, core);
+    registerDocumentRoutes(app, core);
   }
   if (config.apiDocsEnabled) {
     app.get('/openapi.json', { schema: { hide: true } }, async () => app.swagger());

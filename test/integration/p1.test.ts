@@ -276,7 +276,8 @@ test('P1 identity and space acceptance against migrated PostgreSQL and real HTTP
       let blocked = 0;
       for (let i = 0; i < 100; i++) {
         const rows = await database.pool.query<{ count: string }>(
-          `SELECT count(*)::text FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE '%FROM "Space"%FOR UPDATE%'`,
+          `SELECT count(*)::text FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE '%FROM "Space"%FOR UPDATE%'
+            AND pid IN (SELECT pid FROM pg_locks WHERE relation = $1::regclass)`, [`"${schema}"."Space"`],
         );
         blocked = Number(rows.rows[0]?.count);
         if (blocked >= 2) break;
@@ -340,7 +341,8 @@ test('P1 identity and space acceptance against migrated PostgreSQL and real HTTP
       let blocked = false;
       for (let i = 0; i < 100; i++) {
         const result = await database.pool.query<{ count: string }>(
-          `SELECT count(*)::text FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE '%FROM "Space"%FOR UPDATE%'`,
+          `SELECT count(*)::text FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE '%FROM "Space"%FOR UPDATE%'
+            AND pid IN (SELECT pid FROM pg_locks WHERE relation = $1::regclass)`, [`"${schema}"."Space"`],
         );
         if (Number(result.rows[0]?.count) === 1) { blocked = true; break; }
         await delay(10);
@@ -384,11 +386,14 @@ test('P1 identity and space acceptance against migrated PostgreSQL and real HTTP
     assert.equal(last, 429);
   });
 
-  await t.test('live OpenAPI contains implemented P1 operations and no planned product routes', async () => {
+  await t.test('live OpenAPI retains P1 and includes only implemented packet routes', async () => {
     const result = await admin.send('GET', '/openapi.json');
     assert.deepEqual(Object.keys(result.data.paths).sort(), [
+      '/api/v1/documents/{id}', '/api/v1/documents/{id}/archive', '/api/v1/documents/{id}/restore',
+      '/api/v1/documents/{id}/revisions', '/api/v1/documents/{id}/revisions/{revisionId}', '/api/v1/documents/{id}/unarchive',
       '/api/v1/me', '/api/v1/spaces', '/api/v1/spaces/{id}', '/api/v1/spaces/{id}/members/{userId}', '/health/live', '/health/ready',
-    ]);
+      '/api/v1/spaces/{id}/documents',
+    ].sort());
   });
 
   await t.test('real auth logging excludes passwords, cookies, callback URLs, and submitted/query content', async () => {

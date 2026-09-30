@@ -2,8 +2,8 @@
 // Copyright (C) 2026 Asynchronous Ventures and contributors
 
 import { randomUUID } from 'node:crypto';
-import type { PrismaClient, Space } from '../../generated/prisma/client.js';
-import type { Identity } from '../identity/index.js';
+import type { PrismaClient, Prisma, Space } from '../../generated/prisma/client.js';
+import type { Identity, Principal } from '../identity/index.js';
 import { HttpProblem } from '../../http/problems.js';
 
 function spaceDto(space: Space) {
@@ -18,7 +18,25 @@ export function spaceEtag(space: { id: string; lockVersion: number }) {
 }
 
 export function createSpaces(prisma: PrismaClient, identity: Identity) {
+  // Narrow cross-module access operation. Documents never query membership tables directly.
+  async function authorize(db: Prisma.TransactionClient, principal: Principal, spaceId: string, write = false) {
+    const actor = await identity.actor(principal, db);
+    const space = await db.space.findUnique({ where: { id: spaceId }, select: {
+      id: true, memberships: { where: { userId: actor.id }, select: { role: true } },
+    } });
+    if (!space || (actor.role !== 'administrator'
+      && !space.memberships.some((m) => !write || m.role === 'editor'))) {
+      throw new HttpProblem(404, 'NOT_FOUND');
+    }
+    return actor;
+  }
+
   return {
+    authorize,
+    async lockForWrite(db: Prisma.TransactionClient, principal: Principal, spaceId: string) {
+      await db.$queryRaw`SELECT "id" FROM "Space" WHERE "id" = ${spaceId}::uuid FOR UPDATE`;
+      return authorize(db, principal, spaceId, true);
+    },
     async create(headers: Headers, name: string) {
       if (!name.trim() || name.length > 200) throw new HttpProblem(400, 'INVALID_REQUEST');
       const principal = await identity.resolve(headers);
@@ -86,3 +104,5 @@ export function createSpaces(prisma: PrismaClient, identity: Identity) {
     },
   };
 }
+
+export type Spaces = ReturnType<typeof createSpaces>;

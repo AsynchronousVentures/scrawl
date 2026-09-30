@@ -28,6 +28,9 @@ model User {
   accounts      Account[]
   createdSpaces Space[]
   memberships   SpaceMembership[]
+  createdDocuments Document[] @relation("DocumentCreator")
+  archivedDocuments Document[] @relation("DocumentArchiver")
+  authoredRevisions DocumentRevision[]
 
   @@unique([email])
   @@map("user")
@@ -92,6 +95,7 @@ model Space {
   updatedAt   DateTime          @updatedAt @db.Timestamptz(3)
   lockVersion Int               @default(1)
   memberships SpaceMembership[]
+  documents   Document[]
 }
 
 model SpaceMembership {
@@ -105,4 +109,42 @@ model SpaceMembership {
 
   @@id([spaceId, userId])
   @@index([userId, spaceId])
+}
+
+model Document {
+  id                    String             @id @db.Uuid
+  spaceId               String             @db.Uuid
+  space                 Space              @relation(fields: [spaceId], references: [id], onDelete: Restrict)
+  currentRevisionNumber Int
+  head                  DocumentRevision   @relation("DocumentHead", fields: [id, currentRevisionNumber], references: [documentId, revisionNumber], onDelete: NoAction, onUpdate: NoAction)
+  lockVersion           Int                @default(1)
+  createdAt             DateTime           @default(now()) @db.Timestamptz(3)
+  createdBy             String
+  creator               User               @relation("DocumentCreator", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedAt             DateTime           @updatedAt @db.Timestamptz(3)
+  archivedAt            DateTime?          @db.Timestamptz(3)
+  archivedBy            String?
+  archiver              User?              @relation("DocumentArchiver", fields: [archivedBy], references: [id], onDelete: Restrict)
+  revisions             DocumentRevision[] @relation("DocumentHistory")
+
+  @@index([spaceId, archivedAt, id])
+}
+
+model DocumentRevision {
+  id                   String     @id @db.Uuid
+  documentId           String     @db.Uuid
+  document             Document   @relation("DocumentHistory", fields: [documentId], references: [id], onDelete: Restrict)
+  revisionNumber       Int
+  title                String     @db.VarChar(200)
+  contentFormat        String
+  contentSchemaVersion Int
+  body                 Json       @db.JsonB
+  plainText            String
+  authorId             String
+  author               User       @relation(fields: [authorId], references: [id], onDelete: Restrict)
+  createdAt            DateTime   @default(now()) @db.Timestamptz(3)
+  changeNote           String?    @db.VarChar(2000)
+  headOf               Document[] @relation("DocumentHead")
+
+  @@unique([documentId, revisionNumber])
 }

@@ -17,9 +17,17 @@ for await (const file of glob('src/**/*.ts', { exclude: ['src/generated/**'] }))
     if (file.startsWith('src/core/') && imported === 'fastify') {
       violations.push(`${file}: core operations cannot depend on Fastify`);
     }
-    if (file.startsWith('src/core/spaces/') && target.startsWith('src/core/identity/')
+    if ((file.startsWith('src/core/spaces/') || file.startsWith('src/core/documents/')) && target.startsWith('src/core/identity/')
       && target !== 'src/core/identity/index.js') {
-      violations.push(`${file}: spaces must use the identity module's exported operations`);
+      violations.push(`${file}: core modules must use the identity module's exported operations`);
+    }
+    if (file.startsWith('src/core/documents/') && target.startsWith('src/core/spaces/')
+      && target !== 'src/core/spaces/index.js') {
+      violations.push(`${file}: documents must use the space module's exported operations`);
+    }
+    if (file === 'src/core/documents/content.ts' && (imported.startsWith('node:')
+      || target.startsWith('src/db/') || target.startsWith('src/generated/') || target.startsWith('src/http/'))) {
+      violations.push(`${file}: shared content validation cannot import server dependencies`);
     }
   }
 }

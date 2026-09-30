@@ -34,3 +34,5 @@ These are proposed engineering choices the agent may refine through a short deci
 | Dependencies | No speculative queue/cache/search service/plugin runtime |
 
 Technical pins are decided in P0/P1 and documented with command output. Licensing choice is no longer pending. See [plan.md](plan.md), [architecture.md](architecture.md), and [sources.md](sources.md).
+
+P2 uses native ProseMirror canonical JSON with a restricted schema and explicit resource limits. Canonical no-op saves keep the current revision/version; restore always appends history. Archive/unarchive changes lifecycle versions, preserves authorized history reads, and blocks content mutations while archived. These implemented policies and commit-time head constraints are recorded in [core-schema.md](core-schema.md).

@@ -1,6 +1,69 @@
 # Validation
 
-## P1, verified locally on 2026-09-30
+## P2, verified locally on 2026-09-30
+
+P2 is complete locally on the P1 baseline `208d4d0`. Node.js `v24.20.0`, npm `10.9.9`, and real PostgreSQL `17.11` were used. No hosted CI, push, or deployment ran. P0/P1 historical results follow this section.
+
+### Content dependency and baseline preservation
+
+Added exact `prosemirror-model@1.25.12` and its locked `orderedmap@2.1.1` dependency, both MIT. P1 contained no headless native document model; this small package supplies the real Schema/Node validation and native JSON round trip required by P2. No editor, DOM, HTML renderer, or schema-extension package was added. The [ProseMirror schema guide](https://prosemirror.net/docs/guide/#schema) and installed 1.25.12 source/types were checked. Native `nodeFromJSON`, `check`, and `toJSON` behavior is covered by observed tests rather than assuming JSON is safe.
+
+Structured comparison against the baseline lockfile proves every existing P1 direct/transitive resolved version remains unchanged. Only the two packages above were added; the existing advisory overrides remain. npm refreshed root `hasInstallScript` metadata to match the pre-existing postinstall. Reviewed both new MIT license notices; all 256 resolved entries have license metadata, including 196 MIT entries and the unchanged license families recorded in P1. `npm audit` reports zero advisories. Third-party distribution notices/source remain a release gate.
+
+### Observed checks
+
+| Command/check | Result |
+| --- | --- |
+| `npm ci` | Exit 0; frozen install and Prisma 7.10.0 client generation passed |
+| `npm run db:generate` | Exit 0; generated client includes the new models |
+| `COMPOSE_PROJECT_NAME=scrawl-p2 docker compose up -d --wait postgres` | Exit 0; task-owned loopback PostgreSQL 17 healthy |
+| `npm run db:migrate` | Exit 0; both existing P1 and new P2 migrations applied to an empty database |
+| Focused native content tests | Exit 0; 14 tests, including every supported node/mark, native-created content, text extraction, canonicalization, URL/byte/depth/node limits, cycles, and aggregate allocation limits |
+| `npm run check` | Exit 0; implemented import boundaries, full typecheck, all 44 unit/config/HTTP/CLI tests, and build passed; original 30 P0/P1 tests retained |
+| `NODE_ENV=test npm run test:db` | Exit 0; all 37 reported PostgreSQL tests passed, 0 skipped: existing 21, P2's 14 scenarios plus parent, and one upgrade test |
+| Populated P1 upgrade and repeated deploy | Passed in the mandatory PostgreSQL suite; full-row fingerprints of identity/credential/session/space/membership data unchanged, existing cookies and password still authenticate |
+| `DATABASE_URL=postgresql://unused@127.0.0.1:1/unused NODE_ENV=test npm run test:db` | Exit 1 as expected; all four required database test files failed visibly, 0 skipped |
+| `npm run openapi:export` and parsed/live spec assertions | Exit 0; exactly 13 implemented paths/17 operations, all existing-document mutations advertise If-Match, lifecycle bodies optional, later-packet routes absent |
+| `npm audit` and `npm ls --depth=0` | Exit 0; zero advisories, exact direct pins, existing versions unchanged |
+| Compiled server probe | Readiness 200, anonymous me/document/list requests 401, live 13-path OpenAPI, SIGTERM exit 0 |
+
+The PostgreSQL suite uses real authenticated HTTP sockets and separate cookie jars. The upgrade fixture installs the unchanged P1 migration, records it with Prisma's supported baselining command, populates real auth/access records, then applies P2 through ordinary `migrate deploy`. That fixture baselining is test setup, not an upgrade instruction for existing instances.
+
+### Acceptance evidence and corrections
+
+Concurrent save requests are both observed waiting on the real space lock before it is released. With the same current ETag, exactly one returns 200 and one 412; persisted history gains exactly one revision. The failure injection runs after revision insertion and before head advance. A rollback-independent sequence proves the revision existed inside that transaction; after failure, the document and ETag are unchanged with zero orphan revisions or missing heads.
+
+SQL tests prove a document insertion can temporarily lack its first revision within the transaction, but COMMIT rejects it if the revision is not created. Updating a head to a number that exists only on another document also fails at COMMIT. The actual composite foreign key is verified as DEFERRABLE INITIALLY DEFERRED. Revision reads/restores scope both IDs, and cross-document attempts return 404 without changing history.
+
+Tests cover authorized create/list/read/update/history/restore, derived creator/author, explicit DTO serialization with every supported native node/mark, reader/outsider/anonymous denial including direct core calls, bounded pagination, immutable snapshots, title-only/body-only changes, canonical no-op saves, restore-as-new even for identical content, every mutator's 428/412/400 preconditions, archive/unarchive version separation, and membership revocation while a writer waits. Unsupported content/attributes/URLs return 400; byte/depth/node limits and the existing HTTP cap return 413 without changing state. Archived reads/history stay authorized; saves/restores return 409 until unarchived.
+
+Review found title/change-note NUL and lone UTF-16 surrogate inputs could reach PostgreSQL. They now fail with 400 before SQL; create/update/restore regression cases passed. The content module also stops aggregate scalar byte growth before serialization for direct core callers. P1's lock-observation queries now scope their fixture relation, preserving exact race assertions while P2 tests run in parallel. Its OpenAPI inventory now lists implemented P2 routes without admitting future routes. No P0/P1 assertion was removed or weakened.
+
+### Migration and API instructions
+
+Use the existing Node 24/npm/PostgreSQL setup and ignored configuration from [README.md](README.md#local-development). Upgrade from an already migrated P1 database with:
+
+```sh
+npm ci
+npm run db:migrate
+npm run check
+npm run test:db
+npm run openapi:export
+```
+
+`db:migrate` applies `20260930010000_documents_revisions` after the unchanged P1 migration. It adds Document and DocumentRevision, indexes, positive versions, restricted content-format/schema-version checks, paired archive fields, auth/space/revision references, and the deferred same-document head foreign key. It does not transform or delete existing P1 data. Prisma owns the one migration history; no schema push/reset or alternate engine is used. Regeneration restores the ignored client, not schema state.
+
+The create envelope is `{title, content, changeNote?}`; PATCH accepts title/content changes only, with an optional note. Read the current document ETag and send that single strong tag as `If-Match` for PATCH/restore/archive/unarchive. A canonical no-op save returns unchanged state; a note alone is not a save, and a note on a no-op is ignored. Restore always appends an immutable attributed snapshot. Archive/unarchive advances only lifecycle lock versions; a repeated current state is a no-op after checking its precondition. See [API contracts](docs/api-design.md) and [exact content/lifecycle limits](docs/core-schema.md#p2-content-and-lifecycle-policy).
+
+### Remaining limits and cleanup
+
+No local P2 blocker remains. Hosted CI, production TLS/proxy operation, workload/scalability, backup/restore and release/source delivery remain unverified. The P1 limits on concurrent in-flight sign-in during recovery and process-restart rate-limit durability remain. Revisions are immutable through product operations; a trusted database operator is not constrained by a product API sandbox. Space-wide mutation serialization is the documented demo policy, not a throughput claim.
+
+Task-created schemas and injected trigger/function/sequence objects were removed. The task-owned PostgreSQL container/network/volume and generated build/OpenAPI output were removed after verification. Installed project dependencies, ignored generated Prisma client, and existing ignored local configuration remain for development. No persistent demo account or content was left in a development database.
+
+Stop at P2 for review. P3, the API demo and native export, begins only when assigned. No UI, publishing, uploads, search, nesting, autosave, collaboration, or generic extension framework was implemented.
+
+## P1 baseline, historical results
 
 P1 is complete locally. Node.js `v24.20.0`, npm `10.9.9`, and real PostgreSQL `17.11` were used. No hosted CI or deployment ran. The historical P0 results are retained below.
 

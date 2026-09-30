@@ -5,10 +5,12 @@ import type { PrismaClient } from '../generated/prisma/client.js';
 import type { IdentityConfig } from '../config.js';
 import { createIdentity } from './identity/index.js';
 import { createSpaces } from './spaces/index.js';
+import { createDocuments } from './documents/index.js';
 
 export function createCore(prisma: PrismaClient, config: IdentityConfig) {
   const identity = createIdentity(prisma, config);
-  return { identity, spaces: createSpaces(prisma, identity) };
+  const spaces = createSpaces(prisma, identity);
+  return { identity, spaces, documents: createDocuments(prisma, identity, spaces) };
 }
 
 export type Core = ReturnType<typeof createCore>;

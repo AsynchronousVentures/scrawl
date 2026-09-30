@@ -1,6 +1,6 @@
-# Implemented P1 API and remaining proposals
+# Implemented P1/P2 API and remaining proposals
 
-Live/generated OpenAPI contains health routes and the P1 identity/space operations below. Document, revision, publishing, search, and file routes remain proposals and are absent from OpenAPI. Auth routes retain library request semantics under their separate namespace.
+Live/generated OpenAPI contains health routes, P1 identity/space operations, and P2 document/revision/lifecycle operations below. Publishing, search, files, and export remain proposals and are absent from OpenAPI. Auth routes retain library request semantics under their separate namespace.
 
 ## Authentication and principal
 
@@ -40,6 +40,16 @@ Space listing returns `{items, nextCursor}`, filters visibility in the query, an
 
 Space-wide native export/import and administrator backup/restore are P8/P9 tasks; specify them after file and archive semantics are proven. Integration tokens, jobs, webhooks, external sources, and proposal workflows are deliberately absent. Public publishing is specified separately below.
 
+## P2 document contracts
+
+Create accepts `{title, content, changeNote?}`. PATCH accepts only `{title?, content?, changeNote?}` and requires title or content. Restore accepts `{revisionId, changeNote?}`. Archive/unarchive accept an optional empty object body. Actor IDs, space changes, lifecycle fields, revision numbers, and lock versions are never accepted from input. The exact content schema/limits and no-op/archive policy are in [core-schema.md](core-schema.md#p2-content-and-lifecycle-policy).
+
+Create returns 201 with Location and ETag. Current read and successful mutations return 200 with ETag. Full document DTO fields are `{id, spaceId, currentRevisionNumber, lockVersion, createdAt, createdBy, updatedAt, archivedAt, archivedBy, revision}`. The nested current revision and single historical revision DTO have `{id, documentId, revisionNumber, title, content, plainText, authorId, createdAt, changeNote}`. Titles and bodies belong only to immutable revision snapshots.
+
+Document lists return `{items, nextCursor}` with lifecycle metadata and a top-level current title, without bodies/revision relations. They accept `limit` 1-100 (default 50), UUID `cursor`, and boolean `includeArchived` (default false), ordered by immutable document ID. Revision lists return the same pagination envelope with revision metadata but no content/plainText, newest first; their numeric cursor is the last revision number returned, exclusive. Both queries are bounded. Current and historical reads require access to the owning space; revision IDs are always scoped to the requested document.
+
+Readers and outsiders cannot mutate and receive 404 without titles, content, versions, or ETags. Anonymous requests receive 401. Valid authenticated editor/admin mutations use exactly one strong document ETag: missing 428, stale 412, malformed/weak/wildcard/multiple 400. Archived saves/restores return 409 after access and precondition checks. Malformed content returns 400 and content byte/depth/node limit violations return 413; failures leave history/head unchanged.
+
 ## Public publishing surface — proposed
 
 See [public-publishing.md](public-publishing.md) for grant, lifecycle, and file semantics.
@@ -53,7 +63,7 @@ See [public-publishing.md](public-publishing.md) for grant, lifecycle, and file 
 
 Publishing is disabled by default. Ordinary saves never change anonymous content. Document mutations and publication-state mutations coordinate through the core's lock/version operations. Public response schemas are separately allowlisted, not private DTOs with a few fields removed. No public search or browse endpoint exists until it can query only active published projections.
 
-## Content envelope — proposal
+## Content envelope
 
 ```json
 {
@@ -71,26 +81,26 @@ Publishing is disabled by default. Ordinary saves never change anonymous content
 }
 ```
 
-The envelope is not sufficient validation: apply the exact supported node/mark schema and limits. IDs in links and image references must be valid for the operation; a syntactically valid UUID does not grant access. No arbitrary HTML/script nodes.
+Apply the exact supported node/mark schema and limits from the core content module. P2 rejects images, arbitrary HTML, and script nodes.
 
-## Conditional write example — proposed behavior
+## Conditional writes
 
 ```http
 GET /api/v1/documents/8f995ee4-3cf8-4b33-9f26-8163beb9f6f4
 
 HTTP/1.1 200 OK
-ETag: "doc-8f995ee4-v7"
+ETag: "doc-8f995ee4-3cf8-4b33-9f26-8163beb9f6f4-v7"
 ```
 
 ```http
 PATCH /api/v1/documents/8f995ee4-3cf8-4b33-9f26-8163beb9f6f4
-If-Match: "doc-8f995ee4-v7"
+If-Match: "doc-8f995ee4-3cf8-4b33-9f26-8163beb9f6f4-v7"
 Content-Type: application/json
 
 {"title":"Updated getting started"}
 ```
 
-A successful mutation returns a new ETag. Another caller submitting the old tag receives 412. A missing required precondition receives 428. Restrict accepted preconditions to a single strong server-issued tag for these operations; reject wildcard or malformed input rather than allowing a client to opt out of concurrency protection. Ensure tags change whenever the selected representation changes. Do not include volatile or actor-dependent fields in that representation without accounting for them in the validator.
+A state-changing mutation returns a new ETag. P2 canonical no-op saves and repeated lifecycle transitions return the unchanged ETag after checking the current precondition; restore always creates a new revision and ETag. Another caller submitting the old tag receives 412. A missing required precondition receives 428. Restrict accepted preconditions to a single strong server-issued tag for these operations; reject wildcard or malformed input rather than allowing a client to opt out of concurrency protection. Ensure tags change whenever the selected representation changes. Do not include volatile or actor-dependent fields in that representation without accounting for them in the validator.
 
 A revision insert and document head advance must commit together. The conditional database update (or row lock) is the actual protection; checking an ETag in JavaScript before an unconditional UPDATE is not.
 
@@ -121,6 +131,6 @@ Use Prisma in owning query/application modules, not as the shape of public respo
 
 ## Packet boundaries
 
-P1 implements identity/spaces; P2 document/revision/lifecycle routes; P3 native single-document export and the API demo. P4 is a thin client of that API. P5 implements text-only publishing before images exist. P6 adds search/nesting, P7 files and publication-scoped file reads, and P8/P9 complete portability/recovery. Rows above are proposals, not all Demo A requirements.
+P1 implements identity/spaces; P2 document/revision/lifecycle routes; P3 native single-document export and the API demo. P4 is a thin client of that API. P5 implements text-only publishing before images exist. P6 adds search/nesting, P7 files and publication-scoped file reads, and P8/P9 complete portability/recovery. Rows through unarchive are implemented. Search, attachments, export, and publication rows are proposals.
 
 For HTTP semantics see [sources.md](sources.md) [S9][S10][S14]. No proposed route appears in executable OpenAPI until it has an implementation and tests.
