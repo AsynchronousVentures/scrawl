@@ -5,13 +5,35 @@ import { randomUUID } from 'node:crypto';
 import type { Document, DocumentRevision, Prisma, PrismaClient } from '../../generated/prisma/client.js';
 import type { Identity } from '../identity/index.js';
 import type { Spaces } from '../spaces/index.js';
-import type { Attachments } from '../attachments/index.js';
+import { attachmentReferences, type Attachments } from '../attachments/index.js';
 import { HttpProblem } from '../../http/problems.js';
 import { ContentValidationError, validateContent } from './content.js';
 
 type Head = Document & { head: DocumentRevision };
 type RevisionMetadata = Pick<DocumentRevision, 'id' | 'documentId' | 'revisionNumber' | 'title' | 'authorId' | 'createdAt' | 'changeNote'>;
 type Actor = Awaited<ReturnType<Identity['actor']>>;
+
+/** Internal coordinated persistence, never an HTTP or frontend contract. */
+export type PublicationMutationContext = {
+  tx: Prisma.TransactionClient;
+  documentId: string;
+  revisionId: string | null;
+  revisionNumber: number | null;
+  availabilityVersion: number;
+  publisherId: string;
+};
+
+const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const privateAttachmentUrl = /^\/api\/v1\/attachments\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/content$/i;
+
+function publicContent(value: unknown, publicId: string): unknown {
+  if (Array.isArray(value)) return value.map(child => publicContent(child, publicId));
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value).map(([key, child]) => {
+    const id = (key === 'url' || key === 'href') && typeof child === 'string' ? privateAttachmentUrl.exec(child)?.[1] : undefined;
+    return [key, id ? `/api/public/publications/${publicId}/attachments/${id}` : publicContent(child, publicId)];
+  }));
+}
 
 function content(input: unknown) {
   try { return validateContent(input); } catch (error) {
@@ -48,6 +70,8 @@ function revisionSummary(revision: RevisionMetadata) {
     title: revision.title, authorId: revision.authorId, createdAt: revision.createdAt.toISOString(), changeNote: revision.changeNote,
   };
 }
+
+export type Documents = ReturnType<typeof createDocuments>;
 
 function revisionDto(revision: DocumentRevision) {
   return { ...revisionSummary(revision), content: content({
@@ -142,6 +166,7 @@ export function createDocuments(prisma: PrismaClient, identity: Identity, spaces
       if (Boolean(document.archivedAt) === archive) return document;
       await tx.document.update({ where: { id: document.id }, data: {
         archivedAt: archive ? new Date() : null, archivedBy: archive ? actor.id : null,
+        ...(archive ? { availabilityVersion: { increment: 1 } } : {}),
         lockVersion: { increment: 1 },
       } });
       return tx.document.findUniqueOrThrow({ where: { id: document.id }, include: { head: true } });
@@ -149,6 +174,104 @@ export function createDocuments(prisma: PrismaClient, identity: Identity, spaces
   }
 
   return {
+    async publicationStatus(headers: Headers, id: string) {
+      await authorizeDocument(headers, id);
+      const document = await prisma.document.findUniqueOrThrow({ where: { id }, select: {
+        id: true, lockVersion: true, archivedAt: true, availabilityVersion: true,
+        publication: { select: { id: true, revisionNumber: true, publishedAt: true, active: true,
+          approvedAvailabilityVersion: true, revision: { select: { id: true } } } },
+      } });
+      const grant = document.publication;
+      return { id: document.id, lockVersion: document.lockVersion, publication: grant ? {
+        publicId: grant.id, revisionId: grant.revision.id, revisionNumber: grant.revisionNumber,
+        publishedAt: grant.publishedAt.toISOString(),
+        active: grant.active && !document.archivedAt && grant.approvedAvailabilityVersion === document.availabilityVersion,
+      } : null };
+    },
+    async mutatePublication<T>(headers: Headers, id: string, expectedEtag: string | undefined, revisionNumber: number | null,
+      write: (context: PublicationMutationContext) => Promise<T>) {
+      const principal = await identity.resolve(headers);
+      if (revisionNumber !== null && (!Number.isInteger(revisionNumber) || revisionNumber < 1 || revisionNumber > 2_147_483_647)) {
+        throw new HttpProblem(400, 'INVALID_REQUEST');
+      }
+      const target = await prisma.document.findUnique({ where: { id }, select: { spaceId: true } });
+      if (!target) throw new HttpProblem(404, 'NOT_FOUND');
+      return prisma.$transaction(async tx => {
+        // Publication authority is stricter than editing; check it again after
+        // the same space lock used by membership and document mutations.
+        await tx.$queryRaw`SELECT "id" FROM "Space" WHERE "id" = ${target.spaceId}::uuid FOR UPDATE`;
+        const actor = await spaces.authorize(tx, principal, target.spaceId);
+        if (actor.role !== 'administrator') throw new HttpProblem(403, 'ACCESS_DENIED');
+        await tx.$queryRaw`SELECT "id" FROM "Document" WHERE "id" = ${id}::uuid AND "spaceId" = ${target.spaceId}::uuid FOR UPDATE`;
+        const document = await tx.document.findUniqueOrThrow({ where: { id } });
+        precondition(document, expectedEtag);
+        let revisionId: string | null = null;
+        if (revisionNumber !== null) {
+          if (document.archivedAt) throw new HttpProblem(409, 'DOCUMENT_ARCHIVED');
+          const revision = await tx.documentRevision.findUnique({ where: {
+            documentId_revisionNumber: { documentId: id, revisionNumber },
+          } });
+          if (!revision) throw new HttpProblem(404, 'NOT_FOUND');
+          const snapshot = revisionDto(revision).content;
+          const referencedIds = attachmentReferences(snapshot.document).sort();
+          const storedIds = (await tx.revisionAttachment.findMany({ where: { revisionId: revision.id, documentId: id },
+            select: { attachmentId: true } })).map(reference => reference.attachmentId).sort();
+          if (JSON.stringify(referencedIds) !== JSON.stringify(storedIds)) throw new HttpProblem(400, 'INVALID_ATTACHMENT_REFERENCE');
+          // Scoped public URLs are longer than private ones. Check the rendered
+          // envelope before accepting a grant, using a same-length UUID here.
+          content(publicContent(snapshot, revision.id));
+          revisionId = revision.id;
+        }
+        const value = await write({ tx, documentId: id, revisionId, revisionNumber,
+          availabilityVersion: document.availabilityVersion, publisherId: actor.id });
+        const updated = await tx.document.updateMany({ where: { id, lockVersion: document.lockVersion },
+          data: { lockVersion: { increment: 1 } } });
+        if (updated.count !== 1) throw new HttpProblem(412, 'DOCUMENT_VERSION_CONFLICT');
+        return { id, lockVersion: document.lockVersion + 1, value };
+      });
+    },
+    async publicationSnapshot(publicId: string, enabled: boolean) {
+      if (!enabled || !uuid.test(publicId)) throw new HttpProblem(404, 'NOT_FOUND');
+      // This purpose-specific public projection deliberately never joins the
+      // current private head or resolves private navigation and actor metadata.
+      const rows = await prisma.$queryRaw<Array<{ title: string; body: Prisma.JsonValue; contentFormat: string;
+        contentSchemaVersion: number; contentEditorVersion: string | null; publishedAt: Date; attachmentIds: string[] }>>`
+        SELECT r."title", r."body", r."contentFormat", r."contentSchemaVersion", r."contentEditorVersion", p."publishedAt",
+          ARRAY(SELECT ra."attachmentId" FROM "RevisionAttachment" ra
+            WHERE ra."revisionId" = r."id" AND ra."documentId" = d."id" ORDER BY ra."attachmentId") AS "attachmentIds"
+        FROM "Publication" p
+        JOIN "Document" d ON d."id" = p."documentId"
+        JOIN "DocumentRevision" r ON r."documentId" = p."documentId" AND r."revisionNumber" = p."revisionNumber"
+        WHERE p."id" = ${publicId}::uuid AND p."active" = TRUE AND d."archivedAt" IS NULL
+          AND p."approvedAvailabilityVersion" = d."availabilityVersion"
+        LIMIT 1`;
+      const selected = rows[0];
+      if (!selected) throw new HttpProblem(404, 'NOT_FOUND');
+      const native = content({ format: selected.contentFormat, schemaVersion: selected.contentSchemaVersion,
+        editorVersion: selected.contentEditorVersion, document: selected.body }).content;
+      if (JSON.stringify(attachmentReferences(native.document).sort()) !== JSON.stringify(selected.attachmentIds.sort())) {
+        throw new HttpProblem(404, 'NOT_FOUND');
+      }
+      return { title: selected.title, content: content(publicContent(native, publicId)).content,
+        publishedAt: selected.publishedAt.toISOString() };
+    },
+    async publicationAttachment(publicId: string, attachmentId: string, enabled: boolean) {
+      if (!enabled || !uuid.test(publicId) || !uuid.test(attachmentId)) throw new HttpProblem(404, 'NOT_FOUND');
+      const rows = await prisma.$queryRaw<Array<{ id: string; name: string; mimeType: string; size: number; documentId: string }>>`
+        SELECT a."id", a."name", a."mimeType", a."size", a."documentId"
+        FROM "Publication" p
+        JOIN "Document" d ON d."id" = p."documentId"
+        JOIN "DocumentRevision" r ON r."documentId" = p."documentId" AND r."revisionNumber" = p."revisionNumber"
+        JOIN "RevisionAttachment" ra ON ra."revisionId" = r."id" AND ra."documentId" = d."id"
+        JOIN "Attachment" a ON a."id" = ra."attachmentId" AND a."documentId" = d."id"
+        WHERE p."id" = ${publicId}::uuid AND a."id" = ${attachmentId}::uuid
+          AND p."active" = TRUE AND d."archivedAt" IS NULL
+          AND p."approvedAvailabilityVersion" = d."availabilityVersion"
+        LIMIT 1`;
+      const approved = rows[0];
+      if (!approved) throw new HttpProblem(404, 'NOT_FOUND');
+      return attachments.publicationFile(approved);
+    },
     async create(headers: Headers, spaceId: string, input: unknown) {
       const principal = await identity.resolve(headers);
       const fields = record(input, ['title', 'content', 'changeNote']);

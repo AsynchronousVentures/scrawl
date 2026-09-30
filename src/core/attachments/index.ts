@@ -102,6 +102,13 @@ export function createAttachments(prisma: PrismaClient, identity: Identity, spac
       return { path: join(root, attachment.id), mimeType: attachment.mimeType, size: attachment.size,
         name: attachment.name, documentId: attachment.documentId };
     },
+    /** The core publication gateway supplies metadata from its scoped grant query. */
+    publicationFile(approved: { id: string; name: string; mimeType: string; size: number; documentId: string }) {
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(approved.id)) {
+        throw new HttpProblem(404, 'NOT_FOUND');
+      }
+      return { ...approved, path: join(root, approved.id) };
+    },
     async reference(tx: Prisma.TransactionClient, documentId: string, revisionId: string, parsedContent: unknown) {
       const ids = attachmentReferences(parsedContent);
       if (!ids.length) return;

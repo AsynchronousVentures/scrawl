@@ -12,7 +12,7 @@ import { frontendRootIfBuilt } from '../src/http/frontend.js';
 
 const config = readConfig({ NODE_ENV: 'test', DATABASE_URL: 'postgresql://unused@localhost/unused' });
 
-test('built frontend serves only the root shell and assets without changing API errors or OpenAPI', async (t) => {
+test('built frontend serves private/public shells and assets without changing API errors or OpenAPI', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'scrawl-frontend-'));
   const root = join(directory, 'web');
   await mkdir(join(root, 'assets'), { recursive: true });
@@ -29,6 +29,7 @@ test('built frontend serves only the root shell and assets without changing API 
   await t.test('HTML and assets retain no-store and server-generated request IDs', async () => {
     for (const [url, type, text] of [
       ['/?space=synthetic', /text\/html/, 'Scrawl shell'],
+      ['/publications/00000000-0000-4000-8000-000000000001', /text\/html/, 'Scrawl shell'],
       ['/assets/app.js', /(?:text|application)\/javascript/, 'Scrawl asset'],
     ] as const) {
       const result = await app.inject(url);

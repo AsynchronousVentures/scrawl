@@ -44,6 +44,8 @@ async function main() {
     cwd: root, stdio: 'inherit', env: {
       ...process.env, NODE_ENV: config.nodeEnv, HOST: config.host, PORT: String(config.port),
       LOG_LEVEL: config.logLevel, API_DOCS_ENABLED: String(config.apiDocsEnabled),
+      PUBLIC_PUBLISHING_ENABLED: String(config.publicPublishingEnabled),
+      ATTACHMENT_STORAGE_DIR: resolve(config.attachmentStorageDir),
       DB_POOL_MAX: String(config.databasePoolMax), DATABASE_URL: config.databaseUrl,
       APP_ORIGIN: origin, AUTH_SECRET: identity.secret,
     },

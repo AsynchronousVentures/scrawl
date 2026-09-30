@@ -86,6 +86,7 @@ function text(input: unknown, traversal: Traversal, maximum = CONTENT_LIMITS.max
 
 function safeUrl(value: string, media: boolean): boolean {
   if (/^\/api\/v1\/attachments\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/content$/i.test(value)) return true;
+  if (/^\/api\/public\/publications\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/attachments\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) return true;
   if (media && value === '') return true;
   if (!value || value.length > CONTENT_LIMITS.maxHrefLength
     || /[\s\u0000-\u001f\u007f-\u009f\\]/u.test(value)

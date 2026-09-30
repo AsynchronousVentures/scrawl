@@ -4,6 +4,40 @@
  */
 
 export interface paths {
+    "/api/public/publications/{publicId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Anonymous approved title/content only. No private head, navigation, source identifiers, authors or history. */
+        get: operations["readPublicPublication"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/public/publications/{publicId}/attachments/{attachmentId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Anonymous immutable bytes from this active grant and its selected revision allowlist only. */
+        get: operations["readPublicAttachment"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/attachments/{id}/content": {
         parameters: {
             query?: never;
@@ -102,6 +136,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/documents/{id}/publication": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["readDocumentPublication"];
+        put?: never;
+        /** @description An administrator explicitly approves one immutable revision. Literal content and links become public; private saves never advance the grant. */
+        post: operations["publishDocumentRevision"];
+        /** @description Revoke future public reads under the document ETag. Copies already downloaded cannot be erased. */
+        delete: operations["unpublishDocument"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/documents/{id}/restore": {
         parameters: {
             query?: never;
@@ -174,6 +226,22 @@ export interface paths {
             cookie?: never;
         };
         get: operations["getMe"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/publishing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getPublishingAvailability"];
         put?: never;
         post?: never;
         delete?: never;
@@ -309,6 +377,126 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    readPublicPublication: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                publicId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        content: {
+                            document: {
+                                [key: string]: unknown;
+                            }[];
+                            /** @enum {string} */
+                            editorVersion: "0.55.0";
+                            /** @enum {string} */
+                            format: "blocknote-json";
+                            /** @enum {integer} */
+                            schemaVersion: 1;
+                        };
+                        /** Format: date-time */
+                        publishedAt: string;
+                        title: string;
+                    };
+                };
+            };
+        };
+    };
+    readPublicAttachment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                attachmentId: string;
+                publicId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": string;
+                };
+            };
+        };
+    };
     readAttachmentContent: {
         parameters: {
             query?: never;
@@ -946,6 +1134,214 @@ export interface operations {
             };
         };
     };
+    readDocumentPublication: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        lockVersion: number;
+                        publication: {
+                            /** @description Grant and lifecycle are valid. The global publishing switch may still pause public access. */
+                            active: boolean;
+                            /** Format: uuid */
+                            publicId: string;
+                            /** Format: date-time */
+                            publishedAt: string;
+                            /** Format: uuid */
+                            revisionId: string;
+                            revisionNumber: number;
+                        } | null;
+                    };
+                };
+            };
+        };
+    };
+    publishDocumentRevision: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The current strong document ETag. Missing is 428, stale is 412. */
+                "if-match"?: string;
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: uuid */
+                    revisionId: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        lockVersion: number;
+                        publication: {
+                            /** @description Grant and lifecycle are valid. The global publishing switch may still pause public access. */
+                            active: boolean;
+                            /** Format: uuid */
+                            publicId: string;
+                            /** Format: date-time */
+                            publishedAt: string;
+                            /** Format: uuid */
+                            revisionId: string;
+                            revisionNumber: number;
+                        } | null;
+                    };
+                };
+            };
+        };
+    };
+    unpublishDocument: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The current strong document ETag. Missing is 428, stale is 412. */
+                "if-match"?: string;
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        lockVersion: number;
+                        publication: {
+                            /** @description Grant and lifecycle are valid. The global publishing switch may still pause public access. */
+                            active: boolean;
+                            /** Format: uuid */
+                            publicId: string;
+                            /** Format: date-time */
+                            publishedAt: string;
+                            /** Format: uuid */
+                            revisionId: string;
+                            revisionNumber: number;
+                        } | null;
+                    };
+                };
+            };
+        };
+    };
     restoreDocumentRevision: {
         parameters: {
             query?: never;
@@ -1343,6 +1739,59 @@ export interface operations {
                         name: string;
                         /** @enum {string} */
                         role: "administrator" | "member";
+                    };
+                };
+            };
+        };
+    };
+    getPublishingAvailability: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        enabled: boolean;
+                        mayPublish: boolean;
                     };
                 };
             };

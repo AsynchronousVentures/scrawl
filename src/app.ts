@@ -12,6 +12,8 @@ import type { Core } from './core/index.js';
 import { registerDocumentRoutes } from './http/document-routes.js';
 import { registerSearchRoutes } from './http/search-routes.js';
 import { registerAttachmentRoutes } from './http/attachment-routes.js';
+import { registerPublishingRoutes } from './http/publishing-routes.js';
+import type { Publishing } from './capabilities/publishing/index.js';
 import { registerExportRoutes } from './http/export-routes.js';
 import type { Exporting } from './capabilities/exporting/index.js';
 import { registerFrontend } from './http/frontend.js';
@@ -23,10 +25,11 @@ type BuildOptions = {
   core?: Core;
   frontendRoot?: string;
   exporting?: Exporting;
+  publishing?: Publishing;
 };
 
 /** Builds the HTTP application without opening a port or connecting a database. */
-export async function buildApp({ config, checkDatabase, logging = true, core, frontendRoot, exporting }: BuildOptions) {
+export async function buildApp({ config, checkDatabase, logging = true, core, frontendRoot, exporting, publishing }: BuildOptions) {
   const app = Fastify({
     logger: logging ? {
       level: config.logLevel,
@@ -91,6 +94,7 @@ export async function buildApp({ config, checkDatabase, logging = true, core, fr
     registerSearchRoutes(app, core);
   }
   if (exporting) registerExportRoutes(app, exporting);
+  if (publishing) registerPublishingRoutes(app, publishing);
   if (config.apiDocsEnabled) {
     app.get('/openapi.json', { schema: { hide: true } }, async () => app.swagger());
   }

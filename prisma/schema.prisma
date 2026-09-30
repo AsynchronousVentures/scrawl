@@ -32,6 +32,7 @@ model User {
   archivedDocuments Document[] @relation("DocumentArchiver")
   authoredRevisions DocumentRevision[]
   uploadedAttachments Attachment[]
+  publications Publication[]
 
   @@unique([email])
   @@map("user")
@@ -119,6 +120,7 @@ model Document {
   currentRevisionNumber Int
   head                  DocumentRevision   @relation("DocumentHead", fields: [id, currentRevisionNumber], references: [documentId, revisionNumber], onDelete: NoAction, onUpdate: NoAction)
   lockVersion           Int                @default(1)
+  availabilityVersion   Int                @default(1)
   createdAt             DateTime           @default(now()) @db.Timestamptz(3)
   createdBy             String
   creator               User               @relation("DocumentCreator", fields: [createdBy], references: [id], onDelete: Restrict)
@@ -128,6 +130,7 @@ model Document {
   archiver              User?              @relation("DocumentArchiver", fields: [archivedBy], references: [id], onDelete: Restrict)
   revisions             DocumentRevision[] @relation("DocumentHistory")
   attachments           Attachment[]
+  publication           Publication?
 
   @@index([spaceId, archivedAt, id])
 }
@@ -151,6 +154,7 @@ model DocumentRevision {
   changeNote           String?    @db.VarChar(2000)
   headOf               Document[] @relation("DocumentHead")
   attachments          RevisionAttachment[]
+  publications         Publication[] @relation("PublishedRevision")
 
   @@unique([documentId, revisionNumber])
   @@unique([id, documentId])
@@ -181,4 +185,18 @@ model RevisionAttachment {
   attachment   Attachment @relation(fields: [attachmentId, documentId], references: [id, documentId], onDelete: Restrict)
 
   @@id([revisionId, attachmentId])
+}
+
+model Publication {
+  id                          String @id @db.Uuid
+  documentId                  String @unique @db.Uuid
+  document                    Document @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  revisionNumber              Int
+  revision                    DocumentRevision @relation("PublishedRevision", fields: [documentId, revisionNumber], references: [documentId, revisionNumber], onDelete: Restrict)
+  approvedAvailabilityVersion Int
+  active                      Boolean @default(true)
+  publisherId                 String
+  publisher                   User @relation(fields: [publisherId], references: [id], onDelete: Restrict)
+  publishedAt                 DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt                   DateTime @updatedAt @db.Timestamptz(3)
 }

@@ -83,7 +83,7 @@ export async function runFixtureCommand(command: 'setup' | 'reset', confirmation
         }
       }
       // No CASCADE and no schema/database drop. Preserve Prisma's migration ledger.
-      const knownTables = ['user', 'session', 'account', 'verification', 'Space', 'SpaceMembership', 'Document', 'DocumentRevision', 'Attachment', 'RevisionAttachment'];
+      const knownTables = ['user', 'session', 'account', 'verification', 'Space', 'SpaceMembership', 'Document', 'DocumentRevision', 'Attachment', 'RevisionAttachment', 'Publication'];
       const tables = await database.pool.query<{ tablename: string }>(
         "SELECT tablename FROM pg_tables WHERE schemaname = 'public'",
       );

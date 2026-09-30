@@ -13,6 +13,7 @@ test('development defaults are local and explicit', () => {
   assert.equal(config.port, 3000);
   assert.equal(config.apiDocsEnabled, true);
   assert.equal(config.databasePoolMax, 5);
+  assert.equal(config.publicPublishingEnabled, false);
 });
 test('production disables API docs by default', () => {
   assert.equal(readConfig({ ...base, NODE_ENV: 'production' }).apiDocsEnabled, false);
@@ -22,6 +23,12 @@ test('boolean false is not truthy', () => {
 });
 test('invalid boolean rejected', () => {
   assert.throws(() => readConfig({ ...base, API_DOCS_ENABLED: 'yes' }), /API_DOCS_ENABLED/);
+});
+test('publishing requires an explicit valid boolean in every environment', () => {
+  assert.equal(readConfig({ ...base, NODE_ENV: 'production' }).publicPublishingEnabled, false);
+  assert.equal(readConfig({ ...base, PUBLIC_PUBLISHING_ENABLED: 'true' }).publicPublishingEnabled, true);
+  assert.equal(readConfig({ ...base, PUBLIC_PUBLISHING_ENABLED: 'false' }).publicPublishingEnabled, false);
+  assert.throws(() => readConfig({ ...base, PUBLIC_PUBLISHING_ENABLED: 'yes' }), /PUBLIC_PUBLISHING_ENABLED/);
 });
 test('fractional port rejected', () => {
   assert.throws(() => readConfig({ ...base, PORT: '3000.5' }), /PORT/);

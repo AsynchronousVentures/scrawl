@@ -9,6 +9,7 @@ export type AppConfig = Readonly<{
   port: number;
   logLevel: LogLevel;
   apiDocsEnabled: boolean;
+  publicPublishingEnabled: boolean;
   databaseUrl: string;
   databasePoolMax: number;
   attachmentStorageDir: string;
@@ -87,6 +88,7 @@ export function readConfig(env: Environment): AppConfig {
     port: integer('PORT', env.PORT, 3000, 1, 65535),
     logLevel: logLevel as LogLevel,
     apiDocsEnabled: boolean('API_DOCS_ENABLED', env.API_DOCS_ENABLED, nodeEnv === 'development'),
+    publicPublishingEnabled: boolean('PUBLIC_PUBLISHING_ENABLED', env.PUBLIC_PUBLISHING_ENABLED, false),
     databaseUrl,
     attachmentStorageDir: env.ATTACHMENT_STORAGE_DIR ?? 'var/private-attachments',
     databasePoolMax: integer('DB_POOL_MAX', env.DB_POOL_MAX, 5, 1, 100),
