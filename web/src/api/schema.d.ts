@@ -315,6 +315,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/spaces/{id}/documents/by-slug/{slug}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["readDocumentBySlug"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/spaces/{id}/members/{userId}": {
         parameters: {
             query?: never;
@@ -326,6 +342,22 @@ export interface paths {
         put: operations["grantSpaceMembership"];
         post?: never;
         delete: operations["revokeSpaceMembership"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/spaces/by-slug/{slug}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["readSpaceBySlug"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -631,8 +663,10 @@ export interface operations {
                             revisionNumber: number;
                             title: string;
                         };
+                        slug: string;
                         /** Format: uuid */
                         spaceId: string;
+                        spaceSlug: string;
                         /** Format: date-time */
                         updatedAt: string;
                     };
@@ -743,8 +777,10 @@ export interface operations {
                             revisionNumber: number;
                             title: string;
                         };
+                        slug: string;
                         /** Format: uuid */
                         spaceId: string;
+                        spaceSlug: string;
                         /** Format: date-time */
                         updatedAt: string;
                     };
@@ -842,8 +878,10 @@ export interface operations {
                             revisionNumber: number;
                             title: string;
                         };
+                        slug: string;
                         /** Format: uuid */
                         spaceId: string;
+                        spaceSlug: string;
                         /** Format: date-time */
                         updatedAt: string;
                     };
@@ -1435,8 +1473,10 @@ export interface operations {
                             revisionNumber: number;
                             title: string;
                         };
+                        slug: string;
                         /** Format: uuid */
                         spaceId: string;
+                        spaceSlug: string;
                         /** Format: date-time */
                         updatedAt: string;
                     };
@@ -1679,8 +1719,10 @@ export interface operations {
                             revisionNumber: number;
                             title: string;
                         };
+                        slug: string;
                         /** Format: uuid */
                         spaceId: string;
+                        spaceSlug: string;
                         /** Format: date-time */
                         updatedAt: string;
                     };
@@ -1922,6 +1964,7 @@ export interface operations {
                             id: string;
                             lockVersion: number;
                             name: string;
+                            slug: string;
                             /** Format: date-time */
                             updatedAt: string;
                         }[];
@@ -1995,6 +2038,7 @@ export interface operations {
                         id: string;
                         lockVersion: number;
                         name: string;
+                        slug: string;
                         /** Format: date-time */
                         updatedAt: string;
                     };
@@ -2062,6 +2106,7 @@ export interface operations {
                         id: string;
                         lockVersion: number;
                         name: string;
+                        slug: string;
                         /** Format: date-time */
                         updatedAt: string;
                     };
@@ -2132,8 +2177,10 @@ export interface operations {
                             /** Format: uuid */
                             id: string;
                             lockVersion: number;
+                            slug: string;
                             /** Format: uuid */
                             spaceId: string;
+                            spaceSlug: string;
                             title: string;
                             /** Format: date-time */
                             updatedAt: string;
@@ -2244,8 +2291,104 @@ export interface operations {
                             revisionNumber: number;
                             title: string;
                         };
+                        slug: string;
                         /** Format: uuid */
                         spaceId: string;
+                        spaceSlug: string;
+                        /** Format: date-time */
+                        updatedAt: string;
+                    };
+                };
+            };
+        };
+    };
+    readDocumentBySlug: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: date-time */
+                        archivedAt: string | null;
+                        archivedBy: string | null;
+                        /** Format: date-time */
+                        createdAt: string;
+                        createdBy: string;
+                        currentRevisionNumber: number;
+                        /** Format: uuid */
+                        id: string;
+                        lockVersion: number;
+                        revision: {
+                            authorId: string;
+                            changeNote: string | null;
+                            content: {
+                                document: {
+                                    [key: string]: unknown;
+                                }[];
+                                /** @enum {string} */
+                                editorVersion: "0.55.0";
+                                /** @enum {string} */
+                                format: "blocknote-json";
+                                /** @enum {integer} */
+                                schemaVersion: 1;
+                            };
+                            /** Format: date-time */
+                            createdAt: string;
+                            /** Format: uuid */
+                            documentId: string;
+                            /** Format: uuid */
+                            id: string;
+                            plainText: string;
+                            revisionNumber: number;
+                            title: string;
+                        };
+                        slug: string;
+                        /** Format: uuid */
+                        spaceId: string;
+                        spaceSlug: string;
                         /** Format: date-time */
                         updatedAt: string;
                     };
@@ -2324,6 +2467,7 @@ export interface operations {
                         id: string;
                         lockVersion: number;
                         name: string;
+                        slug: string;
                         /** Format: date-time */
                         updatedAt: string;
                     };
@@ -2395,6 +2539,75 @@ export interface operations {
                         id: string;
                         lockVersion: number;
                         name: string;
+                        slug: string;
+                        /** Format: date-time */
+                        updatedAt: string;
+                    };
+                };
+            };
+        };
+    };
+    readSpaceBySlug: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /**
+                         * @description Current caller access; the server checks every operation.
+                         * @enum {string}
+                         */
+                        access: "reader" | "editor";
+                        /** Format: date-time */
+                        createdAt: string;
+                        createdBy: string;
+                        /** Format: uuid */
+                        id: string;
+                        lockVersion: number;
+                        name: string;
+                        slug: string;
                         /** Format: date-time */
                         updatedAt: string;
                     };

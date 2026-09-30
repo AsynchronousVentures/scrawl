@@ -5,6 +5,7 @@ import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import staticFiles from '@fastify/static';
 import type { FastifyInstance } from 'fastify';
+import { slugSchema } from './slugs.js';
 
 /** Backend-only workflows work without a frontend build. A present build must be valid. */
 export async function frontendRootIfBuilt(root: string) {
@@ -37,4 +38,12 @@ export async function registerFrontend(app: FastifyInstance, root: string) {
     return reply.header('cross-origin-opener-policy', 'same-origin')
       .header('x-content-type-options', 'nosniff').sendFile('index.html', root, { cacheControl: false });
   });
+  for (const path of ['/spaces/:spaceSlug', '/spaces/:spaceSlug/documents/:documentSlug']) {
+    app.get(path, { schema: { hide: true, params: {
+      type: 'object', additionalProperties: false,
+      required: path.includes(':documentSlug') ? ['spaceSlug', 'documentSlug'] : ['spaceSlug'],
+      properties: { spaceSlug: slugSchema, documentSlug: slugSchema },
+    } } }, async (_request, reply) => reply.header('cross-origin-opener-policy', 'same-origin')
+      .header('x-content-type-options', 'nosniff').sendFile('index.html', root, { cacheControl: false }));
+  }
 }

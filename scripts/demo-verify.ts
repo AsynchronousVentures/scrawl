@@ -45,6 +45,15 @@ async function main() {
           const title = page.getByRole('textbox', { name: 'Document title', exact: true });
           const body = page.getByRole('textbox', { name: 'Document body', exact: true });
           await expect(title).toHaveValue('Start here');
+          stage = `${role} readable link and reload`;
+          const routeResponse: APIResponse = await context.request.get(`${origin}/api/v1/documents/${manifest.startDocumentId}`);
+          assert.equal(routeResponse.status(), 200);
+          const route: unknown = await routeResponse.json();
+          assert(route && typeof route === 'object' && 'spaceSlug' in route && typeof route.spaceSlug === 'string'
+            && 'slug' in route && typeof route.slug === 'string');
+          await expect(page).toHaveURL(`${origin}/spaces/${route.spaceSlug}/documents/${route.slug}`);
+          await page.reload();
+          await expect(title).toHaveValue('Start here');
           await expect(body).toContainText('A saved document has one current revision.');
           const image = body.locator('img').first();
           await expect(image).toBeVisible();

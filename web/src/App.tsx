@@ -17,6 +17,7 @@ const emptyDraft = (): Draft => ({ title: 'Untitled document', content: validate
 const draftFrom = (loaded: LoadedDocument): Draft => ({ title: loaded.document.revision.title, content: loaded.document.revision.content });
 const failureMessage = (error: unknown) => error instanceof ApiError ? error.message : 'The response could not be used. Your unsaved work is retained.';
 const validId = (value: string | null) => value && /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(value) ? value : undefined;
+type DocumentTarget = string | { spaceId: string; slug: string };
 
 function downloadFile(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob), link = document.createElement('a');
@@ -92,6 +93,7 @@ export function App() {
   const owner = useRef<string | null>(null);
   const draftSpaceId = useRef<string | null>(null);
   const newDraftBaseline = useRef<Draft | null>(null);
+  const requestedDocument = useRef<DocumentTarget | null>(null);
   const dirty = Boolean(draft && (!base || draft.title !== base.document.revision.title
     || JSON.stringify(draft.content) !== JSON.stringify(base.document.revision.content)));
   const discardBaseline = base ? draftFrom(base) : newDraftBaseline.current;
@@ -107,14 +109,15 @@ export function App() {
   function rememberSelection(selectedSpace: string | null, selectedDocument: string | null) {
     const url = new URL(location.href);
     url.searchParams.delete('space'); url.searchParams.delete('document');
-    if (selectedSpace) url.searchParams.set('space', selectedSpace);
-    if (selectedDocument) url.searchParams.set('document', selectedDocument);
+    url.pathname = selectedSpace ? `/spaces/${selectedSpace}${selectedDocument ? `/documents/${selectedDocument}` : ''}` : '/';
+    url.hash = '';
     history.replaceState(null, '', url);
   }
   function resetDocument() {
     setLoadingDocument(false);
     draftSpaceId.current = null;
     newDraftBaseline.current = null;
+    requestedDocument.current = null;
     setBase(null); setDraft(null); dirtyRef.current = false; setContentError(null);
     setConflict(null); setSaveError(''); setNotice(''); setHistoryOpen(false);
     setRevisions([]); setRevision(null); historyGeneration.current++;
@@ -127,7 +130,7 @@ export function App() {
     if (!preserveEditor) setEditorKey(key => key + 1);
     dirtyRef.current = false; setContentError(null); setSaveError(''); setConflict(null);
     setUploadError(''); setUploadMessage('');
-    rememberSelection(loaded.document.spaceId, loaded.document.id);
+    rememberSelection(loaded.document.spaceSlug, loaded.document.slug);
   }
   function unavailable(error: unknown) {
     if (!(error instanceof ApiError) || ![401,403,404].includes(error.status)) return false;
@@ -161,10 +164,11 @@ export function App() {
     setPending({ action: () => setNotice('Unsaved changes discarded. Nothing was saved.') });
   }
 
-  async function loadDocument(id: string, ticket = generation.current, expectedSpaceId?: string) {
+  async function loadDocument(target: DocumentTarget, ticket = generation.current, expectedSpaceId?: string) {
+    requestedDocument.current = target;
     setLoadingDocument(true); setSaveError('');
     try {
-      const loaded = await api.document(id);
+      const loaded = typeof target === 'string' ? await api.document(target) : await api.documentBySlug(target.spaceId, target.slug);
       if (ticket !== generation.current) return;
       if (expectedSpaceId && loaded.document.spaceId !== expectedSpaceId) throw new ApiError(404);
       adopt(loaded);
@@ -197,17 +201,19 @@ export function App() {
       if (ticket === generation.current && !unavailable(error)) setListError(failureMessage(error));
     } finally { if (ticket === generation.current) setListLoading(false); }
   }
-  async function selectSpace(selected: Space, documentId?: string) {
+  async function selectSpace(selected: Space, documentTarget?: DocumentTarget) {
     // Search may reach an authorized space outside the loaded navigation page.
     setSpaces(previous => previous.some(item => item.id === selected.id)
       ? previous.map(item => item.id === selected.id ? selected : item) : [...previous, selected]);
     const ticket = ++generation.current;
     resetDocument(); setSpace(selected); setDocuments([]); setDocumentsCursor(null); setAccessIssue(null);
-    rememberSelection(selected.id, documentId ?? null);
+    // Keep a direct link intact until its document has actually loaded. A
+    // failed list/read must not replace the requested document with a default.
+    if (!documentTarget) rememberSelection(selected.slug, null);
     const result = await listDocuments(selected);
     if (ticket !== generation.current || !result) return;
-    const id = documentId ?? result.items[0]?.id;
-    if (id) await loadDocument(id, ticket, selected.id);
+    const target = documentTarget ?? result.items[0]?.id;
+    if (target) await loadDocument(target, ticket, selected.id);
   }
   async function workspace(account: User, recover = false) {
     setUser(account); setBootError(''); setListLoading(true); setListError('');
@@ -231,6 +237,14 @@ export function App() {
         return;
       }
       owner.current = account.id;
+      const slugs = /^\/spaces\/([a-z0-9]+(?:-[a-z0-9]+)*)(?:\/documents\/([a-z0-9]+(?:-[a-z0-9]+)*))?\/?$/.exec(location.pathname);
+      if (slugs) {
+        const selected = await api.spaceBySlug(slugs[1]!);
+        if (ticket !== generation.current) return;
+        setAccessIssue(null);
+        await selectSpace(selected, slugs[2] ? { spaceId: selected.id, slug: slugs[2] } : undefined);
+        return;
+      }
       const params = new URLSearchParams(location.search);
       const spaceId = validId(params.get('space'));
       const documentId = validId(params.get('document'));
@@ -333,7 +347,7 @@ export function App() {
       const initial = emptyDraft(); newDraftBaseline.current = initial; setDraft(initial);
       setEditorKey(key => key + 1);
       draftSpaceId.current = space?.id ?? null;
-      rememberSelection(space?.id ?? null, null);
+      rememberSelection(space?.slug ?? null, null);
       requestAnimationFrame(() => { titleInput.current?.focus(); titleInput.current?.select(); });
     });
   }
@@ -446,7 +460,7 @@ export function App() {
     {spacesCursor && <button disabled={listLoading} onClick={() => { void moreSpaces(spacesCursor); }}>More spaces</button>}
     {space && <><div className="listhead"><span>Documents</span>{space.access === 'editor' && !accessIssue && <button onClick={newDocument} disabled={blocked}>New document</button>}</div>
       {listLoading && <p role="status" className="muted">Loading documents…</p>}
-      <nav className="documents" aria-label="Documents">{documents.map(item => <button key={item.id} className={base?.document.id === item.id ? 'active' : ''} aria-current={base?.document.id === item.id ? 'page' : undefined} disabled={blocked} onClick={() => guarded(() => { const ticket = ++generation.current; resetDocument(); rememberSelection(space.id,item.id); void loadDocument(item.id,ticket,space.id); })}>{item.title}{item.archivedAt && <small>Archived</small>}</button>)}</nav>
+      <nav className="documents" aria-label="Documents">{documents.map(item => <button key={item.id} className={base?.document.id === item.id ? 'active' : ''} aria-current={base?.document.id === item.id ? 'page' : undefined} disabled={blocked} onClick={() => guarded(() => { const ticket = ++generation.current; resetDocument(); rememberSelection(space.slug,item.slug); void loadDocument(item.id,ticket,space.id); })}>{item.title}{item.archivedAt && <small>Archived</small>}</button>)}</nav>
       {!listLoading && !listError && documents.length === 0 && <p className="muted">No documents in this space.</p>}
       {documentsCursor && <button disabled={listLoading} onClick={() => { void listDocuments(space,includeArchived,documentsCursor); }}>More documents</button>}
       <label className="archive-toggle"><input type="checkbox" checked={includeArchived} disabled={blocked} onChange={event => { setIncludeArchived(event.target.checked); void listDocuments(space,event.target.checked); }} />Show archived</label>
@@ -486,7 +500,7 @@ export function App() {
             {accessIssue && <div className="notice" role="alert"><strong>{saveError || (accessIssue === 'session' ? 'Your session expired.' : 'Access to this document is unavailable.')}</strong><p>{dirty ? 'Your complete unsaved title and body are retained in this tab. Nothing was saved. Server actions are unavailable. Copy your draft before closing or reloading.' : 'Sign in or ask an administrator to verify your access.'}</p>
               {dirty && draft && <button onClick={() => { void navigator.clipboard.writeText(draft.title+'\n\n'+extractPlainText(draft.content.document)).then(() => setNotice('Local draft text copied. Nothing was saved.')).catch(() => setNotice('Copy is unavailable. Select and copy the retained title and body.')); }}>Copy local draft text</button>}
             </div>}
-            {!accessIssue && saveError && <div className="notice" role="alert"><strong>{saveError}</strong>{dirty && <p>Your complete local draft is retained. It has not been saved.</p>}{!draft && <button onClick={() => { const id=validId(new URLSearchParams(location.search).get('document')); if(id)void loadDocument(id); }}>Retry</button>}</div>}
+            {!accessIssue && saveError && <div className="notice" role="alert"><strong>{saveError}</strong>{dirty && <p>Your complete local draft is retained. It has not been saved.</p>}{!draft && <button onClick={() => { if(requestedDocument.current)void loadDocument(requestedDocument.current); }}>Retry</button>}</div>}
             {notice && <p className="notice" role="status">{notice}</p>}
             {uploadError && !accessIssue && <p className="notice" role="alert">{uploadError}</p>}
             {uploadMessage && !accessIssue && <p className="notice" role="status">{uploadMessage}</p>}

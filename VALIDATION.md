@@ -1,5 +1,15 @@
 # Validation
 
+## Readable private URLs
+
+Private navigation now uses `/spaces/:spaceSlug/documents/:documentSlug`, including [the supplied release-checklist example](https://agentvm.beardie-tone.ts.net:10000/spaces/demo-handbook/documents/release-checklist). Initial saved titles determine stable slugs; renaming, restoring and archiving retain them. Duplicate names get readable numeric suffixes, and archived names remain reserved. Existing UUID query bookmarks continue to load and canonicalize after authentication. UUID API identities, export provenance and independent public approval URLs are unchanged. Route logging now uses templates to avoid recording private names.
+
+`npm run check` passed with 71 unit/config/HTTP/CLI tests, strict backend/frontend types, boundaries, builds and generated OpenAPI. The complete real PostgreSQL suite passed 92/92 on both 17 and 18, with zero skips/failures, including concurrent space/document slug collisions, scope, archive reservation, immutable history, restored content, current grants and revoked sessions. Space creation also rechecks a session revoked while waiting for its namespace lock. The clean full browser run passed 43/43 with no retries or skips, retaining all previous checks and Demo A alongside direct login/reload/rename/old bookmarks, reader/outsider restrictions and unknown-link isolation. The persistent Funnel demo passed its fresh administrator/reader/outsider/anonymous acceptance again, including canonical links and reloads.
+
+Intermediate failures were resolved and rerun, not counted as passing: a focused browser invocation overlapped the database suite's disposable database and was refused by its target guard; two older browser assertions/fault injections assumed query URLs and were updated without removing their protections. One intermediate full 17 run failed Demo A, while its isolated rerun and final complete 92-test run passed; the harness now reports only known failure-stage labels for safe diagnosis. An acceptance-script variable/type error was corrected. Historical foundation validation below remains the earlier checkpoint, not a claim about these intermediate runs.
+
+Migration `20260930060000_readable_slugs` is seventh in the existing history. Run `npm run db:generate` and `npm run db:migrate` on an explicitly selected development database before starting the updated code. It adds bounded unique navigation columns, deterministic collision-safe backfill and format checks, without adding revisions or changing timestamps, lifecycle/lock versions, grants, attachment references or publication approval. A real retained-data test compares every preexisting space/document/revision field before/after. The running PostgreSQL 18 preview was stopped, migrated and restarted; exact fingerprints of its existing spaces, documents, revisions, attachments and publications matched after excluding only the new slug columns. No reset or credential change occurred; the original 17 demo/volume was not migrated or altered. No dependency changes were needed.
+
 ## BlockNote integration demo, current branch
 
 Work is on `integration/blocknote-demo`, based on completed P4 `445bae2`. [Draft PR #6](https://github.com/AsynchronousVentures/scrawl/pull/6) and [five tracking issues](docs/integration-backlog.md) distinguish implemented-on-branch work from merged or released work. Nothing in this integration is merged, released or deployed to production. The maintainer authorized the session to continue across earlier packet boundaries, then explicitly requested public Funnel access for the synthetic preview; historical packet results below are not the current editor's contract.
@@ -49,7 +59,7 @@ Fresh development defaults to PostgreSQL 18 with `docker compose up -d --wait`. 
 
 ### Migration and preservation instructions
 
-The single history now has six migrations: identity/spaces, documents/revisions, native BlockNote metadata, indexed search, private attachments and selected publication. `migrate deploy` is additive and never converts content automatically. Search backfill changes only generated derived state. Publication adds a separate positive availability generation. Existing native instances need normal deployment of the additive migrations, not content conversion.
+The single history now has seven migrations: identity/spaces, documents/revisions, native BlockNote metadata, indexed search, private attachments, selected publication and readable navigation slugs. `migrate deploy` is additive and never converts content automatically. Search backfill changes only generated derived state. Publication adds a separate positive availability generation. Existing native instances need normal deployment of the additive migrations, not content conversion.
 
 For retained legacy content, stop the application and rehearse on an explicitly disposable local copy first:
 

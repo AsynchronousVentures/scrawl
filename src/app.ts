@@ -38,8 +38,9 @@ export async function buildApp({ config, checkDatabase, logging = true, core, fr
         remove: true,
       },
       serializers: {
-        // Query strings can contain secrets; omit them and all request headers/body.
-        req: (request) => ({ method: request.method, url: request.url.split('?')[0] ?? '' }),
+        // Query strings can contain secrets, and slugs contain private names.
+        // Log route patterns instead of caller URLs, headers or bodies.
+        req: (request) => ({ method: request.method, url: request.routeOptions?.url ?? '/unmatched' }),
       },
     } : false,
     genReqId: () => randomUUID(),

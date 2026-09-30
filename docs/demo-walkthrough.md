@@ -4,7 +4,9 @@ Scrawl's integrated demo uses actual authentication, the HTTP API, PostgreSQL 18
 
 ## Use the running demo
 
-Open [Scrawl's field guide](https://agentvm.beardie-tone.ts.net:10000/?space=f253ee5d-caad-4449-a299-296da6ecd70d&document=f76ece5c-20bd-47ad-a425-6200fb5ad6a2) from any browser. At the maintainer's explicit request, Tailscale Funnel now forwards public HTTPS 10000 to the existing loopback API on 3100. Private documents still require authentication and current grants. This is a synthetic development preview, not a production deployment.
+Open [Scrawl's field guide](https://agentvm.beardie-tone.ts.net:10000/spaces/scrawl-field-guide/documents/start-here) from any browser. At the maintainer's explicit request, Tailscale Funnel now forwards public HTTPS 10000 to the existing loopback API on 3100. Private documents still require authentication and current grants. This is a synthetic development preview, not a production deployment.
+
+Links now use stable readable names, for example [the Demo Handbook release checklist](https://agentvm.beardie-tone.ts.net:10000/spaces/demo-handbook/documents/release-checklist). Saving a renamed title keeps its existing link. Duplicate titles get readable numeric suffixes within their space; archived links remain reserved. Old `?space=UUID&document=UUID` bookmarks still work and become readable paths after authorized loading. UUIDs remain in the API, revision provenance and native exports.
 
 Retrieve credentials locally, without copying them into issues, screenshots or chat:
 

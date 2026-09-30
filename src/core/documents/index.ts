@@ -8,8 +8,9 @@ import type { Spaces } from '../spaces/index.js';
 import { attachmentReferences, type Attachments } from '../attachments/index.js';
 import { HttpProblem } from '../../http/problems.js';
 import { ContentValidationError, validateContent } from './content.js';
+import { availableSlug, slugify, validSlug } from '../slugs.js';
 
-type Head = Document & { head: DocumentRevision };
+type Head = Document & { head: DocumentRevision; space: { slug: string } };
 type RevisionMetadata = Pick<DocumentRevision, 'id' | 'documentId' | 'revisionNumber' | 'title' | 'authorId' | 'createdAt' | 'changeNote'>;
 type Actor = Awaited<ReturnType<Identity['actor']>>;
 
@@ -80,9 +81,10 @@ function revisionDto(revision: DocumentRevision) {
   }).content, plainText: revision.plainText };
 }
 
-function documentSummary(document: Document & { head: Pick<DocumentRevision, 'title'> }) {
+function documentSummary(document: Document & { head: Pick<DocumentRevision, 'title'>; space: { slug: string } }) {
   return {
-    id: document.id, spaceId: document.spaceId, currentRevisionNumber: document.currentRevisionNumber,
+    id: document.id, slug: document.slug, spaceId: document.spaceId, spaceSlug: document.space.slug,
+    currentRevisionNumber: document.currentRevisionNumber,
     lockVersion: document.lockVersion, title: document.head.title, createdAt: document.createdAt.toISOString(),
     createdBy: document.createdBy, updatedAt: document.updatedAt.toISOString(),
     archivedAt: document.archivedAt?.toISOString() ?? null, archivedBy: document.archivedBy,
@@ -120,7 +122,7 @@ export function createDocuments(prisma: PrismaClient, identity: Identity, spaces
 
   async function readHead(headers: Headers, id: string) {
     await authorizeDocument(headers, id);
-    return prisma.document.findUniqueOrThrow({ where: { id }, include: { head: true } });
+    return prisma.document.findUniqueOrThrow({ where: { id }, include: { head: true, space: { select: { slug: true } } } });
   }
 
   async function mutate(headers: Headers, id: string, expectedEtag: string | undefined,
@@ -132,7 +134,7 @@ export function createDocuments(prisma: PrismaClient, identity: Identity, spaces
     return prisma.$transaction(async (tx) => {
       const actor = await spaces.lockForWrite(tx, principal, target.spaceId);
       await tx.$queryRaw`SELECT "id" FROM "Document" WHERE "id" = ${id}::uuid AND "spaceId" = ${target.spaceId}::uuid FOR UPDATE`;
-      const document = await tx.document.findUniqueOrThrow({ where: { id }, include: { head: true } });
+      const document = await tx.document.findUniqueOrThrow({ where: { id }, include: { head: true, space: { select: { slug: true } } } });
       precondition(document, expectedEtag);
       return documentDto(await operation(tx, document, actor));
     });
@@ -158,7 +160,7 @@ export function createDocuments(prisma: PrismaClient, identity: Identity, spaces
       data: { currentRevisionNumber: revisionNumber, lockVersion: { increment: 1 } },
     });
     if (updated.count !== 1) throw new HttpProblem(412, 'DOCUMENT_VERSION_CONFLICT');
-    return tx.document.findUniqueOrThrow({ where: { id: document.id }, include: { head: true } });
+    return tx.document.findUniqueOrThrow({ where: { id: document.id }, include: { head: true, space: { select: { slug: true } } } });
   }
 
   async function lifecycle(headers: Headers, id: string, expectedEtag: string | undefined, archive: boolean) {
@@ -169,7 +171,7 @@ export function createDocuments(prisma: PrismaClient, identity: Identity, spaces
         ...(archive ? { availabilityVersion: { increment: 1 } } : {}),
         lockVersion: { increment: 1 },
       } });
-      return tx.document.findUniqueOrThrow({ where: { id: document.id }, include: { head: true } });
+      return tx.document.findUniqueOrThrow({ where: { id: document.id }, include: { head: true, space: { select: { slug: true } } } });
     });
   }
 
@@ -278,8 +280,11 @@ export function createDocuments(prisma: PrismaClient, identity: Identity, spaces
       const snapshot = { title: title(fields.title), content: content(fields.content), changeNote: changeNote(fields.changeNote) };
       return prisma.$transaction(async (tx) => {
         const actor = await spaces.lockForWrite(tx, principal, spaceId);
+        const base = slugify(snapshot.title, 'document');
+        const occupied = await tx.document.findMany({ where: { spaceId, OR: [{ slug: base }, { slug: { startsWith: `${base}-` } }] }, select: { slug: true } });
+        const slug = availableSlug(base, occupied.map(document => document.slug));
         const document = await tx.document.create({ data: {
-          id: randomUUID(), spaceId, currentRevisionNumber: 1, createdBy: actor.id,
+          id: randomUUID(), slug, spaceId, currentRevisionNumber: 1, createdBy: actor.id,
         } });
         const revisionId = randomUUID();
         await tx.documentRevision.create({ data: {
@@ -291,7 +296,7 @@ export function createDocuments(prisma: PrismaClient, identity: Identity, spaces
           authorId: actor.id, changeNote: snapshot.changeNote,
         } });
         await attachments.reference(tx, document.id, revisionId, snapshot.content.content.document);
-        return documentDto(await tx.document.findUniqueOrThrow({ where: { id: document.id }, include: { head: true } }));
+        return documentDto(await tx.document.findUniqueOrThrow({ where: { id: document.id }, include: { head: true, space: { select: { slug: true } } } }));
       });
     },
     async list(headers: Headers, spaceId: string, input: { limit?: number; cursor?: string; includeArchived?: boolean } = {}) {
@@ -300,12 +305,19 @@ export function createDocuments(prisma: PrismaClient, identity: Identity, spaces
       if (input.includeArchived !== undefined && typeof input.includeArchived !== 'boolean') throw new HttpProblem(400, 'INVALID_REQUEST');
       const documents = await prisma.document.findMany({
         where: { spaceId, ...(input.includeArchived ? {} : { archivedAt: null }), ...(input.cursor ? { id: { gt: input.cursor } } : {}) },
-        include: { head: { select: { title: true } } }, orderBy: { id: 'asc' }, take: limit + 1,
+        include: { head: { select: { title: true } }, space: { select: { slug: true } } }, orderBy: { id: 'asc' }, take: limit + 1,
       });
       const items = documents.slice(0, limit).map(documentSummary);
       return { items, nextCursor: documents.length > limit ? items.at(-1)!.id : null };
     },
     async read(headers: Headers, id: string) { return documentDto(await readHead(headers, id)); },
+    async readBySlug(headers: Headers, spaceId: string, slug: string) {
+      if (!validSlug(slug)) throw new HttpProblem(400, 'INVALID_REQUEST');
+      await spaces.authorize(prisma, await identity.resolve(headers), spaceId);
+      const target = await prisma.document.findUnique({ where: { spaceId_slug: { spaceId, slug } }, select: { id: true } });
+      if (!target) throw new HttpProblem(404, 'NOT_FOUND');
+      return documentDto(await readHead(headers, target.id));
+    },
     async exportNative(headers: Headers, id: string) {
       const document = await readHead(headers, id);
       const revision = document.head;

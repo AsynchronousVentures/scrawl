@@ -6,6 +6,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Core } from '../core/index.js';
 import { documentEtag } from '../core/documents/index.js';
 import { problemSchema } from './problems.js';
+import { slugSchema } from './slugs.js';
 
 const contentSchema = {
   type: 'object', additionalProperties: false, required: ['format', 'schemaVersion', 'editorVersion', 'document'],
@@ -38,13 +39,14 @@ const revisionSchema = {
 } as const;
 const documentProperties = {
   id: { type: 'string', format: 'uuid' }, spaceId: { type: 'string', format: 'uuid' },
+  slug: slugSchema, spaceSlug: slugSchema,
   currentRevisionNumber: { type: 'integer', minimum: 1 }, lockVersion: { type: 'integer', minimum: 1 },
   createdAt: { type: 'string', format: 'date-time' }, createdBy: { type: 'string' },
   updatedAt: { type: 'string', format: 'date-time' },
   archivedAt: { type: ['string', 'null'], format: 'date-time' }, archivedBy: { type: ['string', 'null'] },
 } as const;
 const documentRequired = [
-  'id', 'spaceId', 'currentRevisionNumber', 'lockVersion', 'createdAt', 'createdBy', 'updatedAt', 'archivedAt', 'archivedBy',
+  'id', 'slug', 'spaceId', 'spaceSlug', 'currentRevisionNumber', 'lockVersion', 'createdAt', 'createdBy', 'updatedAt', 'archivedAt', 'archivedBy',
 ] as const;
 const documentSchema = {
   type: 'object', additionalProperties: false, required: [...documentRequired, 'revision'],
@@ -95,6 +97,15 @@ const limitSchema = { type: 'integer', minimum: 1, maximum: 100 } as const;
 const errors = { '4xx': problemSchema, '5xx': problemSchema };
 
 export function registerDocumentRoutes(app: FastifyInstance, core: Core) {
+  app.get<{ Params: { id: string; slug: string } }>('/api/v1/spaces/:id/documents/by-slug/:slug', { schema: {
+    operationId: 'readDocumentBySlug', tags: ['Documents'],
+    params: { ...documentParams, required: ['id', 'slug'], properties: { ...documentParams.properties, slug: slugSchema } },
+    response: { 200: documentSchema, ...errors },
+  } }, async (request, reply) => {
+    const document = await core.documents.readBySlug(fromNodeHeaders(request.headers), request.params.id, request.params.slug);
+    return reply.header('etag', documentEtag(document)).send(document);
+  });
+
   app.post<{ Params: { id: string }; Body: unknown }>('/api/v1/spaces/:id/documents', { schema: {
     operationId: 'createDocument', tags: ['Documents'], params: documentParams,
     body: { type: 'object', additionalProperties: false, required: ['title', 'content'], properties: {

@@ -125,7 +125,13 @@ test('P3 Demo A uses real HTTP, repeatable isolated fixtures, guarded reset and 
 
   async function assertRun(expectedDocuments: number) {
     const run = await command('demo-a.ts');
-    assert.equal(run.code, 0, 'Every walkthrough assertion must pass against the actual HTTP API');
+    // Child diagnostics can contain private data. Surface only the runner's
+    // known stage label, never its raw output or credential/session values.
+    const stages = ['configuration', 'authentication', 'space setup', 'document create', 'stale save',
+      'missing precondition', 'reader denial', 'outsider denial', 'invalid native save', 'native rich export',
+      'restore', 'native export', 'lifecycle', 'membership revocation', 'logout', 'artifacts'];
+    const stage = stages.find(value => run.output.includes(`Demo A failed at ${value}. Check the running demo API and fixture setup.`));
+    assert.equal(run.code, 0, `Every walkthrough assertion must pass against the actual HTTP API${stage ? ` (${stage})` : ''}`);
     outputs.push(run.output);
     assert.equal(await database!.prisma.space.count(), expectedDocuments);
     assert.equal(await database!.prisma.document.count(), expectedDocuments);

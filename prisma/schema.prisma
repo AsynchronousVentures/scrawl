@@ -91,6 +91,7 @@ model Verification {
 model Space {
   id          String            @id @db.Uuid
   name        String            @db.VarChar(200)
+  slug        String            @unique @db.VarChar(80)
   createdBy   String
   creator     User              @relation(fields: [createdBy], references: [id], onDelete: Restrict)
   createdAt   DateTime          @default(now()) @db.Timestamptz(3)
@@ -115,6 +116,7 @@ model SpaceMembership {
 
 model Document {
   id                    String             @id @db.Uuid
+  slug                  String             @db.VarChar(80)
   spaceId               String             @db.Uuid
   space                 Space              @relation(fields: [spaceId], references: [id], onDelete: Restrict)
   currentRevisionNumber Int
@@ -132,6 +134,7 @@ model Document {
   attachments           Attachment[]
   publication           Publication?
 
+  @@unique([spaceId, slug])
   @@index([spaceId, archivedAt, id])
 }
 

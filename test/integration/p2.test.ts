@@ -169,7 +169,7 @@ test('P2 documents and immutable history against PostgreSQL and authenticated HT
     etag = String(result.headers.etag);
     assert.equal(result.headers.location, documentPath());
     assert.equal(etag, `"doc-${documentId}-bn1-v1"`);
-    assert.deepEqual(Object.keys(result.data).sort(), ['id', 'spaceId', 'currentRevisionNumber', 'lockVersion',
+    assert.deepEqual(Object.keys(result.data).sort(), ['id', 'slug', 'spaceId', 'spaceSlug', 'currentRevisionNumber', 'lockVersion',
       'createdAt', 'createdBy', 'updatedAt', 'archivedAt', 'archivedBy', 'revision'].sort());
     assert.deepEqual(Object.keys(result.data.revision).sort(), ['id', 'documentId', 'revisionNumber', 'title',
       'content', 'plainText', 'authorId', 'createdAt', 'changeNote'].sort());
@@ -218,8 +218,8 @@ test('P2 documents and immutable history against PostgreSQL and authenticated HT
       await connection.query('BEGIN');
       // Insertion succeeds before the deferred check; COMMIT must reject the missing initial revision.
       await connection.query(`INSERT INTO "Document"
-        ("id", "spaceId", "currentRevisionNumber", "lockVersion", "createdBy", "createdAt", "updatedAt")
-        VALUES ($1, $2, 1, 1, $3, now(), now())`, [brokenId, spaceId, editorUser.id]);
+        ("id", "slug", "spaceId", "currentRevisionNumber", "lockVersion", "createdBy", "createdAt", "updatedAt")
+        VALUES ($1, 'broken-head', $2, 1, 1, $3, now(), now())`, [brokenId, spaceId, editorUser.id]);
       await assert.rejects(connection.query('COMMIT'), (error: unknown) =>
         error instanceof Error && 'code' in error && error.code === '23503');
       await connection.query('ROLLBACK');

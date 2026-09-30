@@ -25,6 +25,48 @@ test.beforeEach(async () => { seeded = await demo.seed(); });
 function url(result = seeded) {
   return `${demo.origin}/?space=${result.spaceId}&document=${result.documentId}`;
 }
+
+test('readable document links survive login, reload, title changes and legacy bookmarks', async ({ page, context, browser }) => {
+  await login(page);
+  const original = await readDocument(context);
+  const readable = `${demo.origin}/spaces/${original.data.spaceSlug}/documents/${original.data.slug}`;
+  await expect(page).toHaveURL(readable);
+  await title(page).fill('Renamed handbook with a stable link');
+  await explicitSave(page);
+  await expect(page).toHaveURL(readable);
+  await page.reload();
+  await expect(title(page)).toHaveValue('Renamed handbook with a stable link');
+  await page.goto(url());
+  await expect(title(page)).toHaveValue('Renamed handbook with a stable link');
+  await expect(page).toHaveURL(readable);
+
+  const readerContext = await browser.newContext(), outsiderContext = await browser.newContext();
+  try {
+    const reader = await readerContext.newPage();
+    await login(reader, 'reader', readable);
+    await expect(title(reader)).toHaveValue('Renamed handbook with a stable link');
+    await expect(title(reader)).toHaveAttribute('readonly', '');
+    const outsider = await outsiderContext.newPage();
+    await login(outsider, 'outsider', readable);
+    await expect(title(outsider)).toHaveCount(0);
+    await expect(body(outsider)).toHaveCount(0);
+    await expect(outsider.getByRole('navigation', { name: 'Documents', exact: true })).toHaveCount(0);
+    expect((await apiRequest(outsiderContext, `/api/v1/spaces/${seeded.spaceId}/documents/by-slug/${original.data.slug}`)).status()).toBe(404);
+  } finally { await readerContext.close(); await outsiderContext.close(); }
+});
+
+test('unknown slug links show no unrelated space or document and never fall back to the first item', async ({ page, context }) => {
+  await login(page);
+  const original = await readDocument(context);
+  await page.goto(`${demo.origin}/spaces/${original.data.spaceSlug}/documents/not-a-document`);
+  await expect(page.getByRole('alert')).toContainText('Access to this document is unavailable.');
+  await expect(title(page)).toHaveCount(0);
+  await expect(page.getByRole('navigation', { name: 'Documents', exact: true })).toHaveCount(0);
+  await page.goto(`${demo.origin}/spaces/not-a-space/documents/not-a-document`);
+  await expect(page.getByRole('alert')).toContainText('Access to this document is unavailable.');
+  await expect(title(page)).toHaveCount(0);
+  expect(await readDocument(context)).toEqual(original);
+});
 function title(page: Page) { return page.getByRole('textbox', { name: 'Document title', exact: true }); }
 function body(page: Page) { return page.getByRole('textbox', { name: 'Document body', exact: true }); }
 function save(page: Page) { return page.getByRole('button', { name: 'Save', exact: true }); }
@@ -211,7 +253,8 @@ test('real search finds authorized saved text across spaces and keeps dirty edit
   await discard.getByRole('button', { name: 'Discard changes', exact: true }).click();
   await expect(title(page)).toHaveValue(targetTitle);
   await expect(page.getByRole('combobox', { name: 'Space', exact: true })).toHaveValue(other.spaceId);
-  expect(new URL(page.url()).searchParams.get('document')).toBe(target.id);
+  const destination = await readDocument(context, target.id);
+  expect(new URL(page.url()).pathname).toBe(`/spaces/${destination.data.spaceSlug}/documents/${destination.data.slug}`);
   expect(await readDocument(context)).toEqual(baseline);
   await assertNoBrowserPersistence(page);
 });
@@ -1087,7 +1130,9 @@ test('loading, safe read retry and empty states are visible without replacing lo
   release();
   await expect(title(page)).toHaveValue('Release checklist');
   await page.unroute(`**/api/v1/documents/${seeded.documentId}`);
-  await page.route(`**/api/v1/documents/${seeded.documentId}`, async route => {
+  const original = await readDocument(context);
+  const slugRead = `**/api/v1/spaces/${seeded.spaceId}/documents/by-slug/${original.data.slug}`;
+  await page.route(slugRead, async route => {
     if (route.request().method() !== 'GET') return route.continue();
     await route.fulfill({ status: 503, contentType: 'application/problem+json', body: JSON.stringify({
       type: 'about:blank', title: 'Service Unavailable', status: 503, code: 'SERVICE_UNAVAILABLE', requestId: 'browser-read-fault',
@@ -1096,10 +1141,9 @@ test('loading, safe read retry and empty states are visible without replacing lo
   await page.reload();
   await expect(page.getByRole('alert').first()).toBeVisible();
   await expect(page.getByRole('button', { name: 'Retry', exact: true }).first()).toBeVisible();
-  await page.unroute(`**/api/v1/documents/${seeded.documentId}`);
+  await page.unroute(slugRead);
   await page.getByRole('button', { name: 'Retry', exact: true }).first().click();
   await expect(title(page)).toHaveValue('Release checklist');
-  const original = await readDocument(context);
   const archived = await apiRequest(context, `/api/v1/documents/${seeded.documentId}/archive`, {
     method: 'POST', headers: { Origin: demo.origin, 'If-Match': original.etag }, data: {},
   });
@@ -1146,7 +1190,7 @@ test('a new draft supersedes an in-flight document read without adopting its con
     await expect(title(page)).toHaveValue('Complete new draft while the prior document loads');
     await expect(body(page)).toHaveText('The complete new body belongs to an unsaved document.');
     await expect(save(page)).toBeEnabled();
-    expect(new URL(page.url()).searchParams.get('document')).toBeNull();
+    expect(new URL(page.url()).pathname).toBe(`/spaces/${original.data.spaceSlug}`);
     expect(await readDocument(context)).toEqual(original);
     expect(await demo.database.prisma.document.count({ where: { spaceId: seeded.spaceId } })).toBe(1);
     expect(await demo.database.prisma.documentRevision.count({ where: { documentId: seeded.documentId } })).toBe(1);
@@ -1512,7 +1556,9 @@ test('supplied external link and file actions sever the opener and preserve the 
   const externalOrigin = `http://localhost:${address.port}`;
   try {
     await login(page);
-    const original = await readDocument(context), originalURL = page.url();
+    const original = await readDocument(context);
+    await expect(page).toHaveURL(`${demo.origin}/spaces/${original.data.spaceSlug}/documents/${original.data.slug}`);
+    const originalURL = page.url();
     await title(page).fill('Complete unsaved title before external navigation');
     await body(page).fill('The complete unsaved linked body must remain in this tab.');
     await body(page).locator('p').first().selectText();

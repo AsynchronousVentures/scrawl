@@ -29,6 +29,8 @@ test('built frontend serves private/public shells and assets without changing AP
   await t.test('HTML and assets retain no-store and server-generated request IDs', async () => {
     for (const [url, type, text] of [
       ['/?space=synthetic', /text\/html/, 'Scrawl shell'],
+      ['/spaces/demo-handbook', /text\/html/, 'Scrawl shell'],
+      ['/spaces/demo-handbook/documents/getting-started', /text\/html/, 'Scrawl shell'],
       ['/publications/00000000-0000-4000-8000-000000000001', /text\/html/, 'Scrawl shell'],
       ['/assets/app.js', /(?:text|application)\/javascript/, 'Scrawl asset'],
     ] as const) {

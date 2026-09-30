@@ -78,6 +78,7 @@ export const api = {
     params: { query: { limit: 100, ...(cursor ? { cursor } : {}) } },
   }))).data; },
   async space(id: string) { return (await checked(client.GET('/api/v1/spaces/{id}', { params: { path: { id } } }))).data; },
+  async spaceBySlug(slug: string) { return (await checked(client.GET('/api/v1/spaces/by-slug/{slug}', { params: { path: { slug } } }))).data; },
   async search(q: string, signal: AbortSignal) {
     return (await checked(client.GET('/api/v1/search', { params: { query: { q, limit: 20 } }, signal }))).data;
   },
@@ -88,6 +89,12 @@ export const api = {
   },
   async document(id: string) {
     const { data, response } = await checked(client.GET('/api/v1/documents/{id}', { params: { path: { id } } }));
+    return loaded(data, response);
+  },
+  async documentBySlug(id: string, slug: string) {
+    const { data, response } = await checked(client.GET('/api/v1/spaces/{id}/documents/by-slug/{slug}', {
+      params: { path: { id, slug } },
+    }));
     return loaded(data, response);
   },
   async create(id: string, draft: Draft) {

@@ -31,11 +31,11 @@ test('offline native upgrade preserves existing identity/history and requires a 
   assert.equal(migration.status, 0, 'One migration history deploys');
   const actor = 'upgrade-author';
   await database.prisma.user.create({ data: { id: actor, name: 'Synthetic upgrade author', email: 'upgrade@example.test' } });
-  const space = await database.prisma.space.create({ data: { id: randomUUID(), name: 'Synthetic upgrade', createdBy: actor } });
+  const space = await database.prisma.space.create({ data: { id: randomUUID(), name: 'Synthetic upgrade', slug: 'synthetic-upgrade', createdBy: actor } });
   const documentId = randomUUID();
   const oldBody = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Retained original text' }] }] };
   await database.prisma.$transaction(async tx => {
-    await tx.document.create({ data: { id: documentId, spaceId: space.id, createdBy: actor, currentRevisionNumber: 2, lockVersion: 5 } });
+    await tx.document.create({ data: { id: documentId, slug: 'retained-title', spaceId: space.id, createdBy: actor, currentRevisionNumber: 2, lockVersion: 5 } });
     for (let number = 1; number <= 2; number++) await tx.documentRevision.create({ data: {
       id: randomUUID(), documentId, revisionNumber: number, title: 'Retained title', authorId: actor,
       contentFormat: 'prosemirror-json', contentSchemaVersion: 1, body: oldBody, plainText: 'Retained original text',
@@ -100,10 +100,10 @@ test('an unrepresentable revision aborts the whole conversion before archiving o
   });
   assert.equal(migration.status, 0);
   await database.prisma.user.create({ data: { id: 'bad-upgrade', name: 'Synthetic', email: 'bad-upgrade@example.test' } });
-  const space = await database.prisma.space.create({ data: { id: randomUUID(), name: 'Synthetic', createdBy: 'bad-upgrade' } });
+  const space = await database.prisma.space.create({ data: { id: randomUUID(), name: 'Synthetic', slug: 'synthetic', createdBy: 'bad-upgrade' } });
   const documentId = randomUUID();
   await database.prisma.$transaction(async tx => {
-    await tx.document.create({ data: { id: documentId, spaceId: space.id, createdBy: 'bad-upgrade', currentRevisionNumber: 2 } });
+    await tx.document.create({ data: { id: documentId, slug: 'retained-title', spaceId: space.id, createdBy: 'bad-upgrade', currentRevisionNumber: 2 } });
     for (let number = 1; number <= 2; number++) await tx.documentRevision.create({ data: {
       id: randomUUID(), documentId, revisionNumber: number, title: 'Synthetic', authorId: 'bad-upgrade',
       contentFormat: 'prosemirror-json', contentSchemaVersion: 1,

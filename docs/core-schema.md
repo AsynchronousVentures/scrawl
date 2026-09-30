@@ -6,7 +6,7 @@ Identity/access, native documents/revisions, private attachments, derived search
 
 Use the authentication library's user, session, account and verification records. Keep its stable user ID; do not build another competing identity registry. Instance role is server-controlled (`administrator` or `member`); account creation/update input cannot self-assign administrator. P1 stores `role` on the auth-owned User with a `member` default and a database check. Better Auth's admin schema marks role and ban fields as server-only input. Host commands alone create accounts; auth-owned tables retain the library-generated field layout.
 
-`Space`: immutable ID, display name, creator ID, timestamps, integer lock version.
+`Space`: immutable ID, display name, persisted unique slug, creator ID, timestamps, integer lock version.
 
 `SpaceMembership`: space ID, user ID, role (`reader` or `editor`), timestamps. Unique `(spaceId, userId)`. Membership edits and space creation require an administrator in the demos. Administrators have access to every space; this is not a design in which private content is hidden from the instance operator.
 
@@ -16,13 +16,14 @@ Use text-compatible foreign keys for auth user IDs rather than assuming the libr
 
 ## P2: document identity and snapshots
 
-`Document`: stable ID, space ID, currentRevisionNumber, monotonic lockVersion, availabilityVersion, createdAt, createdBy, updatedAt, archivedAt (nullable), archivedBy (nullable).
+`Document`: stable ID, space ID, persisted slug, currentRevisionNumber, monotonic lockVersion, availabilityVersion, createdAt, createdBy, updatedAt, archivedAt (nullable), archivedBy (nullable).
 
 `DocumentRevision`: stable ID, document ID, revision number, title, content format, content schema version, producing editor version, body JSONB, derived plain text, author ID, timestamp, optional change note.
 
 Constraints:
 
 - Unique `(documentId, revisionNumber)`; revision numbers strictly increase per document.
+- Unique space slug and `(spaceId, documentSlug)`; archived names remain reserved. Slugs are bounded lowercase ASCII navigation metadata and do not change when content titles change.
 - The current head references a revision belonging to the same document.
 - No committed document without an initial/current revision.
 - Revision content is immutable through product operations; restoring inserts a new revision.

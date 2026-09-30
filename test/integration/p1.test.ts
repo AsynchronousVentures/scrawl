@@ -401,6 +401,7 @@ test('P1 identity and space acceptance against migrated PostgreSQL and real HTTP
     const result = await admin.send('GET', '/openapi.json');
     assert.deepEqual(Object.keys(result.data.paths).sort(), [
       '/api/v1/search', '/api/v1/attachments/{id}/content', '/api/v1/documents/{id}/attachments',
+      '/api/v1/spaces/by-slug/{slug}', '/api/v1/spaces/{id}/documents/by-slug/{slug}',
       '/api/v1/documents/{id}', '/api/v1/documents/{id}/archive', '/api/v1/documents/{id}/restore',
       '/api/v1/documents/{id}/export',
       '/api/v1/documents/{id}/revisions', '/api/v1/documents/{id}/revisions/{revisionId}', '/api/v1/documents/{id}/unarchive',
