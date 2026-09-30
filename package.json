@@ -36,7 +36,8 @@
     "demo:dev": "node --import tsx scripts/demo-dev.ts",
     "content:migrate": "node --env-file-if-exists=.env --import tsx scripts/content-upgrade.ts",
     "demo:workspace": "node --import tsx scripts/demo-workspace.ts",
-    "search:rebuild": "node --env-file-if-exists=.env --import tsx scripts/search-index.ts rebuild"
+    "search:rebuild": "node --env-file-if-exists=.env --import tsx scripts/search-index.ts rebuild",
+    "demo:verify": "node --import tsx scripts/demo-verify.ts"
   },
   "dependencies": {
     "@blocknote/core": "0.55.0",

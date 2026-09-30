@@ -12,6 +12,13 @@ export type User = JsonResponse<'getMe', 200>;
 export type Space = JsonResponse<'readSpace', 200>;
 export type DocumentSummary = JsonResponse<'listDocuments', 200>['items'][number];
 export type RevisionSummary = JsonResponse<'listDocumentRevisions', 200>['items'][number];
+export type SearchResult = JsonResponse<'searchDocuments', 200>['items'][number];
+export type Attachment = JsonResponse<'uploadDocumentAttachment', 201>;
+export type ExportFormat = 'pdf' | 'docx';
+export type PublishingAvailability = JsonResponse<'getPublishingAvailability', 200>;
+export type PublicationStatus = JsonResponse<'readDocumentPublication', 200>;
+type WirePublicDocument = JsonResponse<'readPublicPublication', 200>;
+export type PublicDocument = Omit<WirePublicDocument, 'content'> & { content: ContentEnvelope };
 type WireDocument = JsonResponse<'readDocument', 200>;
 type WireRevision = JsonResponse<'readDocumentRevision', 200>;
 export type Revision = Omit<WireRevision, 'content'> & { content: ContentEnvelope };
@@ -27,6 +34,9 @@ export class ApiError extends Error {
       : status === 404 ? 'This document or space is unavailable.'
       : status === 412 ? 'The document changed since you opened it.'
       : status === 413 ? 'The document is too large to save.'
+      : status === 415 ? 'This file type is not supported.'
+      : status === 422 ? 'This saved revision contains content that cannot be rendered in this format, such as unsupported media or colors. Export native JSON to preserve its full content.'
+      : status === 409 ? 'This action is unavailable for the current document state.'
       : status === 429 ? 'Too many attempts. Wait a moment and try again.'
       : status === 400 ? 'The request was rejected. Check the title and supported content.'
       : 'The request failed. Your unsaved work has not been saved.');
@@ -41,9 +51,13 @@ async function checked<T>(request: Promise<{ data?: T; error?: unknown; response
   if (result.data === undefined) throw new ApiError(502);
   return { data: result.data, response: result.response };
 }
-function loaded(data: WireDocument, response: Response): LoadedDocument {
+function documentEtag(response: Response) {
   const etag = response.headers.get('etag');
   if (!etag || !/^"doc-[0-9a-f-]+-bn1-v[1-9][0-9]*"$/i.test(etag)) throw new ApiError(502);
+  return etag;
+}
+function loaded(data: WireDocument, response: Response): LoadedDocument {
+  const etag = documentEtag(response);
   return { document: { ...data, revision: { ...data.revision, content: validateContent(data.revision.content).content } }, etag };
 }
 
@@ -64,6 +78,9 @@ export const api = {
     params: { query: { limit: 100, ...(cursor ? { cursor } : {}) } },
   }))).data; },
   async space(id: string) { return (await checked(client.GET('/api/v1/spaces/{id}', { params: { path: { id } } }))).data; },
+  async search(q: string, signal: AbortSignal) {
+    return (await checked(client.GET('/api/v1/search', { params: { query: { q, limit: 20 } }, signal }))).data;
+  },
   async documents(id: string, includeArchived: boolean, cursor?: string) {
     return (await checked(client.GET('/api/v1/spaces/{id}/documents', {
       params: { path: { id }, query: { limit: 100, includeArchived, ...(cursor ? { cursor } : {}) } },
@@ -111,6 +128,53 @@ export const api = {
   },
   async export(id: string) {
     const { data } = await checked(client.GET('/api/v1/documents/{id}/export', { params: { path: { id } } }));
+    return { ...data, content: validateContent(data.content).content };
+  },
+  async upload(id: string, file: File): Promise<Attachment> {
+    const { data } = await checked(client.POST('/api/v1/documents/{id}/attachments', {
+      params: { path: { id }, header: { 'x-file-name': encodeURIComponent(file.name) } },
+      headers: { 'content-type': 'application/octet-stream' },
+      // OpenAPI models binary request bodies as strings. The serializer sends
+      // the actual File bytes without JSON encoding or a boundary type cast.
+      body: '', bodySerializer: () => file,
+    }));
+    if (!/^\/api\/v1\/attachments\/[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\/content$/i.test(data.url)) throw new ApiError(502);
+    return data;
+  },
+  async exportFile(id: string, format: ExportFormat, revisionId?: string) {
+    const { data } = await checked(client.GET('/api/v1/documents/{id}/exports/{format}', {
+      params: { path: { id, format }, query: revisionId ? { revisionId } : {} }, parseAs: 'blob',
+    }));
+    const expected = format === 'pdf' ? 'application/pdf'
+      : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    if (data.type !== expected || !data.size) throw new ApiError(502);
+    return data;
+  },
+  async resolveFileUrl(url: string) {
+    return url.startsWith('/api/v1/attachments/') ? new URL(url, location.origin).href : url;
+  },
+  async publishingAvailability() {
+    return (await checked(client.GET('/api/v1/publishing'))).data;
+  },
+  async publication(id: string) {
+    return (await checked(client.GET('/api/v1/documents/{id}/publication', { params: { path: { id } } }))).data;
+  },
+  async publish(id: string, etag: string, revisionId: string) {
+    const result = await checked(client.POST('/api/v1/documents/{id}/publication', {
+      params: { path: { id }, header: { 'if-match': etag } }, body: { revisionId },
+    }));
+    return { status: result.data, etag: documentEtag(result.response) };
+  },
+  async unpublish(id: string, etag: string) {
+    const result = await checked(client.DELETE('/api/v1/documents/{id}/publication', {
+      params: { path: { id }, header: { 'if-match': etag } },
+    }));
+    return { status: result.data, etag: documentEtag(result.response) };
+  },
+  async publicDocument(publicId: string, signal: AbortSignal): Promise<PublicDocument> {
+    const { data } = await checked(client.GET('/api/public/publications/{publicId}', {
+      params: { path: { publicId } }, credentials: 'omit', signal,
+    }));
     return { ...data, content: validateContent(data.content).content };
   },
 };

@@ -3,6 +3,8 @@
 
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
+import { PublicDocument } from './PublicDocument';
 import './styles.css';
 
-createRoot(document.getElementById('root')!).render(<App />);
+const publicId = /^\/publications\/([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})$/i.exec(location.pathname)?.[1];
+createRoot(document.getElementById('root')!).render(publicId ? <PublicDocument publicId={publicId} /> : <App />);

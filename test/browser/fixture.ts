@@ -80,12 +80,24 @@ export async function createBrowserDemo() {
         cwd, env: process.env, stdio: ['ignore', 'pipe', 'pipe'],
       });
       const deadline = setTimeout(() => { child.kill('SIGTERM'); reject(new Error('Browser fixture command timed out')); }, 45_000);
-      child.stdout.on('data', (chunk: Buffer) => { output += chunk.toString(); });
-      child.stderr.on('data', (chunk: Buffer) => { output += chunk.toString(); });
+      let commandOutput = '';
+      child.stdout.on('data', (chunk: Buffer) => { const value = chunk.toString(); output += value; commandOutput += value; });
+      child.stderr.on('data', (chunk: Buffer) => { const value = chunk.toString(); output += value; commandOutput += value; });
       child.once('error', () => { clearTimeout(deadline); reject(new Error('Browser fixture command could not start')); });
       child.once('close', (code) => {
         clearTimeout(deadline);
-        if (code === 0) done(); else reject(new Error(`Browser fixture command failed (${script})`));
+        if (code === 0) done();
+        else {
+          // Expose only the script's known, static stage message. Child output
+          // can otherwise contain connection URLs, passwords or session cookies.
+          const stages = ['configuration', 'authentication', 'space setup', 'document create', 'stale save',
+            'missing precondition', 'reader denial', 'outsider denial', 'invalid native save', 'native rich export',
+            'restore', 'native export', 'lifecycle', 'membership revocation', 'logout', 'artifacts'];
+          const stage = script === 'demo-a.ts' ? stages.find(value => commandOutput.includes(
+            `Demo A failed at ${value}. Check the running demo API and fixture setup.`,
+          )) : undefined;
+          reject(new Error(`Browser fixture command failed (${script})${stage ? ` during ${stage}` : ''}`));
+        }
       });
     });
   }
@@ -121,6 +133,9 @@ export async function createBrowserDemo() {
       POSTGRES_PASSWORD: decodeURIComponent(target.password), POSTGRES_DB: DEMO_DATABASE,
       DEMO_DB_PORT: target.port || '5432',
       PORT: String(port), APP_ORIGIN: origin, LOG_LEVEL: 'info', AUTH_SECRET: randomBytes(32).toString('hex'),
+      // This newly owned disposable database exercises explicit publication;
+      // the application default and every non-demo target remain disabled.
+      PUBLIC_PUBLISHING_ENABLED: 'true',
     });
     secrets.push(values.AUTH_SECRET);
     await writeFile(environmentPath, Object.entries(values).map(([name, value]) => `${name}=${value}`).join('\n') + '\n', { mode: 0o600 });

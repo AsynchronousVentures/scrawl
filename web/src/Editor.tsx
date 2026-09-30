@@ -1,13 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Asynchronous Ventures and contributors
 
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import type { DefaultInlineContentSchema, DefaultStyleSchema } from '@blocknote/core';
-import { useCreateBlockNote, useEditorState } from '@blocknote/react';
+import { EmbedTab, FilePanel, FilePanelController, useCreateBlockNote, useDictionary, useEditorState, type FilePanelProps } from '@blocknote/react';
 import { BlockNoteView } from '@blocknote/shadcn';
 import { contentSchema, isSafeLinkUrl, validateContent, type ContentEnvelope, type NativeBlock, type NativeBlockSchema } from '@scrawl/content';
 
 type Heading = { id: string; text: string; level: number; depth: number };
+const UploadAvailability = createContext(false);
+
+function DocumentFilePanel(props: FilePanelProps) {
+  const available = useContext(UploadAvailability), dictionary = useDictionary();
+  return <FilePanel<NativeBlockSchema, DefaultInlineContentSchema, DefaultStyleSchema> {...props}
+    {...(available ? {} : { tabs: [{ name: dictionary.file_panel.embed.title, tabPanel: <EmbedTab blockId={props.blockId} /> }] })} />;
+}
 
 function documentHeadings(blocks: NativeBlock[], depth = 0): Heading[] {
   return blocks.flatMap(block => {
@@ -22,24 +29,28 @@ function documentHeadings(blocks: NativeBlock[], depth = 0): Heading[] {
   });
 }
 
-export function Editor({ initialContent, editable, onChange, onValidationChange, header, label = 'Document body' }: {
+export function Editor({ initialContent, editable, onChange, onValidationChange, uploadFile, uploadAvailable = false, resolveFileUrl, header, label = 'Document body' }: {
   initialContent: ContentEnvelope;
   editable: boolean;
   onChange: (content: ContentEnvelope) => void;
   onValidationChange?: (error: string | null) => void;
+  uploadFile?: (file: File) => Promise<string>;
+  uploadAvailable?: boolean;
+  resolveFileUrl?: (url: string) => Promise<string>;
   header?: ReactNode;
   label?: string;
 }) {
   const identifier = `editor-${useId().replace(/[^a-zA-Z0-9_-]/g, '-')}`;
   const container = useRef<HTMLDivElement>(null);
-  const callbacks = useRef({ onChange, onValidationChange });
-  callbacks.current = { onChange, onValidationChange };
+  const callbacks = useRef({ onChange, onValidationChange, uploadFile, resolveFileUrl });
+  callbacks.current = { onChange, onValidationChange, uploadFile, resolveFileUrl };
   const [error, setError] = useState<string | null>(null);
   const [activeHeading, setActiveHeading] = useState<string | null>(null);
   const [outlineOpen, setOutlineOpen] = useState(true);
   // Saving changes the comparison baseline, not this editor or its undo stack.
   // The parent remounts for an intentional navigation, restore, or discard.
   const [initial] = useState(() => validateContent(initialContent).content);
+  const [initialEditable] = useState(editable);
   const editor = useCreateBlockNote({
     schema: contentSchema,
     initialContent: initial.document,
@@ -48,12 +59,17 @@ export function Editor({ initialContent, editable, onChange, onValidationChange,
         role: 'textbox', 'aria-label': label, 'aria-multiline': 'true',
         'aria-describedby': `${identifier}-error`,
       },
-      // Native node views own their DOM. A supported attribute on the block
-      // container gives section navigation a stable, programmatic focus target.
-      blockContent: { tabindex: '-1' },
     },
     links: { isValidLink: isSafeLinkUrl },
     tables: { splitCells: true, cellBackgroundColor: true, cellTextColor: true, headers: true },
+    // The supplied hook is readonly after creation. Its stable adapter consults
+    // current authority after first Save without rebuilding native undo history.
+    ...(uploadFile ? { uploadFile: async (file: File) => {
+      const upload = callbacks.current.uploadFile;
+      if (!upload) throw new Error('Attachment upload is unavailable');
+      return upload(file);
+    } } : {}),
+    resolveFileUrl: async url => callbacks.current.resolveFileUrl?.(url) ?? url,
   });
   const headings = useEditorState({
     editor,
@@ -67,9 +83,14 @@ export function Editor({ initialContent, editable, onChange, onValidationChange,
     return block?.querySelector<HTMLElement>('h1,h2,h3,h4,h5,h6') ?? null;
   }
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    // BlockNote 0.55 remounts the view when its editable prop changes. Its link
+    // UI can then receive an update before the new view exists. The public
+    // setter locks the mounted editor without interrupting UI or undo history.
+    editor.isEditable = editable;
     const contenteditable = container.current?.querySelector<HTMLElement>('[role="textbox"]');
     contenteditable?.setAttribute('aria-readonly', String(!editable));
+    if (contenteditable) contenteditable.tabIndex = 0;
   }, [editable, editor]);
   useEffect(() => {
     const narrow = matchMedia('(max-width: 980px)');
@@ -79,9 +100,12 @@ export function Editor({ initialContent, editable, onChange, onValidationChange,
   }, []);
   useEffect(() => {
     const update = () => {
-      let selected = headings[0]?.id ?? null;
+      let selected: string | null = null;
       for (const heading of headings) {
-        if ((headingElement(heading.id)?.getBoundingClientRect().top ?? Infinity) < 160) selected = heading.id;
+        const element = headingElement(heading.id);
+        if (!element?.getClientRects().length) continue;
+        selected ??= heading.id;
+        if (element.getBoundingClientRect().top < 160) selected = heading.id;
       }
       setActiveHeading(selected);
     };
@@ -94,8 +118,9 @@ export function Editor({ initialContent, editable, onChange, onValidationChange,
       {header}
       <p id={`${identifier}-error`} className="editor-error" role="alert" hidden={!error}>{error}</p>
       <div ref={container} className="editor-mount">
-        <BlockNoteView<NativeBlockSchema, DefaultInlineContentSchema, DefaultStyleSchema>
-          editor={editor} theme="dark" editable={editable} onChange={(current, { getChanges }) => {
+        <UploadAvailability.Provider value={uploadAvailable}>
+          <BlockNoteView<NativeBlockSchema, DefaultInlineContentSchema, DefaultStyleSchema>
+          editor={editor} theme="dark" editable={initialEditable} filePanel={false} onChange={(current, { getChanges }) => {
           // The library also emits updates when editability changes during Save.
           // Those are not user edits and must not clear failure/access notices.
           if (getChanges().length === 0) return;
@@ -110,7 +135,10 @@ export function Editor({ initialContent, editable, onChange, onValidationChange,
           catch { message = 'This document cannot be saved because its content is invalid or exceeds the document limits. Your complete local edits are retained. Undo the change or discard your unsaved edits.'; }
           setError(message);
           callbacks.current.onValidationChange?.(message);
-        }} />
+        }}>
+          {editable && <FilePanelController filePanel={DocumentFilePanel} />}
+        </BlockNoteView>
+        </UploadAvailability.Provider>
       </div>
     </div>
     <details className="editor-outline" open={outlineOpen} onToggle={event => setOutlineOpen(event.currentTarget.open)}>
@@ -130,9 +158,17 @@ export function Editor({ initialContent, editable, onChange, onValidationChange,
               ancestor = ancestor.parentElement?.closest('.bn-block-outer') ?? null;
             }
             requestAnimationFrame(() => {
-              const section = headingElement(heading.id)?.closest<HTMLElement>('.bn-block-content');
+              const destination = headingElement(heading.id);
+              if (editor.isEditable) {
+                editor.setTextCursorPosition(heading.id, 'start');
+                editor.focus();
+              } else if (destination) {
+                // A read-only editor cannot accept a native editing cursor.
+                // Move keyboard focus to the actual section instead.
+                destination.tabIndex = -1; destination.focus({ preventScroll: true });
+              }
+              const section = destination?.closest<HTMLElement>('.bn-block-content');
               section?.scrollIntoView({ behavior: 'instant', block: 'start' });
-              section?.focus({ preventScroll: true });
             });
             setActiveHeading(heading.id);
           }}>{heading.text}</a>) : <small>No headings in this document.</small>}

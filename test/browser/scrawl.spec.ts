@@ -2,7 +2,10 @@
 // Copyright (C) 2026 Asynchronous Ventures and contributors
 
 import { expect, test, type APIRequestContext, type BrowserContext, type Page } from '@playwright/test';
-import { mkdir } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { mkdir, readFile } from 'node:fs/promises';
+import JSZip from 'jszip';
+import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { validateContent } from '../../src/core/documents/content.js';
 import type { ContentEnvelope } from '../../src/shared/content.js';
 import type { DemoRole } from '../../scripts/demo-config.js';
@@ -24,6 +27,10 @@ function url(result = seeded) {
 function title(page: Page) { return page.getByRole('textbox', { name: 'Document title', exact: true }); }
 function body(page: Page) { return page.getByRole('textbox', { name: 'Document body', exact: true }); }
 function save(page: Page) { return page.getByRole('button', { name: 'Save', exact: true }); }
+async function selectedBlockId(page: Page) {
+  return body(page).evaluate(element => element.ownerDocument.getSelection()?.anchorNode?.parentElement
+    ?.closest('[data-id]')?.getAttribute('data-id') ?? null);
+}
 async function apiRequest(context: BrowserContext, path: string, options: Parameters<APIRequestContext['fetch']>[1] = {}) {
   try { return await context.request.fetch(demo.origin + path, options); }
   catch {
@@ -120,7 +127,7 @@ async function confirmDiscard(page: Page) {
 }
 
 async function evidence(page: Page, name: 'editing' | 'conflict' | 'history' | 'access-loss' | 'mobile'
-  | 'editor-toolbar' | 'link-editor' | 'discard-changes') {
+  | 'editor-toolbar' | 'link-editor' | 'discard-changes' | 'search' | 'attachments' | 'publication' | 'public-document') {
   if (process.env.SCRAWL_BROWSER_EVIDENCE !== '1') return;
   const password = page.getByLabel('Password', { exact: true });
   if (await password.isVisible() && await password.inputValue() !== '') {
@@ -158,6 +165,434 @@ test('keyboard login/logout uses real sessions and protected same-origin respons
   await page.keyboard.press('Enter');
   await expect(page.getByRole('button', { name: 'Log in', exact: true })).toBeVisible();
   expect((await apiRequest(context, '/api/v1/me')).status()).toBe(401);
+});
+
+test('real search finds authorized saved text across spaces and keeps dirty edits until deliberate navigation', async ({ page, context }) => {
+  await login(page);
+  const other = await demo.seed();
+  const token = `search${randomUUID().replaceAll('-', '')}`;
+  const targetTitle = `Synthetic search target ${token}`;
+  const created = await apiRequest(context, `/api/v1/spaces/${other.spaceId}/documents`, {
+    method: 'POST', headers: { Origin: demo.origin }, data: {
+      title: targetTitle, content: nativeContent([paragraph('search-target', `Saved body ${token} with a readable result excerpt.`)]),
+    },
+  });
+  expect(created.status()).toBe(201);
+  const target: unknown = await created.json();
+  if (!target || typeof target !== 'object' || !('id' in target) || typeof target.id !== 'string') throw new Error('Search fixture was not created');
+  const baseline = await readDocument(context);
+  await title(page).fill('Unsaved title retained while searching');
+  await body(page).fill('The full unsaved body survives search and cancel.');
+  await title(page).focus();
+  await page.keyboard.press('ControlOrMeta+k');
+  const search = page.getByRole('dialog', { name: 'Search documents', exact: true });
+  const query = search.getByRole('combobox', { name: 'Search accessible documents', exact: true });
+  await expect(query).toBeFocused();
+  await query.fill(token);
+  const option = search.getByRole('option').filter({ hasText: targetTitle });
+  await expect(option).toBeVisible();
+  await expect(option).toContainText(`Saved body ${token}`);
+  await evidence(page, 'search');
+  await query.press('ArrowDown');
+  await query.press('Enter');
+  const discard = page.getByRole('dialog', { name: 'Unsaved changes', exact: true });
+  await expect(discard).toBeVisible();
+  await discard.getByRole('button', { name: 'Keep editing', exact: true }).click();
+  await expect(title(page)).toHaveValue('Unsaved title retained while searching');
+  await expect(body(page)).toHaveText('The full unsaved body survives search and cancel.');
+  expect(await readDocument(context)).toEqual(baseline);
+  await page.getByRole('button', { name: 'Search documents', exact: true }).click();
+  await query.fill('Unsaved title retained while searching');
+  await expect(search.getByRole('heading', { name: 'No matching documents', exact: true })).toBeVisible();
+  await query.fill(token);
+  await expect(option).toBeVisible();
+  await option.click();
+  await discard.getByRole('button', { name: 'Discard changes', exact: true }).click();
+  await expect(title(page)).toHaveValue(targetTitle);
+  await expect(page.getByRole('combobox', { name: 'Space', exact: true })).toHaveValue(other.spaceId);
+  expect(new URL(page.url()).searchParams.get('document')).toBe(target.id);
+  expect(await readDocument(context)).toEqual(baseline);
+  await assertNoBrowserPersistence(page);
+});
+
+test('search shows real loading, empty and failure states and ignores an obsolete query response', async ({ page }) => {
+  await login(page);
+  let requests = 0;
+  let release: () => void = () => {};
+  const delayed = new Promise<void>(resolve => { release = resolve; });
+  await page.route(/\/api\/v1\/search\?/, async route => {
+    const query = new URL(route.request().url()).searchParams.get('q');
+    if (query === 'release') {
+      requests++;
+      const response = await route.fetch();
+      await delayed;
+      try { await route.fulfill({ response }); } catch { /* The canceled obsolete request may already be closed. */ }
+    } else if (query === 'temporary-failure') {
+      await route.fulfill({ status: 500, contentType: 'application/problem+json', body: JSON.stringify({
+        type: 'about:blank', title: 'Internal Server Error', status: 500, code: 'INTERNAL_ERROR', requestId: 'browser-search-fault',
+      }) });
+    } else await route.continue();
+  });
+  await page.getByRole('button', { name: 'Search documents', exact: true }).click();
+  const search = page.getByRole('dialog', { name: 'Search documents', exact: true });
+  const query = search.getByRole('combobox', { name: 'Search accessible documents', exact: true });
+  await query.fill('release');
+  await expect(search.getByRole('status')).toHaveText('Searching…');
+  await expect.poll(() => requests).toBe(1);
+  await query.fill(`nomatch${randomUUID().replaceAll('-', '')}`);
+  await expect(search.getByRole('heading', { name: 'No matching documents', exact: true })).toBeVisible();
+  release();
+  await expect(search.getByRole('option')).toHaveCount(0);
+  await query.fill('temporary-failure');
+  await expect(search.getByRole('alert')).toHaveText(/Search could not complete/);
+  await expect(search.getByRole('option')).toHaveCount(0);
+  await page.unroute(/\/api\/v1\/search\?/);
+  await search.getByRole('button', { name: 'Retry search', exact: true }).click();
+  await expect(search.getByRole('heading', { name: 'No matching documents', exact: true })).toBeVisible();
+  await query.press('Escape');
+  await expect(search).not.toBeVisible();
+  await expect(title(page)).toHaveValue('Release checklist');
+});
+
+test('outsider search returns no private titles or excerpts through the real interface', async ({ page }) => {
+  await login(page, 'outsider', demo.origin);
+  await page.getByRole('button', { name: 'Search documents', exact: true }).click();
+  const search = page.getByRole('dialog', { name: 'Search documents', exact: true });
+  const response = page.waitForResponse(value => new URL(value.url()).pathname === '/api/v1/search');
+  await search.getByRole('combobox', { name: 'Search accessible documents', exact: true }).fill('release');
+  const result = await response;
+  expect(result.status()).toBe(200);
+  expect(await result.json()).toEqual({ items: [] });
+  await expect(search.getByRole('heading', { name: 'No matching documents', exact: true })).toBeVisible();
+  await expect(search.getByRole('option')).toHaveCount(0);
+  await expect(page.getByText('Release checklist', { exact: true })).toHaveCount(0);
+});
+
+test('native upload stores a private image, explicit Save references it, and reload/export preserve it', async ({ page, context }) => {
+  await login(page);
+  const baseline = await readDocument(context);
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgaGD4DwAChAGA+gVWHQAAAABJRU5ErkJggg==', 'base64');
+  await body(page).fill('Uploaded native image body.');
+  await slashBlock(page, 'image', 'Image');
+  const uploaded = page.waitForResponse(response => response.request().method() === 'POST'
+    && new URL(response.url()).pathname === `/api/v1/documents/${seeded.documentId}/attachments`);
+  await page.locator('.bn-panel input[type="file"]').setInputFiles({ name: 'Synthetic native image.png', mimeType: 'image/png', buffer: png });
+  const response = await uploaded;
+  expect(response.status()).toBe(201);
+  const attachment: unknown = await response.json();
+  if (!attachment || typeof attachment !== 'object' || !('url' in attachment) || typeof attachment.url !== 'string') throw new Error('Missing private attachment URL');
+  const image = body(page).getByRole('img', { name: 'Synthetic native image.png', exact: true });
+  await expect(image).toBeVisible();
+  await expect.poll(() => image.evaluate(element => element instanceof HTMLImageElement && element.naturalWidth > 0)).toBe(true);
+  await expect(page.getByText('Attachment uploaded. Save to include it in the document revision.', { exact: true })).toBeVisible();
+  expect(await readDocument(context)).toEqual(baseline);
+  await explicitSave(page);
+  const saved = await readDocument(context);
+  expect(saved.data.currentRevisionNumber).toBe(2);
+  expect(saved.data.revision.content.document.find(block => block.type === 'image')).toMatchObject({
+    type: 'image', props: { url: attachment.url, name: 'Synthetic native image.png' },
+  });
+  await page.reload();
+  await expect(image).toBeVisible();
+  await evidence(page, 'attachments');
+  const native = await apiRequest(context, `/api/v1/documents/${seeded.documentId}/export`);
+  expect(native.status()).toBe(200);
+  const exported: unknown = await native.json();
+  if (!exported || typeof exported !== 'object' || !('content' in exported)) throw new Error('Missing native export content');
+  expect(validateContent(exported.content).content).toEqual(saved.data.revision.content);
+  await assertNoBrowserPersistence(page);
+});
+
+test('a new native document enables supplied Upload after its first Save without discarding undo history', async ({ page, context }) => {
+  await login(page);
+  await page.getByRole('button', { name: 'New document', exact: true }).click();
+  await title(page).fill('First saved attachment document');
+  await body(page).fill('Native body before first Save.');
+  await slashBlock(page, 'image', 'Image');
+  await expect(page.getByRole('tab', { name: 'Upload', exact: true })).toHaveCount(0);
+  await expect(page.getByText('Save this document before uploading attachments.', { exact: true })).toBeVisible();
+  await page.keyboard.press('Escape');
+  const created = page.waitForResponse(response => response.request().method() === 'POST'
+    && new URL(response.url()).pathname === `/api/v1/spaces/${seeded.spaceId}/documents`);
+  await save(page).click();
+  const response = await created;
+  expect(response.status()).toBe(201);
+  const document: unknown = await response.json();
+  if (!document || typeof document !== 'object' || !('id' in document) || typeof document.id !== 'string') throw new Error('Missing first saved document');
+  await expect(save(page)).toBeDisabled();
+  await body(page).focus();
+  await page.keyboard.press('ControlOrMeta+z');
+  await expect(save(page)).toBeEnabled();
+  await page.keyboard.press('ControlOrMeta+Shift+z');
+  await expect(save(page)).toBeDisabled();
+  await body(page).getByText('Add image', { exact: true }).click();
+  await expect(page.getByRole('tab', { name: 'Upload', exact: true })).toBeVisible();
+  expect((await readDocument(context, document.id)).data.currentRevisionNumber).toBe(1);
+});
+
+test('a rejected native upload retains the entire local draft and creates no revision', async ({ page, context }) => {
+  await login(page);
+  const baseline = await readDocument(context);
+  await title(page).fill('Unsaved title before rejected upload');
+  await body(page).fill('Complete unsaved body before rejected upload.');
+  await slashBlock(page, 'file', 'File');
+  const uploaded = page.waitForResponse(response => response.request().method() === 'POST'
+    && new URL(response.url()).pathname === `/api/v1/documents/${seeded.documentId}/attachments`);
+  await page.locator('.bn-panel input[type="file"]').setInputFiles({ name: 'Synthetic executable.exe', mimeType: 'application/octet-stream', buffer: Buffer.from('This is a synthetic unsupported file.') });
+  expect((await uploaded).status()).toBe(415);
+  await expect(page.getByRole('alert').filter({ hasText: 'This file type is not supported.' })).toBeVisible();
+  await expect(title(page)).toHaveValue('Unsaved title before rejected upload');
+  await expect(body(page)).toContainText('Complete unsaved body before rejected upload.');
+  expect(await readDocument(context)).toEqual(baseline);
+  expect(await demo.database.prisma.documentRevision.count({ where: { documentId: seeded.documentId } })).toBe(1);
+  await page.keyboard.press('Escape');
+  await confirmDiscard(page);
+  await expect(title(page)).toHaveValue(baseline.data.revision.title);
+  expect(await readDocument(context)).toEqual(baseline);
+});
+
+test('PDF and DOCX downloads use saved current or selected history and never checkpoint dirty work', async ({ page, context }) => {
+  await login(page);
+  await title(page).fill('Synthetic saved file export');
+  await body(page).fill('Saved text included in rendered exports.');
+  await explicitSave(page);
+  const saved = await readDocument(context);
+  await title(page).fill('Unsaved title excluded from exported files');
+  await body(page).fill('Unsaved body excluded from exported files.');
+  for (const format of ['pdf', 'docx'] as const) {
+    await actions(page);
+    const download = page.waitForEvent('download');
+    await page.getByRole('button', { name: `Export ${format.toUpperCase()}`, exact: true }).click();
+    const file = await download;
+    expect(file.suggestedFilename()).toBe(`scrawl-document-${seeded.documentId}.${format}`);
+    const path = await file.path();
+    if (!path) throw new Error('No rendered document download');
+    const bytes = await readFile(path);
+    let text: string;
+    if (format === 'docx') {
+      const document = (await JSZip.loadAsync(bytes)).file('word/document.xml');
+      if (!document) throw new Error('DOCX has no document body');
+      text = await document.async('text');
+    } else {
+      const loading = getDocument({ data: new Uint8Array(bytes), useSystemFonts: false });
+      try {
+        const document = await loading.promise;
+        text = (await (await document.getPage(1)).getTextContent()).items.map(item => 'str' in item ? item.str : '').join(' ');
+      } finally { await loading.destroy(); }
+    }
+    expect(text).toContain('Synthetic saved file export');
+    expect(text).toContain('Saved text included in rendered exports.');
+    expect(text).not.toContain('Unsaved title excluded');
+    expect(text).not.toContain('Unsaved body excluded');
+    await expect(title(page)).toHaveValue('Unsaved title excluded from exported files');
+    await expect(body(page)).toHaveText('Unsaved body excluded from exported files.');
+  }
+  await page.getByRole('button', { name: 'History', exact: true }).click();
+  const history = page.getByRole('complementary', { name: 'Revision history', exact: true });
+  await history.getByRole('button', { name: 'Revision 1', exact: true }).click();
+  const oldDownload = page.waitForEvent('download');
+  const selected = page.waitForResponse(response => new URL(response.url()).pathname === `/api/v1/documents/${seeded.documentId}/exports/docx`
+    && new URL(response.url()).searchParams.get('revisionId') === seeded.revisionId);
+  await history.getByRole('button', { name: 'Export DOCX', exact: true }).click();
+  expect((await selected).status()).toBe(200);
+  const oldPath = await (await oldDownload).path();
+  if (!oldPath) throw new Error('No selected revision download');
+  const oldBody = (await JSZip.loadAsync(await readFile(oldPath))).file('word/document.xml');
+  if (!oldBody) throw new Error('Selected DOCX has no body');
+  expect(await oldBody.async('text')).toContain('Run tests before deploying.');
+  expect(await oldBody.async('text')).not.toContain('Saved text included in rendered exports.');
+  expect(await readDocument(context)).toEqual(saved);
+  expect(await demo.database.prisma.documentRevision.count({ where: { documentId: seeded.documentId } })).toBe(2);
+});
+
+test('explicit publication selects immutable history, preserves dirty work and undo, and private saves never advance it', async ({ page, context, browser }) => {
+  await login(page, 'administrator');
+  await title(page).fill('Saved private revision two');
+  await body(page).fill('Saved private body two.');
+  await explicitSave(page);
+  await title(page).fill('Unsaved private publication title');
+  await body(page).fill('Unsaved private publication body.');
+  await page.getByRole('button', { name: 'History', exact: true }).click();
+  const history = page.getByRole('complementary', { name: 'Revision history', exact: true });
+  await history.getByRole('button', { name: 'Revision 1', exact: true }).click();
+  await history.getByRole('button', { name: 'Publish revision 1', exact: true }).click();
+  const prompt = page.getByRole('dialog', { name: 'Publish revision 1?', exact: true });
+  await expect(prompt).toContainText('Release checklist · revision 1');
+  await expect(prompt.getByRole('button', { name: 'Keep editing', exact: true })).toBeFocused();
+  await prompt.getByRole('button', { name: 'Keep editing', exact: true }).click();
+  expect(await demo.database.prisma.publication.count({ where: { documentId: seeded.documentId } })).toBe(0);
+  await expect(title(page)).toHaveValue('Unsaved private publication title');
+  await history.getByRole('button', { name: 'Publish revision 1', exact: true }).click();
+  await evidence(page, 'publication');
+  const published = page.waitForResponse(response => response.request().method() === 'POST'
+    && new URL(response.url()).pathname === `/api/v1/documents/${seeded.documentId}/publication`);
+  await prompt.getByRole('button', { name: 'Publish revision 1', exact: true }).click();
+  expect((await published).status()).toBe(200);
+  await expect(title(page)).toHaveValue('Unsaved private publication title');
+  await expect(body(page)).toHaveText('Unsaved private publication body.');
+  await expect(save(page)).toBeEnabled();
+  await body(page).focus(); await page.keyboard.press('ControlOrMeta+z');
+  await expect(body(page)).not.toHaveText('Unsaved private publication body.');
+  await page.keyboard.press('ControlOrMeta+Shift+z');
+  await expect(body(page)).toHaveText('Unsaved private publication body.');
+  expect(await demo.database.prisma.documentRevision.count({ where: { documentId: seeded.documentId } })).toBe(2);
+  const link = page.getByRole('link', { name: 'View public document', exact: true });
+  await expect(link).toBeVisible();
+  const path = await link.getAttribute('href');
+  if (!path) throw new Error('No approved publication link');
+  const anonymous = await browser.newContext();
+  try {
+    const publicPage = await anonymous.newPage();
+    const privateRequests: string[] = [];
+    publicPage.on('request', request => { if (/\/api\/(?:v1|auth)\//.test(new URL(request.url()).pathname)) privateRequests.push('private API'); });
+    await publicPage.goto(demo.origin + path);
+    await expect(publicPage.getByRole('heading', { name: 'Release checklist', exact: true })).toBeVisible();
+    const publicBody = publicPage.getByRole('textbox', { name: 'Published document content', exact: true });
+    await expect(publicBody).toHaveAttribute('contenteditable', 'false');
+    await expect(publicBody).toContainText('Run tests before deploying.');
+    const outline = publicPage.getByRole('navigation', { name: 'On this page', exact: true });
+    await outline.getByRole('link', { name: 'Before you start', exact: true }).click();
+    await expect(publicBody.getByRole('heading', { name: 'Before you start', exact: true })).toBeFocused();
+    await expect(outline.getByRole('link', { name: 'Before you start', exact: true })).toHaveAttribute('aria-current', 'location');
+    await expect(publicPage.getByRole('button', { name: 'Save', exact: true })).toHaveCount(0);
+    await expect(publicPage.getByRole('button', { name: 'Log in', exact: true })).toHaveCount(0);
+    await expect(publicPage.getByRole('complementary', { name: 'Workspace navigation', exact: true })).toHaveCount(0);
+    expect(privateRequests).toEqual([]);
+    await publicPage.evaluate(() => scrollTo({ top: 0, behavior: 'instant' }));
+    await evidence(publicPage, 'public-document');
+    await explicitSave(page);
+    await publicPage.reload();
+    await expect(publicPage.getByRole('heading', { name: 'Release checklist', exact: true })).toBeVisible();
+    await expect(publicBody).not.toContainText('Unsaved private publication body.');
+    await title(page).fill('Local edits before withdrawal');
+    await actions(page); await page.getByRole('button', { name: 'Withdraw publication', exact: true }).click();
+    const withdrawal = page.getByRole('dialog', { name: 'Withdraw publication?', exact: true });
+    const withdrawn = page.waitForResponse(response => response.request().method() === 'DELETE'
+      && new URL(response.url()).pathname === `/api/v1/documents/${seeded.documentId}/publication`);
+    await withdrawal.getByRole('button', { name: 'Withdraw publication', exact: true }).click();
+    expect((await withdrawn).status()).toBe(200);
+    await expect(title(page)).toHaveValue('Local edits before withdrawal');
+    await publicPage.reload();
+    await expect(publicPage.getByRole('heading', { name: 'Published document unavailable', exact: true })).toBeVisible();
+    await expect(publicBody).toHaveCount(0);
+    expect(await demo.database.prisma.documentRevision.count({ where: { documentId: seeded.documentId } })).toBe(3);
+    await explicitSave(page);
+    expect((await readDocument(context)).data.currentRevisionNumber).toBe(4);
+  } finally { await anonymous.close(); }
+});
+
+test('stale publication returns 412, retains complete work and cannot publish or save until deliberate reconciliation', async ({ page, context }) => {
+  await login(page, 'administrator');
+  const baseline = await readDocument(context);
+  await title(page).fill('Stale local publication title');
+  await body(page).fill('Complete stale local publication body.');
+  await actions(page);
+  await page.getByRole('button', { name: 'Publish saved revision', exact: true }).click();
+  const changed = await apiRequest(context, `/api/v1/documents/${seeded.documentId}`, {
+    method: 'PATCH', headers: { Origin: demo.origin, 'If-Match': baseline.etag }, data: { title: 'Newer server title' },
+  });
+  expect(changed.status()).toBe(200);
+  const response = page.waitForResponse(value => value.request().method() === 'POST'
+    && new URL(value.url()).pathname === `/api/v1/documents/${seeded.documentId}/publication`);
+  await page.getByRole('dialog', { name: 'Publish revision 1?', exact: true }).getByRole('button', { name: 'Publish revision 1', exact: true }).click();
+  expect((await response).status()).toBe(412);
+  await expect(page.getByRole('complementary', { name: 'Save conflict', exact: true })).toBeVisible();
+  await expect(title(page)).toHaveValue('Stale local publication title');
+  await expect(body(page)).toHaveText('Complete stale local publication body.');
+  await expect(save(page)).toBeDisabled();
+  expect(await demo.database.prisma.publication.count({ where: { documentId: seeded.documentId } })).toBe(0);
+  expect(await demo.database.prisma.documentRevision.count({ where: { documentId: seeded.documentId } })).toBe(2);
+});
+
+test('publication controls remain administrator-only and anonymous unavailable pages never start private authentication', async ({ page, context, browser }) => {
+  await login(page, 'editor');
+  await actions(page);
+  await expect(page.getByRole('button', { name: 'Publish saved revision', exact: true })).toHaveCount(0);
+  const baseline = await readDocument(context);
+  const denied = await apiRequest(context, `/api/v1/documents/${seeded.documentId}/publication`, {
+    method: 'POST', headers: { Origin: demo.origin, 'If-Match': baseline.etag }, data: { revisionId: baseline.data.revision.id },
+  });
+  expect(denied.status()).toBe(403);
+  const anonymous = await browser.newContext();
+  try {
+    const publicPage = await anonymous.newPage();
+    const privateRequests: string[] = [];
+    publicPage.on('request', request => { if (/\/api\/(?:v1|auth)\//.test(new URL(request.url()).pathname)) privateRequests.push('private API'); });
+    const publicId = randomUUID(), endpoint = `${demo.origin}/api/public/publications/${publicId}`;
+    let release: () => void = () => {};
+    const delayed = new Promise<void>(resolve => { release = resolve; });
+    await publicPage.route(endpoint, async route => {
+      await delayed;
+      await route.fulfill({ status: 500, contentType: 'application/problem+json', body: JSON.stringify({
+        type: 'about:blank', title: 'Internal Server Error', status: 500, code: 'INTERNAL_ERROR', requestId: 'browser-public-fault',
+      }) });
+    }, { times: 1 });
+    await publicPage.goto(`${demo.origin}/publications/${publicId}`);
+    await expect(publicPage.getByRole('status')).toHaveText('Loading published document…');
+    release();
+    await expect(publicPage.getByRole('heading', { name: 'Could not load this document', exact: true })).toBeVisible();
+    await publicPage.getByRole('button', { name: 'Retry', exact: true }).click();
+    await expect(publicPage.getByRole('heading', { name: 'Published document unavailable', exact: true })).toBeVisible();
+    await expect(publicPage.getByText('Release checklist', { exact: true })).toHaveCount(0);
+    expect(privateRequests).toEqual([]);
+  } finally { await anonymous.close(); }
+});
+
+test('public native images use the selected revision allowlist and archive/unarchive cannot revive a publication', async ({ page, context, browser }) => {
+  await login(page, 'administrator');
+  const baseline = await readDocument(context);
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgaGD4DwAChAGA+gVWHQAAAABJRU5ErkJggg==', 'base64');
+  async function upload(name: string) {
+    const response = await apiRequest(context, `/api/v1/documents/${seeded.documentId}/attachments`, {
+      method: 'POST', headers: { Origin: demo.origin, 'Content-Type': 'application/octet-stream', 'x-file-name': encodeURIComponent(name) }, data: png,
+    });
+    expect(response.status()).toBe(201);
+    const value: unknown = await response.json();
+    if (!value || typeof value !== 'object' || !('id' in value) || typeof value.id !== 'string'
+      || !('url' in value) || typeof value.url !== 'string') throw new Error('Invalid attachment fixture');
+    return { id: value.id, url: value.url };
+  }
+  const approved = await upload('Synthetic approved public image.png');
+  const pending = await upload('Synthetic private pending image.png');
+  const changed = await apiRequest(context, `/api/v1/documents/${seeded.documentId}`, {
+    method: 'PATCH', headers: { Origin: demo.origin, 'If-Match': baseline.etag }, data: { content: nativeContent([
+      paragraph('public-image-text', 'Selected public image body.'),
+      { id: 'public-image', type: 'image', props: { url: approved.url, name: 'Synthetic approved public image.png' }, children: [] },
+    ]) },
+  });
+  expect(changed.status()).toBe(200);
+  await page.reload(); await expect(title(page)).toHaveValue('Release checklist');
+  await actions(page); await page.getByRole('button', { name: 'Publish saved revision', exact: true }).click();
+  const published = page.waitForResponse(response => response.request().method() === 'POST'
+    && new URL(response.url()).pathname === `/api/v1/documents/${seeded.documentId}/publication`);
+  await page.getByRole('dialog', { name: 'Publish revision 2?', exact: true }).getByRole('button', { name: 'Publish revision 2', exact: true }).click();
+  expect((await published).status()).toBe(200);
+  const link = page.getByRole('link', { name: 'View public document', exact: true });
+  await expect(link).toBeVisible();
+  const path = await link.getAttribute('href'), publicId = path?.split('/').at(-1);
+  if (!path || !publicId) throw new Error('No approved image publication link');
+  const anonymous = await browser.newContext();
+  try {
+    const publicPage = await anonymous.newPage();
+    await publicPage.goto(demo.origin + path);
+    const image = publicPage.getByRole('img', { name: 'Synthetic approved public image.png', exact: true });
+    await expect(image).toBeVisible();
+    await expect(image).toHaveAttribute('src', `/api/public/publications/${publicId}/attachments/${approved.id}`);
+    await expect.poll(() => image.evaluate(element => element instanceof HTMLImageElement && element.naturalWidth > 0)).toBe(true);
+    expect((await apiRequest(anonymous, approved.url)).status()).toBe(401);
+    expect((await apiRequest(anonymous, `/api/public/publications/${publicId}/attachments/${pending.id}`)).status()).toBe(404);
+    await actions(page);
+    const archived = page.waitForResponse(response => new URL(response.url()).pathname === `/api/v1/documents/${seeded.documentId}/archive`);
+    await page.getByRole('button', { name: 'Archive', exact: true }).click(); expect((await archived).status()).toBe(200);
+    await publicPage.reload();
+    await expect(publicPage.getByRole('heading', { name: 'Published document unavailable', exact: true })).toBeVisible();
+    await actions(page);
+    const unarchived = page.waitForResponse(response => new URL(response.url()).pathname === `/api/v1/documents/${seeded.documentId}/unarchive`);
+    await page.getByRole('button', { name: 'Unarchive', exact: true }).click(); expect((await unarchived).status()).toBe(200);
+    await publicPage.reload();
+    await expect(publicPage.getByRole('heading', { name: 'Published document unavailable', exact: true })).toBeVisible();
+    expect(await demo.database.prisma.documentRevision.count({ where: { documentId: seeded.documentId } })).toBe(2);
+  } finally { await anonymous.close(); }
 });
 
 test('create, edit, explicit save and reload persist the real selected revision', async ({ page, context }) => {
@@ -343,6 +778,12 @@ test('history restore appends a revision, archive preserves history, and native 
 
 test('reader controls are read-only and real API denies every mutation', async ({ page, context }) => {
   await login(page, 'reader');
+  await body(page).focus();
+  await page.keyboard.press('ControlOrMeta+k');
+  const search = page.getByRole('dialog', { name: 'Search documents', exact: true });
+  await expect(search.getByRole('combobox', { name: 'Search accessible documents', exact: true })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(search).not.toBeVisible();
   await expect(title(page)).toHaveValue('Release checklist');
   await expect(title(page)).toHaveAttribute('readonly', '');
   await expect(body(page)).toHaveAttribute('contenteditable', 'false');
@@ -757,13 +1198,17 @@ test('the outline follows actual document headings, scrolls and focuses sections
   const outline = page.getByRole('navigation', { name: 'On this page', exact: true });
   await expect(outline.getByRole('link')).toHaveCount(sectionNames.length);
   for (const name of sectionNames) await expect(outline.getByRole('link', { name, exact: true })).toBeVisible();
+  await expect(outline.getByRole('link', { name: sectionNames[0]!, exact: true })).toHaveAttribute('aria-current', 'location');
   await evidence(page, 'editing');
   const lastName = sectionNames.at(-1)!;
   const lastLink = outline.getByRole('link', { name: lastName, exact: true });
   await lastLink.focus();
   await page.keyboard.press('Enter');
   const heading = body(page).getByRole('heading', { name: lastName, exact: true });
-  await expect(body(page).locator('.bn-block-content[data-content-type="heading"]').filter({ has: heading })).toBeFocused();
+  await expect(body(page)).toBeFocused();
+  const headingId = await heading.evaluate(element => element.closest('[data-id]')?.getAttribute('data-id'));
+  expect(headingId).toBeTruthy();
+  await expect.poll(() => selectedBlockId(page)).toBe(headingId);
   expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
   const position = await heading.boundingBox();
   expect(position?.y).toBeGreaterThanOrEqual(-1);
@@ -803,10 +1248,12 @@ test('nested native heading navigation opens its toggle ancestors without changi
   const target = body(page).getByRole('heading', { name: 'Nested outline target', exact: true });
   await expect(target).not.toBeVisible();
   const link = page.getByRole('navigation', { name: 'On this page', exact: true }).getByRole('link', { name: 'Nested outline target', exact: true });
+  await expect(link).not.toHaveAttribute('aria-current', 'location');
   await link.focus();
   await page.keyboard.press('Enter');
   await expect(target).toBeVisible();
-  await expect(body(page).locator('.bn-block-content[data-content-type="heading"]').filter({ has: target })).toBeFocused();
+  await expect(body(page)).toBeFocused();
+  await expect.poll(() => selectedBlockId(page)).toBe('nested-target');
   await expect(save(page)).toBeDisabled();
   expect(await readDocument(context, value.id)).toEqual(original);
   await assertNoBrowserPersistence(page);
@@ -836,14 +1283,14 @@ test('supplied formatting controls and native undo/redo work across successful s
   expect(native.document[0]).toMatchObject({ type: 'heading', props: { level: 2 }, content: [
     { type: 'text', text: 'Native supplied formatting', styles: { bold: true, italic: true, underline: true, strike: true } },
   ] });
-  const savedBody = await body(page).innerHTML();
   await body(page).focus();
   await page.keyboard.press('ControlOrMeta+z');
   await expect(save(page)).toBeEnabled();
-  expect(await body(page).innerHTML()).not.toBe(savedBody);
+  await expect(body(page).getByRole('heading', { name: 'Native supplied formatting', exact: true })).toHaveCount(0);
   await page.keyboard.press('ControlOrMeta+Shift+z');
   await expect(save(page)).toBeDisabled();
-  expect(await body(page).innerHTML()).toBe(savedBody);
+  await expect(body(page).getByRole('heading', { name: 'Native supplied formatting', exact: true })).toBeVisible();
+  await expect(body(page).locator('strong em u s')).toHaveText('Native supplied formatting');
   expect((await readDocument(context)).data).toEqual(saved.data);
   expect(await demo.database.prisma.documentRevision.count({ where: { documentId: seeded.documentId } })).toBe(2);
   await page.reload();
@@ -905,9 +1352,10 @@ test('official media embed accepts a URL, renders the image and preserves it thr
   await page.route(mediaURL, route => route.fulfill({ status: 200, contentType: 'image/png', body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aLXsAAAAASUVORK5CYII=', 'base64') }));
   await body(page).fill('A linked native image');
   await slashBlock(page, 'image', 'Image');
+  await expect(page.getByRole('tab', { name: 'Upload', exact: true })).toBeVisible();
+  await page.getByRole('tab', { name: 'Embed', exact: true }).click();
   const embed = page.getByPlaceholder('Enter URL', { exact: true });
   await expect(embed).toBeVisible();
-  await expect(page.getByRole('tab', { name: 'Upload', exact: true })).toHaveCount(0);
   await embed.fill(mediaURL);
   await page.getByRole('button', { name: 'Embed image', exact: true }).click();
   const image = body(page).locator(`img[src="${mediaURL}"]`);
@@ -985,6 +1433,7 @@ test('supplied link UI creates, edits, cancels and removes native links without 
   expect(validateContent(unlinked.data.revision.content).content.document[0]).toMatchObject({ content: [
     { type: 'text', text: 'Read the synthetic release guide.', styles: {} },
   ] });
+  expect(browserErrors).toEqual([]);
 });
 
 test('invalid native link content stays local, blocks Save and can be undone without changing history', async ({ page, context }) => {
@@ -1025,7 +1474,7 @@ test('discard requires confirmation and resets the complete title/body baseline 
   await body(page).fill('The full local body is different from the baseline.');
   await body(page).locator('p').selectText();
   await toolbar.getByRole('button', { name: 'Bold', exact: true }).click();
-  const dirtyBody = await body(page).innerHTML();
+  const dirtyBody = await body(page).innerText();
   let mutations = 0;
   page.on('request', request => {
     if (request.method() !== 'GET' && new URL(request.url()).pathname.startsWith('/api/v1/')) mutations++;
@@ -1037,7 +1486,8 @@ test('discard requires confirmation and resets the complete title/body baseline 
   await evidence(page, 'discard-changes');
   await dialog.getByRole('button', { name: 'Keep editing', exact: true }).click();
   await expect(title(page)).toHaveValue('Unsaved title to discard');
-  expect(await body(page).innerHTML()).toBe(dirtyBody);
+  await expect(body(page)).toHaveText(dirtyBody, { useInnerText: true });
+  await expect(body(page).locator('strong')).toHaveText('The full local body is different from the baseline.');
   await expect(save(page)).toBeEnabled();
   await confirmDiscard(page);
   await expect(title(page)).toHaveValue(baseline.data.revision.title);
