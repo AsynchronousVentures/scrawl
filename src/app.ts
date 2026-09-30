@@ -11,6 +11,9 @@ import { registerAuthRoutes, registerCoreRoutes } from './http/core-routes.js';
 import type { Core } from './core/index.js';
 import { registerDocumentRoutes } from './http/document-routes.js';
 import { registerSearchRoutes } from './http/search-routes.js';
+import { registerAttachmentRoutes } from './http/attachment-routes.js';
+import { registerExportRoutes } from './http/export-routes.js';
+import type { Exporting } from './capabilities/exporting/index.js';
 import { registerFrontend } from './http/frontend.js';
 
 type BuildOptions = {
@@ -19,10 +22,11 @@ type BuildOptions = {
   logging?: boolean;
   core?: Core;
   frontendRoot?: string;
+  exporting?: Exporting;
 };
 
 /** Builds the HTTP application without opening a port or connecting a database. */
-export async function buildApp({ config, checkDatabase, logging = true, core, frontendRoot }: BuildOptions) {
+export async function buildApp({ config, checkDatabase, logging = true, core, frontendRoot, exporting }: BuildOptions) {
   const app = Fastify({
     logger: logging ? {
       level: config.logLevel,
@@ -58,6 +62,8 @@ export async function buildApp({ config, checkDatabase, logging = true, core, fr
         const body = document.openapiObject.paths?.[`/api/v1/documents/{id}/${operation}`]?.post?.requestBody;
         if (body && !('$ref' in body)) body.required = false;
       }
+      const upload = document.openapiObject.paths?.['/api/v1/documents/{id}/attachments']?.post?.requestBody;
+      if (upload && !('$ref' in upload)) upload.content = { 'application/octet-stream': { schema: { type: 'string', format: 'binary' } } };
       return document.openapiObject;
     },
     openapi: {
@@ -81,8 +87,10 @@ export async function buildApp({ config, checkDatabase, logging = true, core, fr
     registerAuthRoutes(app, core);
     registerCoreRoutes(app, core);
     registerDocumentRoutes(app, core);
+    registerAttachmentRoutes(app, core);
     registerSearchRoutes(app, core);
   }
+  if (exporting) registerExportRoutes(app, exporting);
   if (config.apiDocsEnabled) {
     app.get('/openapi.json', { schema: { hide: true } }, async () => app.swagger());
   }

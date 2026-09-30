@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import type { Document, DocumentRevision, Prisma, PrismaClient } from '../../generated/prisma/client.js';
 import type { Identity } from '../identity/index.js';
 import type { Spaces } from '../spaces/index.js';
+import type { Attachments } from '../attachments/index.js';
 import { HttpProblem } from '../../http/problems.js';
 import { ContentValidationError, validateContent } from './content.js';
 
@@ -85,7 +86,7 @@ function pageLimit(input: number | undefined) {
   return limit;
 }
 
-export function createDocuments(prisma: PrismaClient, identity: Identity, spaces: Spaces) {
+export function createDocuments(prisma: PrismaClient, identity: Identity, spaces: Spaces, attachments: Attachments) {
   async function authorizeDocument(headers: Headers, id: string) {
     const principal = await identity.resolve(headers);
     const target = await prisma.document.findUnique({ where: { id }, select: { spaceId: true } });
@@ -116,8 +117,9 @@ export function createDocuments(prisma: PrismaClient, identity: Identity, spaces
   async function append(tx: Prisma.TransactionClient, document: Head, actor: Actor,
     snapshot: { title: string; content: ReturnType<typeof content>; changeNote: string | null }) {
     const revisionNumber = document.currentRevisionNumber + 1;
+    const revisionId = randomUUID();
     await tx.documentRevision.create({ data: {
-      id: randomUUID(), documentId: document.id, revisionNumber, title: snapshot.title,
+      id: revisionId, documentId: document.id, revisionNumber, title: snapshot.title,
       contentFormat: snapshot.content.content.format, contentSchemaVersion: snapshot.content.content.schemaVersion,
       contentEditorVersion: snapshot.content.content.editorVersion,
       // JSON transport encodes native undefined table widths as null and omits
@@ -126,6 +128,7 @@ export function createDocuments(prisma: PrismaClient, identity: Identity, spaces
       plainText: snapshot.content.plainText,
       authorId: actor.id, changeNote: snapshot.changeNote,
     } });
+    await attachments.reference(tx, document.id, revisionId, snapshot.content.content.document);
     const updated = await tx.document.updateMany({
       where: { id: document.id, lockVersion: document.lockVersion },
       data: { currentRevisionNumber: revisionNumber, lockVersion: { increment: 1 } },
@@ -155,14 +158,16 @@ export function createDocuments(prisma: PrismaClient, identity: Identity, spaces
         const document = await tx.document.create({ data: {
           id: randomUUID(), spaceId, currentRevisionNumber: 1, createdBy: actor.id,
         } });
+        const revisionId = randomUUID();
         await tx.documentRevision.create({ data: {
-          id: randomUUID(), documentId: document.id, revisionNumber: 1, title: snapshot.title,
+          id: revisionId, documentId: document.id, revisionNumber: 1, title: snapshot.title,
           contentFormat: snapshot.content.content.format, contentSchemaVersion: snapshot.content.content.schemaVersion,
           contentEditorVersion: snapshot.content.content.editorVersion,
           body: JSON.parse(JSON.stringify(snapshot.content.content.document)) as Prisma.InputJsonValue,
           plainText: snapshot.content.plainText,
           authorId: actor.id, changeNote: snapshot.changeNote,
         } });
+        await attachments.reference(tx, document.id, revisionId, snapshot.content.content.document);
         return documentDto(await tx.document.findUniqueOrThrow({ where: { id: document.id }, include: { head: true } }));
       });
     },

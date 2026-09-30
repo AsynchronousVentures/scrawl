@@ -4,6 +4,7 @@
 import { readConfig, readIdentityConfig } from './config.js';
 import { createDatabase } from './db/client.js';
 import { buildApp } from './app.js';
+import { createExporting } from './capabilities/exporting/index.js';
 import { createCore } from './core/index.js';
 import { fileURLToPath } from 'node:url';
 import { frontendRootIfBuilt } from './http/frontend.js';
@@ -16,8 +17,8 @@ async function main(): Promise<void> {
   const database = createDatabase(config, () => {
     console.error('An idle database connection failed');
   });
-  const core = createCore(database.prisma, identityConfig);
-  const app = await buildApp({ config, core, checkDatabase: () => database.ping(),
+  const core = createCore(database.prisma, identityConfig, { attachmentStorageDir: config.attachmentStorageDir });
+  const app = await buildApp({ config, core, exporting: createExporting(core.documents, core.attachments, { origin: identityConfig.origin }), checkDatabase: () => database.ping(),
     ...(frontendRoot ? { frontendRoot } : {}),
   });
   app.addHook('onClose', async () => database.close());

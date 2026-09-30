@@ -6,13 +6,16 @@ import { buildApp } from '../src/app.js';
 import { readConfig } from '../src/config.js';
 import { randomBytes } from 'node:crypto';
 import { createDatabase } from '../src/db/client.js';
+import { createExporting } from '../src/capabilities/exporting/index.js';
 import { createCore } from '../src/core/index.js';
 
 const config = readConfig({ NODE_ENV: 'test', DATABASE_URL: 'postgresql://unused@localhost/unused' });
 const database = createDatabase(config, () => {});
+const identity = { origin: 'http://127.0.0.1:3000', secret: randomBytes(32).toString('hex'), secureCookies: false };
+const core = createCore(database.prisma, identity);
 const app = await buildApp({
   config,
-  core: createCore(database.prisma, { origin: 'http://127.0.0.1:3000', secret: randomBytes(32).toString('hex'), secureCookies: false }),
+  core, exporting: createExporting(core.documents, core.attachments, { origin: identity.origin }),
   checkDatabase: async () => { throw new Error('OpenAPI generation must not access the database'); },
   logging: false,
 });

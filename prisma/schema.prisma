@@ -31,6 +31,7 @@ model User {
   createdDocuments Document[] @relation("DocumentCreator")
   archivedDocuments Document[] @relation("DocumentArchiver")
   authoredRevisions DocumentRevision[]
+  uploadedAttachments Attachment[]
 
   @@unique([email])
   @@map("user")
@@ -126,6 +127,7 @@ model Document {
   archivedBy            String?
   archiver              User?              @relation("DocumentArchiver", fields: [archivedBy], references: [id], onDelete: Restrict)
   revisions             DocumentRevision[] @relation("DocumentHistory")
+  attachments           Attachment[]
 
   @@index([spaceId, archivedAt, id])
 }
@@ -148,6 +150,35 @@ model DocumentRevision {
   createdAt            DateTime   @default(now()) @db.Timestamptz(3)
   changeNote           String?    @db.VarChar(2000)
   headOf               Document[] @relation("DocumentHead")
+  attachments          RevisionAttachment[]
 
   @@unique([documentId, revisionNumber])
+  @@unique([id, documentId])
+}
+
+model Attachment {
+  id         String @id @db.Uuid
+  documentId String @db.Uuid
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  name       String @db.VarChar(200)
+  mimeType   String @db.VarChar(100)
+  size       Int
+  sha256     String @db.VarChar(64)
+  createdBy  String
+  creator    User @relation(fields: [createdBy], references: [id], onDelete: Restrict)
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+  revisions  RevisionAttachment[]
+
+  @@unique([id, documentId])
+  @@index([documentId])
+}
+
+model RevisionAttachment {
+  revisionId   String @db.Uuid
+  attachmentId String @db.Uuid
+  documentId   String @db.Uuid
+  revision     DocumentRevision @relation(fields: [revisionId, documentId], references: [id, documentId], onDelete: Restrict)
+  attachment   Attachment @relation(fields: [attachmentId, documentId], references: [id, documentId], onDelete: Restrict)
+
+  @@id([revisionId, attachmentId])
 }

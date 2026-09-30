@@ -11,12 +11,18 @@ import { demoContent, richDemoContent } from './demo-content.js';
 
 let stage = 'configuration';
 let checks = 0;
+class DemoAssertionError extends Error {}
 function check(condition: boolean, label: string): asserts condition {
-  if (!condition) throw new Error(label);
+  if (!condition) throw new DemoAssertionError(label);
   checks++;
 }
 function same(actual: unknown, expected: unknown, label: string) {
   check(isDeepStrictEqual(actual, expected), label);
+}
+function sameContent(actual: unknown, expected: unknown, label: string) {
+  // Native optional undefined fields disappear on the JSON wire, then the
+  // official parser restores them. Compare canonical native content on both sides.
+  same(validateContent(actual).content, validateContent(expected).content, label);
 }
 function record(value: unknown): Record<string, unknown> {
   check(value !== null && typeof value === 'object' && !Array.isArray(value), 'Expected an object');
@@ -85,7 +91,9 @@ async function expect(actor: Client, method: string, path: string, status: numbe
   return response;
 }
 function version(response: Awaited<ReturnType<Client['request']>>) {
-  check(typeof response.etag === 'string' && /^"(?:doc|space)-[0-9a-f-]+-v[1-9][0-9]*"$/i.test(response.etag), 'Missing server ETag');
+  check(typeof response.etag === 'string', 'Missing server ETag');
+  const matched = /^"(doc|space)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-(bn1-)?v[1-9][0-9]*"$/.exec(response.etag);
+  check(matched !== null && (matched[1] === 'doc' ? matched[2] === 'bn1-' : matched[2] === undefined), 'Missing server ETag');
   return response.etag;
 }
 async function history(actor: Client, path: string) {
@@ -175,7 +183,7 @@ async function main() {
   const second = snapshot(saved.data);
   let tag = version(saved);
   check(second.document.currentRevisionNumber === 2 && second.revision.revisionNumber === 2, 'Save did not append revision 2');
-  same(second.revision.content, secondContent, 'Saved content mismatch');
+  sameContent(second.revision.content, secondContent, 'Saved content mismatch');
   const beforeRejected = await history(reader, path);
   check(beforeRejected.length === 2, 'Save did not add exactly one revision');
   hidden(await expect(otherEditor, 'PATCH', path, 412, { content: demoContent(['Stale edit must not commit.']) }, startingTag));
@@ -235,12 +243,12 @@ async function main() {
   tag = version(restored);
   check(selected.document.currentRevisionNumber === 3 && selected.revision.revisionNumber === 3
     && selected.revision.id !== firstRevisionId, 'Restore rewrote history');
-  same(selected.revision.content, initialContent, 'Restore content mismatch');
+  sameContent(selected.revision.content, initialContent, 'Restore content mismatch');
   const restoredHistory = await history(reader, path);
   check(restoredHistory.length === 3, 'Restore did not append exactly one revision');
   same(restoredHistory.slice(1), beforeRejected, 'Restore changed existing revision metadata');
-  same(record((await expect(reader, 'GET', path + '/revisions/' + firstRevisionId, 200)).data).content, initialContent, 'Original history changed');
-  same(record((await expect(reader, 'GET', path + '/revisions/' + uuid(second.revision.id), 200)).data).content, secondContent, 'Intervening history changed');
+  sameContent(record((await expect(reader, 'GET', path + '/revisions/' + firstRevisionId, 200)).data).content, initialContent, 'Original history changed');
+  sameContent(record((await expect(reader, 'GET', path + '/revisions/' + uuid(second.revision.id), 200)).data).content, secondContent, 'Intervening history changed');
 
   stage = 'native export';
   hidden(await expect(outsider, 'GET', path + '/export', 404));
@@ -306,8 +314,11 @@ async function main() {
   console.log(`Demo A passed (${checks} assertions). Space ${spaceId}; document ${documentId}; revision 3. Export: artifacts/demo/export.json`);
 }
 
-main().catch(() => {
+main().catch((error: unknown) => {
   // Assertion, parser, transport, and library errors may contain response bodies or credentials.
   console.error(`Demo A failed at ${stage}. Check the running demo API and fixture setup.`);
+  // Only this script's literal assertion labels are safe to reveal. Never log
+  // parser/HTTP/library error messages, submitted values, or response bodies.
+  if (error instanceof DemoAssertionError) console.error(`Assertion: ${error.message}`);
   process.exitCode = 1;
 });

@@ -1,0 +1,114 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Asynchronous Ventures and contributors
+import { randomUUID, createHash } from 'node:crypto';
+import { mkdir, open, unlink } from 'node:fs/promises';
+import { resolve, join } from 'node:path';
+import { fileTypeFromBuffer } from 'file-type';
+import sharp from 'sharp';
+import type { PrismaClient, Prisma } from '../../generated/prisma/client.js';
+import type { Identity } from '../identity/index.js';
+import type { Spaces } from '../spaces/index.js';
+import { HttpProblem } from '../../http/problems.js';
+
+export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+const MAX_DOCUMENT_BYTES = 100 * 1024 * 1024;
+const allowedTypes = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'application/pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'audio/mpeg', 'audio/ogg', 'audio/flac', 'audio/wav', 'audio/x-wav', 'video/mp4', 'video/webm']);
+const attachmentUrl = /^\/api\/v1\/attachments\/([0-9a-f-]{36})\/content$/i;
+
+/** Only traverses content that has already passed the native parser. */
+export function attachmentReferences(content: unknown): string[] {
+  const ids = new Set<string>();
+  function visit(value: unknown) {
+    if (Array.isArray(value)) { value.forEach(visit); return; }
+    if (!value || typeof value !== 'object') return;
+    for (const [key, child] of Object.entries(value)) {
+      if ((key === 'url' || key === 'href') && typeof child === 'string') {
+        const match = attachmentUrl.exec(child); if (match) ids.add(match[1]!.toLowerCase());
+      } else visit(child);
+    }
+  }
+  visit(content); return [...ids];
+}
+
+async function mediaType(bytes: Buffer, name: string) {
+  let detected: Awaited<ReturnType<typeof fileTypeFromBuffer>>;
+  try { detected = await fileTypeFromBuffer(bytes); } catch { throw new HttpProblem(400, 'INVALID_ATTACHMENT'); }
+  if (!detected && /\.(?:txt|md|csv|log)$/i.test(name)) {
+    try { new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
+    catch { throw new HttpProblem(400, 'INVALID_ATTACHMENT'); }
+    if (bytes.includes(0)) throw new HttpProblem(400, 'INVALID_ATTACHMENT');
+    return 'text/plain';
+  }
+  if (!detected || !allowedTypes.has(detected.mime)) throw new HttpProblem(415, 'UNSUPPORTED_ATTACHMENT');
+  if (detected.mime.startsWith('image/')) {
+    try {
+      // Decode, rather than trusting a header that could describe truncated bytes.
+      // Animated frames count toward the same total pixel budget.
+      await sharp(bytes, { limitInputPixels: 40_000_000, failOn: 'warning', animated: true }).stats();
+    } catch { throw new HttpProblem(400, 'INVALID_ATTACHMENT'); }
+  }
+  return detected.mime;
+}
+
+export function createAttachments(prisma: PrismaClient, identity: Identity, spaces: Spaces, storageRoot: string) {
+  const root = resolve(storageRoot);
+  return {
+    async upload(headers: Headers, documentId: string, name: string, bytes: Buffer) {
+      const principal = await identity.resolve(headers);
+      if (!name || name.length > 200 || /[\u0000-\u001f\u007f/\\]/.test(name)) throw new HttpProblem(400, 'INVALID_ATTACHMENT');
+      if (!bytes.length || bytes.length > MAX_UPLOAD_BYTES) throw new HttpProblem(413, 'ATTACHMENT_TOO_LARGE');
+      const target = await prisma.document.findUnique({ where: { id: documentId }, select: { spaceId: true } });
+      if (!target) throw new HttpProblem(404, 'NOT_FOUND');
+      // Authorize before inspecting untrusted media, then recheck under the write locks.
+      await spaces.authorize(prisma, principal, target.spaceId, true);
+      const mimeType = await mediaType(bytes, name);
+      const id = randomUUID(), path = join(root, id);
+      let written = false;
+      try {
+        return await prisma.$transaction(async tx => {
+          const actor = await spaces.lockForWrite(tx, principal, target.spaceId);
+          await tx.$queryRaw`SELECT "id" FROM "Document" WHERE "id" = ${documentId}::uuid FOR UPDATE`;
+          const document = await tx.document.findUniqueOrThrow({ where: { id: documentId } });
+          if (document.archivedAt) throw new HttpProblem(409, 'DOCUMENT_ARCHIVED');
+          const total = await tx.attachment.aggregate({ where: { documentId }, _sum: { size: true } });
+          if ((total._sum.size ?? 0) + bytes.length > MAX_DOCUMENT_BYTES) throw new HttpProblem(413, 'ATTACHMENT_QUOTA_EXCEEDED');
+          await mkdir(root, { recursive: true, mode: 0o700 });
+          const file = await open(path, 'wx', 0o600);
+          written = true;
+          try { await file.writeFile(bytes); await file.sync(); } finally { await file.close(); }
+          await tx.attachment.create({ data: { id, documentId, name, mimeType, size: bytes.length,
+            sha256: createHash('sha256').update(bytes).digest('hex'), createdBy: actor.id } });
+          return { id, name, mimeType, size: bytes.length, url: `/api/v1/attachments/${id}/content` };
+        }, { timeout: 15_000 });
+      } catch (error) {
+        // A connection failure can make commit acknowledgement ambiguous. Keep
+        // private bytes unless a new read confirms their metadata was rolled back.
+        if (written) {
+          const persisted = await prisma.attachment.findUnique({ where: { id } }).catch(() => undefined);
+          if (persisted === null) await unlink(path).catch(() => {});
+        }
+        throw error;
+      }
+    },
+    async read(headers: Headers, id: string) {
+      const principal = await identity.resolve(headers);
+      const attachment = await prisma.attachment.findUnique({ where: { id }, include: { document: { select: { spaceId: true } } } });
+      if (!attachment) throw new HttpProblem(404, 'NOT_FOUND');
+      await spaces.authorize(prisma, principal, attachment.document.spaceId);
+      return { path: join(root, attachment.id), mimeType: attachment.mimeType, size: attachment.size,
+        name: attachment.name, documentId: attachment.documentId };
+    },
+    async reference(tx: Prisma.TransactionClient, documentId: string, revisionId: string, parsedContent: unknown) {
+      const ids = attachmentReferences(parsedContent);
+      if (!ids.length) return;
+      const count = await tx.attachment.count({ where: { id: { in: ids }, documentId } });
+      if (count !== ids.length) throw new HttpProblem(400, 'INVALID_ATTACHMENT_REFERENCE');
+      await tx.revisionAttachment.createMany({ data: ids.map(attachmentId => ({ documentId, revisionId, attachmentId })) });
+    },
+  };
+}
+export type Attachments = ReturnType<typeof createAttachments>;

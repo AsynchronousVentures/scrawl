@@ -30,6 +30,7 @@ async function main() {
   Object.assign(process.env, {
     NODE_ENV: config.nodeEnv, HOST: config.host, PORT: String(config.port),
     LOG_LEVEL: config.logLevel, API_DOCS_ENABLED: String(config.apiDocsEnabled),
+    ATTACHMENT_STORAGE_DIR: config.attachmentStorageDir,
     DB_POOL_MAX: String(config.databasePoolMax), DATABASE_URL: config.databaseUrl,
     APP_ORIGIN: identity.origin, AUTH_SECRET: identity.secret,
   });

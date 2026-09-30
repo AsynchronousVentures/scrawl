@@ -11,6 +11,7 @@ export type AppConfig = Readonly<{
   apiDocsEnabled: boolean;
   databaseUrl: string;
   databasePoolMax: number;
+  attachmentStorageDir: string;
 }>;
 
 export type IdentityConfig = Readonly<{
@@ -87,6 +88,7 @@ export function readConfig(env: Environment): AppConfig {
     logLevel: logLevel as LogLevel,
     apiDocsEnabled: boolean('API_DOCS_ENABLED', env.API_DOCS_ENABLED, nodeEnv === 'development'),
     databaseUrl,
+    attachmentStorageDir: env.ATTACHMENT_STORAGE_DIR ?? 'var/private-attachments',
     databasePoolMax: integer('DB_POOL_MAX', env.DB_POOL_MAX, 5, 1, 100),
   });
 }
