@@ -26,7 +26,7 @@ These are proposed engineering choices the agent may refine through a short deci
 | First sign-in | Local library-managed account/session; closed registration; host CLI provisions users |
 | OIDC | Optional integration after the local document loop; not a Demo A prerequisite |
 | Permission model | Space reader/editor; instance administrator has all-space access |
-| Content | Restricted, versioned ProseMirror-compatible JSON; no raw HTML/custom nodes |
+| Content | Native BlockNote standard blocks, Scrawl version metadata, official shadcn UI/server utilities; strict security/resource validation |
 | Save | Explicit save, immutable revision, optimistic concurrency |
 | Frontend timing | Thin UI after private-core tests, not after all backend capabilities |
 | Publishing | Disabled by default, administrator action, selected-revision grant |
@@ -35,4 +35,4 @@ These are proposed engineering choices the agent may refine through a short deci
 
 Technical pins are decided in P0/P1 and documented with command output. Licensing choice is no longer pending. See [plan.md](plan.md), [architecture.md](architecture.md), and [sources.md](sources.md).
 
-P2 uses native ProseMirror canonical JSON with a restricted schema and explicit resource limits. Canonical no-op saves keep the current revision/version; restore always appends history. Archive/unarchive changes lifecycle versions, preserves authorized history reads, and blocks content mutations while archived. These implemented policies and commit-time head constraints are recorded in [core-schema.md](core-schema.md).
+The BlockNote foundation replaces P2's restricted schema. Canonical no-op saves still keep the current revision/version; restore always appends history. Archive/unarchive changes lifecycle versions, preserves authorized history reads, and blocks content mutations while archived. The native format and future live-state/checkpoint boundaries are recorded in [ADR 0001](adr/0001-native-blocknote-documents.md); durable vocabulary is in [CONTEXT.md](../CONTEXT.md).

@@ -60,9 +60,19 @@ Add explicit save feedback, dirty state/navigation warning and a 412 conflict vi
 
 **Do not build:** auto-save, multiplayer cursors, page designer, public branding, AI toolbar, widget dashboard or a component-library rewrite.
 
+## N1: native BlockNote foundation, assigned after P4
+
+The maintainer approved BlockNote and its official shadcn integration as the document foundation. This supersedes the earlier restricted editor/schema and feature ordering. Preserve P0-P4 authorization, concurrency, rollback, immutable history and draft protections.
+
+Use all standard native blocks/styles, supplied editing UI and server conversion utilities. Version the native `Block[]` contract explicitly; update validation, persistence, reading/editing, nested heading outline, history/restore and native JSON export together. Prove safe rich editing through real sessions and PostgreSQL. Checkpoint the old baseline and preserve every existing snapshot with a private original-data archive before an explicit transactional format conversion. Never reset data or keep a permanent product compatibility layer for prototype fixtures.
+
+**Acceptance:** standard blocks/styles, tables and nested content round-trip without dropped data; rich UI/links/keyboard undo work; explicit Save and Discard retain their revision semantics; reload/history/restore/export use native content; stale writes retain complete drafts; authorization and all earlier transaction tests remain effective. Capture actual application evidence and stop for review.
+
+**Following bounded sequence:** N2 private attachments using native hooks; N3 XL layouts/exporters with authorized file resolution; N4 durable Yjs collaboration then supplied comments; N5 selected-snapshot publishing and optional provider-backed AI. [ADR 0001](adr/0001-native-blocknote-documents.md) resolves live storage, checkpoints, scoped undo/discard, restore epochs and publication before N4 wiring. Do not implement N2-N5 in N1.
+
 ## P5 — Demo C, public publishing as the first substantial capability
 
-**Depends on:** P4. **Goal:** prove capabilities connect without bypassing the core.
+**Depends on:** the native foundation and attachment/live-state contracts above. The earlier text-only ordering is superseded. **Goal:** prove capabilities connect without bypassing the core.
 
 Implement [public-publishing.md](public-publishing.md) API-first, then add administrator preview/publish/unpublish controls and an anonymous read-only view. Add publication/availability state only now. Publish an explicitly selected revision under the document version precondition; never advance the public revision on internal save. Separate public schemas from private DTOs. Start text-only with existing supported nodes; file publication is extended in P7.
 

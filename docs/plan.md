@@ -6,9 +6,9 @@
 
 **License:** AGPL-3.0-only
 
-**Revision:** 3, 2026-09-29
+**Revision:** 4, 2026-09-30
 
-**Status:** P3 Demo A and native single-document export implemented and verified locally; subsequent packets remain planned
+**Status:** P0-P4 verified locally. Native BlockNote foundation assigned; later integrations remain planned.
 
 ## 1. What we are building
 
@@ -33,7 +33,7 @@ A local demo is not a production release. P0–P5 use synthetic data and do not 
 
 **Required for Demo A:** current scaffold verification; Prisma/PostgreSQL; maintained authentication with closed registration; explicit local owner bootstrap; administrator-provisioned demo users; reader/editor space access; validated text documents; create/read/update; revision list/read/restore; archive/unarchive; bounded listings; native JSON export; generated OpenAPI; error and permission tests.
 
-**Add for Demo B:** React/Vite; a restricted Tiptap-compatible editor; explicit Save; navigation; history; conflict dialog preserving local edits; accessible loading/error/empty states. Use the API, including authentication. No frontend database access or duplicated business permissions.
+**Add for Demo B:** React/Vite; BlockNote's standard editor and official shadcn UI; explicit Save; navigation; history; conflict comparison preserving local edits; accessible loading/error/empty states. Use the API, including authentication. No frontend database access or duplicated business permissions. Preserve the approved charcoal/sage document layout.
 
 **Add for Demo C:** disabled-by-default publishing; administrator publish/unpublish; selected revision and safe public DTO; anonymous read-only page; no accidental republication after archive/unarchive; source/license access in the interface before network distribution.
 
@@ -41,7 +41,19 @@ A local demo is not a production release. P0–P5 use synthetic data and do not 
 
 **Excluded from this product direction:** tenants, billing, subscriptions, license activation, paid editions, entitlements, and seat accounting.
 
-**Not part of these demos:** AI, chat connectors, proposal/approval workflows, comments, collaborative editing, autosave, embedding search, arbitrary HTML, custom blocks, groups/SCIM, per-document private ACL exceptions, scheduled or expiring shares, custom domains, theme builder, webhooks, Redis, queues, plugin marketplace, event bus, microservices, and a generic plugin SDK. These are not reserved features or empty tables; implement none until a concrete need appears.
+**Still outside the assigned foundation:** chat connectors, proposal/approval workflows, embedding search, arbitrary custom blocks, groups/SCIM, per-document private ACL exceptions, scheduled or expiring shares, custom domains, theme builder, webhooks, Redis, queues, plugin marketplace, event bus, microservices, and a generic plugin SDK. Attachments, XL layouts/exporters, collaboration/comments and optional AI are now planned in the dependency sequence below, not implemented speculatively.
+
+## BlockNote implementation sequence
+
+The maintainer's BlockNote decision supersedes the earlier editor restrictions and the feature ordering where it conflicts. Historical P0-P4 acceptance remains useful.
+
+1. **Native foundation, assigned now:** all standard BlockNote blocks/styles and supplied UI, strict native validation/server utilities, persistence, nested outline, rendering, revisions/restore, native export, and explicit save/undo/discard/conflict protections. Preserve existing data through a backed-up finite format conversion.
+2. **Private attachments:** supplied `uploadFile`/`resolveFileUrl` hooks backed by authorized application-owned bytes and revision reference retention. Define failure recovery and deletion policy before storage is broadly used.
+3. **XL layouts and exporters:** use OSS multi-column, PDF, DOCX and ODT packages with matching native schemas and authorized attachment resolution. Override exporter proxy defaults; private assets must not be sent to vendor services.
+4. **Collaboration and comments:** durable server-authorized Yjs state, immutable checkpoints, restore epochs and user-scoped undo, followed by supplied comment stores/UI with server-checked mutations. Implement [the live-state contract](adr/0001-native-blocknote-documents.md) before enabling live sessions.
+5. **Publishing and optional AI:** publish selected immutable revisions with explicit attachment grants. Add AI only as an opt-in provider integration through supplied accept/reject UI and authorized editing operations. No provider is required to run Scrawl.
+
+Search, nesting, full portability and release hardening keep their separate bounded packets. Stop for review after the native foundation; do not implement later items in this assignment.
 
 ## 4. Stack and version policy
 
@@ -53,7 +65,7 @@ Use Better Auth as the first authentication candidate. Its official integration 
 
 P1 retains Fastify, Swagger generation, and `pg`, and pins Better Auth 1.7.6 with Prisma/client/adapter-pg 7.10.0. Compatibility and targeted transitive advisory fixes are recorded in [VALIDATION.md](../VALIDATION.md). One migration history owns the entire schema. Auth model generation feeds reviewed Prisma migrations rather than a second migration engine. [S5]
 
-Use a restricted Tiptap/ProseMirror-compatible JSON body, validated on the server and versioned independently of the API. P2 pins `prosemirror-model@1.25.12` for native headless schema validation/round trips, adding no editor package. Existing libraries supply the editor and schema primitives; custom code defines product rules. JSON persistence is not a promise of future collaborative editing support. [S8]
+Use BlockNote 0.55.0 native blocks with Scrawl's explicit schema/version metadata and official server utilities. Keep strict security/resource validation without reducing its standard editing schema. Core/React/shadcn/server-util are MPL-2.0; later XL packages use their GPL OSS licensing path. Backend pins remain unchanged. Native JSON snapshots do not replace the durable Yjs state required by future collaboration. See [the foundation decision](adr/0001-native-blocknote-documents.md).
 
 ## 5. The core/capability boundary
 
