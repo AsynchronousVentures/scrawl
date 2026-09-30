@@ -59,6 +59,10 @@ test('demo configuration accepts designated local targets and configurable local
     DATABASE_URL: `postgresql://another:synthetic-password@localhost:5432/${DEMO_DATABASE}` });
   assert.equal(result.config.port, 3201);
   assert.equal(result.identity.secureCookies, false);
+  assert.equal(readDemoConfig({ ...valid, DEMO_DB_PORT: '5433' }).config.databaseUrl, valid.DATABASE_URL);
+  assert.equal(readDemoConfig({ ...valid, DEMO_DB_PORT: '5434',
+    DATABASE_URL: `postgresql://demo:synthetic-password@127.0.0.1:5434/${DEMO_DATABASE}` }).config.databaseUrl,
+    `postgresql://demo:synthetic-password@127.0.0.1:5434/${DEMO_DATABASE}`);
 });
 
 test('demo configuration refuses production, missing markers, non-demo databases, remote targets, and URL options', () => {
@@ -66,6 +70,8 @@ test('demo configuration refuses production, missing markers, non-demo databases
     { NODE_ENV: 'production' }, { NODE_ENV: 'test' }, { SCRAWL_DEMO_DISPOSABLE: undefined },
     { SCRAWL_DEMO_DISPOSABLE: 'true' }, { HOST: '0.0.0.0' }, { APP_ORIGIN: 'http://example.test:3100' },
     { DB_POOL_MAX: '1' },
+    { DEMO_DB_PORT: '5434' }, { DEMO_DB_PORT: '0' }, { DEMO_DB_PORT: '65536' },
+    { DEMO_DB_PORT: '-1' }, { DEMO_DB_PORT: '5433.0' }, { DEMO_DB_PORT: 'invalid' },
     { APP_ORIGIN: 'http://127.0.0.1:3101' }, { POSTGRES_DB: 'production' },
     { POSTGRES_USER: 'other' }, { POSTGRES_PASSWORD: 'other' },
     { DATABASE_URL: 'postgresql://demo:secret@127.0.0.1:5433/scrawl' },
@@ -87,6 +93,9 @@ test('demo init is exclusive, private, random, and reads configuration from its 
   assert.equal(env.SCRAWL_DEMO_DISPOSABLE, DEMO_DATABASE);
   assert.equal(env.POSTGRES_PASSWORD?.length, 43);
   assert.equal(env.AUTH_SECRET?.length, 64);
+  assert.equal(env.DEMO_DB_PORT, '5434');
+  assert(env.DATABASE_URL);
+  assert.equal(new URL(env.DATABASE_URL).port, '5434');
   readDemoConfig(env);
   const original = await readFile(path, 'utf8');
   await assert.rejects(initializeDemo(directory));

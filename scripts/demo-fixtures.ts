@@ -24,8 +24,8 @@ export async function initializeDemo(directory = process.cwd()): Promise<void> {
     'NODE_ENV=development', 'HOST=127.0.0.1', 'PORT=3100', 'LOG_LEVEL=info',
     'APP_ORIGIN=http://127.0.0.1:3100', `AUTH_SECRET=${randomBytes(32).toString('hex')}`,
     `SCRAWL_DEMO_DISPOSABLE=${DEMO_DATABASE}`, 'POSTGRES_USER=scrawl_demo',
-    `POSTGRES_PASSWORD=${password}`, `POSTGRES_DB=${DEMO_DATABASE}`, 'DEMO_DB_PORT=5433',
-    `DATABASE_URL=postgresql://scrawl_demo:${password}@127.0.0.1:5433/${DEMO_DATABASE}`,
+    `POSTGRES_PASSWORD=${password}`, `POSTGRES_DB=${DEMO_DATABASE}`, 'DEMO_DB_PORT=5434',
+    `DATABASE_URL=postgresql://scrawl_demo:${password}@127.0.0.1:5434/${DEMO_DATABASE}`,
     '',
   ].join('\n');
   // Exclusive creation preserves existing configuration, including symlink targets.
