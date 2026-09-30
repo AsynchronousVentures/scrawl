@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { randomBytes } from 'node:crypto';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile, readdir } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -76,7 +76,7 @@ test('P3 Demo A uses real HTTP, repeatable isolated fixtures, guarded reset and 
   const envPath = join(cwd, '.env.demo');
   const values = parseEnv(await readFile(envPath, 'utf8'));
   const secrets = [values.AUTH_SECRET!, values.POSTGRES_PASSWORD!];
-  Object.assign(values, { DATABASE_URL: url.href, POSTGRES_USER: decodeURIComponent(url.username),
+  Object.assign(values, { DATABASE_URL: url.href, DEMO_DB_PORT: url.port || '5432', POSTGRES_USER: decodeURIComponent(url.username),
     POSTGRES_PASSWORD: decodeURIComponent(url.password), POSTGRES_DB: 'scrawl_demo_a',
     PORT: String(port), APP_ORIGIN: `http://127.0.0.1:${port}`, LOG_LEVEL: 'info', AUTH_SECRET: randomBytes(32).toString('hex') });
   const environmentText = () => Object.entries(values).map(([name, value]) => `${name}=${value}`).join('\n') + '\n';
@@ -86,8 +86,12 @@ test('P3 Demo A uses real HTTP, repeatable isolated fixtures, guarded reset and 
   const fixtureArgs = ['--database', 'scrawl_demo_a'];
   const setup = await command('demo-fixtures.ts', ['setup', ...fixtureArgs]);
   assert.equal(setup.code, 0, 'Explicit setup must migrate and provision the fresh disposable database');
-  const migrations = await database.pool.query('SELECT count(*)::integer AS count FROM "_prisma_migrations" WHERE finished_at IS NOT NULL');
-  assert.equal(migrations.rows[0]?.count, 2, 'P3 must use the unchanged P1/P2 migration history');
+  const migrationLedger = 'SELECT * FROM "_prisma_migrations" WHERE finished_at IS NOT NULL ORDER BY migration_name';
+  const migrations = await database.pool.query<{ migration_name: string }>(migrationLedger);
+  const sourceMigrations = (await readdir(join(repository, 'prisma/migrations'), { withFileTypes: true }))
+    .filter(entry => entry.isDirectory()).map(entry => entry.name).sort();
+  assert.deepEqual(migrations.rows.map(row => row.migration_name), sourceMigrations,
+    'Demo setup must deploy the one checked-in migration history');
   assert.equal(await database.prisma.user.count(), 4);
   const credentialPath = join(cwd, 'artifacts/demo/credentials.json');
   assert.equal((await stat(credentialPath)).mode & 0o777, 0o600);
@@ -225,8 +229,8 @@ test('P3 Demo A uses real HTTP, repeatable isolated fixtures, guarded reset and 
     assert.equal(await database!.prisma.documentRevision.count(), 0);
     await assert.rejects(stat(credentialPath), (error: unknown) =>
       error instanceof Error && 'code' in error && error.code === 'ENOENT');
-    const retained = await database!.pool.query('SELECT count(*)::integer AS count FROM "_prisma_migrations" WHERE finished_at IS NOT NULL');
-    assert.equal(retained.rows[0]?.count, 2);
+    const retained = await database!.pool.query(migrationLedger);
+    assert.deepEqual(retained.rows, migrations.rows, 'Explicit reset preserves every migration ledger record');
     const reseed = await command('demo-fixtures.ts', ['setup', ...fixtureArgs]);
     outputs.push(reseed.output);
     assert.equal(reseed.code, 0);

@@ -18,7 +18,7 @@ Use text-compatible foreign keys for auth user IDs rather than assuming the libr
 
 `Document`: stable ID, space ID, currentRevisionNumber, monotonic lockVersion, createdAt, createdBy, updatedAt, archivedAt (nullable), archivedBy (nullable).
 
-`DocumentRevision`: stable ID, document ID, revision number, title, content format, content schema version, body JSONB, derived plain text, author ID, timestamp, optional change note.
+`DocumentRevision`: stable ID, document ID, revision number, title, content format, content schema version, producing editor version, body JSONB, derived plain text, author ID, timestamp, optional change note.
 
 Constraints:
 
@@ -44,17 +44,19 @@ The head number and lock version are different: moving/archiving/publishing may 
 
 Two writers with the same starting ETag must produce one success and one 412, with exactly one new revision. A forced failure between insert and head update rolls back both. A title-only change is still a content revision. P2 returns 200 with unchanged timestamps, head, lock version, and ETag when the trimmed title and native canonical content equal the current snapshot. A change note alone is not a save; a supplied note is ignored on a no-op. Restoring always inserts a new revision, even if its content matches the head.
 
-## P2 content and lifecycle policy
+## Native BlockNote content and lifecycle policy
 
-The headless schema uses `prosemirror-model@1.25.12`, with no DOM or database dependency. Envelope fields are exactly `format: "prosemirror-json"`, `schemaVersion: 1`, and `document`. The authoritative body is the native canonical node JSON; plain text is derived from it.
+The BlockNote foundation supersedes P2's restricted body schema. Native content uses the pinned BlockNote 0.55.0 default schema and official server utilities. The envelope contains exactly `format: "blocknote-json"`, `schemaVersion: 1`, `editorVersion: "0.55.0"`, and `document: Block[]`. Schema/version metadata is Scrawl-owned; upstream native JSON is the blocks array without a version envelope. `DocumentRevision.contentEditorVersion` records the producing baseline instead of reconstructing it from a future runtime constant.
 
-- Nodes: `doc`, `paragraph`, `heading`, `text`, `bulletList`, `orderedList`, `listItem`, `codeBlock`, and `hardBreak`.
-- Marks: `bold`, `italic`, `code`, and `link`. Marks apply only to inline nodes; code blocks disallow marks.
-- Grammar: doc contains one or more blocks; lists contain list items; each item starts with a paragraph; headings/paragraphs contain inline nodes; code blocks contain text only. Empty paragraphs/code blocks are valid; an empty doc is not.
-- Attributes: heading level 1-6, default 1; ordered-list start 1-2147483647, default 1; code-block language null or an ASCII token of 1-64 characters; link href only, at most 2048 characters. Unknown fields/attributes are rejected before native decoding, which can otherwise discard attributes.
-- URLs: absolute `http`, `https`, or `mailto` only. Reject credentials, whitespace/control characters, encoded controls, and backslashes. No remote fetching occurs.
-- Limits: both submitted and canonical serialized envelopes are at most 262144 UTF-8 bytes; depth at most 32 with doc at depth 1; at most 10000 nodes, including doc and text before native text coalescing; at most four unique marks per inline node. Aggregate scalar bytes are checked before large serialization allocations. HTTP also retains the P0 1 MiB request cap.
-- Canonicalization: native defaults are filled, marks are ordered, and equivalent adjacent text nodes are merged. No unsupported content is silently dropped. Plain text joins text blocks with newlines, preserves empty blocks/code/hard breaks, and omits list labels and mark decoration.
+- All standard blocks: paragraph, heading (levels 1-6 and toggle headings), bullet/numbered/check/toggle list items, quote, divider, code, table, image, audio, video and file. Children retain nested blocks and stable unique block IDs.
+- Native inline text/link content supports bold, italic, underline, strike, code, text color and background color. Native code marks are mutually exclusive with other marks/links; the validator refuses an unrepresentable combination rather than stripping it.
+- Tables retain structured cells, text/styles, spans, header rows/columns, colors and widths. Invalid geometry is rejected before repair commands could rewrite cells.
+- The browser-safe parser checks shape, official property types/enums, IDs, styles, safe colors and resource limits before native canonicalization. A semantic comparison proves normalization did not drop text, styles, links, properties or table geometry. The backend also uses `ServerBlockNoteEditor` conversion, native `node.check()` and a loss-free native round trip. No asynchronous HTML conversion or global DOM mutation is used in saves.
+- Links accept absolute http/https/mailto without credentials, whitespace, controls, encoded controls or backslashes. Media accepts empty native placeholders or absolute http/https URLs. Private attachment references are introduced by the attachment packet. The server does not fetch external content URLs.
+- Submitted and canonical envelopes remain bounded at 262144 UTF-8 bytes, depth 32 and 10000 counted blocks/inline runs/rows/cells. Aggregate scalar bytes are checked before large serialization. HTTP retains its separate request cap. Unsupported/malformed content is 400; byte/depth/node limits are 413.
+- Plain text includes nested blocks, code/newlines, table cells separated by tabs and rows by newlines, and media captions. It is derived state; native blocks remain authoritative.
+
+Migration `20260930020000_blocknote_native` adds the producing version and a reviewed format/body check in the existing history. It leaves old payloads intact for the explicit offline conversion command. Product routes do not maintain a parallel legacy parser. The finite converter archives original document/revision records privately before an atomic encoding upgrade, preserving metadata and heads, and refuses unrepresentable content. Strong tags now use `"doc-{id}-bn1-v{lockVersion}"`, so old representation tags cannot mutate upgraded documents. Retained PostgreSQL 17 data is preserved unchanged; upgrade rehearsals run on disposable copies. See [VALIDATION.md](../VALIDATION.md) for commands and observed results.
 
 Title is trimmed, nonempty, and at most 200 characters; change notes are at most 2000 characters. Title, change-note, and body text reject NUL and lone UTF-16 surrogates, which cannot retain round-trip fidelity in PostgreSQL. Unsupported/malformed content is 400; content byte/depth/node limits are 413. Errors omit submitted values.
 

@@ -7,6 +7,7 @@ import { constants } from 'node:fs';
 import { mkdir, open } from 'node:fs/promises';
 import { validateContent } from '../src/core/documents/content.js';
 import { readDemoConfig, readDemoCredentials, readPrivateDemoEnvironment } from './demo-config.js';
+import { demoContent, richDemoContent } from './demo-content.js';
 
 let stage = 'configuration';
 let checks = 0;
@@ -29,12 +30,6 @@ function snapshot(value: unknown) {
   const document = record(value);
   return { document, revision: record(document.revision), id: uuid(document.id) };
 }
-function content(lines: string[]) {
-  return validateContent({ format: 'prosemirror-json', schemaVersion: 1, document: {
-    type: 'doc', content: lines.map(text => ({ type: 'paragraph', content: [{ type: 'text', text }] })),
-  } }).content;
-}
-
 function client(origin: string, peer: string) {
   // Each real socket client has its own cookie jar. Nothing is persisted or printed.
   const cookies = new Map<string, string>();
@@ -158,7 +153,7 @@ async function main() {
   hidden(await expect(reader, 'PUT', `${spacePath}/members/${credentials.accounts.outsider.id}`, 404, { role: 'editor' }, spaceTag));
 
   stage = 'document create';
-  const initialContent = content(['Run tests before deploying.']);
+  const initialContent = demoContent(['Run tests before deploying.']);
   const created = await expect(editor, 'POST', spacePath + '/documents', 201, { title: 'Release checklist', content: initialContent });
   const initial = snapshot(created.data);
   const documentId = initial.id;
@@ -175,7 +170,7 @@ async function main() {
   check(version(secondRead) === startingTag, 'Isolated clients read different ETags');
 
   stage = 'stale save';
-  const secondContent = content(['Run tests before deploying.', 'Verify the backup.']);
+  const secondContent = richDemoContent(['Run tests before deploying.', 'Verify the backup.']);
   const saved = await expect(editor, 'PATCH', path, 200, { content: secondContent }, startingTag);
   const second = snapshot(saved.data);
   let tag = version(saved);
@@ -183,7 +178,7 @@ async function main() {
   same(second.revision.content, secondContent, 'Saved content mismatch');
   const beforeRejected = await history(reader, path);
   check(beforeRejected.length === 2, 'Save did not add exactly one revision');
-  hidden(await expect(otherEditor, 'PATCH', path, 412, { content: content(['Stale edit must not commit.']) }, startingTag));
+  hidden(await expect(otherEditor, 'PATCH', path, 412, { content: demoContent(['Stale edit must not commit.']) }, startingTag));
   same(await history(reader, path), beforeRejected, 'Stale save changed history');
   same((await expect(reader, 'GET', path, 200)).data, saved.data, 'Stale save changed the head');
 
@@ -208,6 +203,31 @@ async function main() {
   }
   hidden(await expect(outsider, 'PATCH', path, 404, { title: 'Outsider must not edit' }, tag));
   same(await history(reader, path), beforeRejected, 'Outsider denial changed history');
+
+  stage = 'invalid native save';
+  for (const malformedContent of [
+    { ...initialContent, document: [{ id: 'rejected-unknown', type: 'unknownBlock', props: {}, children: [] }] },
+    { ...initialContent, document: [{
+      id: 'rejected-link', type: 'paragraph', props: { textColor: 'default', backgroundColor: 'default', textAlignment: 'left' },
+      content: [{ type: 'link', href: 'javascript:alert(1)', content: [{ type: 'text', text: 'Rejected unsafe link', styles: {} }] }],
+      children: [],
+    }] },
+  ]) {
+    hidden(await expect(editor, 'PATCH', path, 400, { content: malformedContent }, tag));
+    same(await history(reader, path), beforeRejected, 'Rejected native content changed history');
+    same((await expect(reader, 'GET', path, 200)).data, saved.data, 'Rejected native content changed the head');
+  }
+
+  stage = 'native rich export';
+  const richExport = record((await expect(reader, 'GET', path + '/export', 200)).data);
+  same(Object.keys(richExport).sort(), ['content', 'document', 'exportVersion', 'format', 'revision'], 'Rich export field scope changed');
+  const parsedRichExport = validateContent(richExport.content);
+  same(parsedRichExport.content, secondContent, 'Rich blocks changed during native export');
+  check(parsedRichExport.content.format === 'blocknote-json' && parsedRichExport.content.schemaVersion === 1
+    && parsedRichExport.content.editorVersion === '0.55.0', 'Native content version metadata mismatch');
+  check(parsedRichExport.plainText.includes('Check\tResult\nNative blocks\tPreserved')
+    && parsedRichExport.plainText.includes('Nested review notes'), 'Rich text extraction omitted table or nested content');
+  same(await history(reader, path), beforeRejected, 'Export changed content history');
 
   stage = 'restore';
   const restored = await expect(editor, 'POST', path + '/restore', 200, { revisionId: firstRevisionId }, tag);

@@ -138,6 +138,7 @@ model DocumentRevision {
   title                String     @db.VarChar(200)
   contentFormat        String
   contentSchemaVersion Int
+  contentEditorVersion String?
   body                 Json       @db.JsonB
   plainText            String
   authorId             String

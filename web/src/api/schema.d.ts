@@ -307,9 +307,11 @@ export interface operations {
                             content: {
                                 document: {
                                     [key: string]: unknown;
-                                };
+                                }[];
                                 /** @enum {string} */
-                                format: "prosemirror-json";
+                                editorVersion: "0.55.0";
+                                /** @enum {string} */
+                                format: "blocknote-json";
                                 /** @enum {integer} */
                                 schemaVersion: 1;
                             };
@@ -351,9 +353,11 @@ export interface operations {
                     content?: {
                         document: {
                             [key: string]: unknown;
-                        };
+                        }[];
                         /** @enum {string} */
-                        format: "prosemirror-json";
+                        editorVersion: "0.55.0";
+                        /** @enum {string} */
+                        format: "blocknote-json";
                         /** @enum {integer} */
                         schemaVersion: 1;
                     };
@@ -415,9 +419,11 @@ export interface operations {
                             content: {
                                 document: {
                                     [key: string]: unknown;
-                                };
+                                }[];
                                 /** @enum {string} */
-                                format: "prosemirror-json";
+                                editorVersion: "0.55.0";
+                                /** @enum {string} */
+                                format: "blocknote-json";
                                 /** @enum {integer} */
                                 schemaVersion: 1;
                             };
@@ -512,9 +518,11 @@ export interface operations {
                             content: {
                                 document: {
                                     [key: string]: unknown;
-                                };
+                                }[];
                                 /** @enum {string} */
-                                format: "prosemirror-json";
+                                editorVersion: "0.55.0";
+                                /** @enum {string} */
+                                format: "blocknote-json";
                                 /** @enum {integer} */
                                 schemaVersion: 1;
                             };
@@ -588,9 +596,11 @@ export interface operations {
                         content: {
                             document: {
                                 [key: string]: unknown;
-                            };
+                            }[];
                             /** @enum {string} */
-                            format: "prosemirror-json";
+                            editorVersion: "0.55.0";
+                            /** @enum {string} */
+                            format: "blocknote-json";
                             /** @enum {integer} */
                             schemaVersion: 1;
                         };
@@ -696,9 +706,11 @@ export interface operations {
                             content: {
                                 document: {
                                     [key: string]: unknown;
-                                };
+                                }[];
                                 /** @enum {string} */
-                                format: "prosemirror-json";
+                                editorVersion: "0.55.0";
+                                /** @enum {string} */
+                                format: "blocknote-json";
                                 /** @enum {integer} */
                                 schemaVersion: 1;
                             };
@@ -844,9 +856,11 @@ export interface operations {
                         content: {
                             document: {
                                 [key: string]: unknown;
-                            };
+                            }[];
                             /** @enum {string} */
-                            format: "prosemirror-json";
+                            editorVersion: "0.55.0";
+                            /** @enum {string} */
+                            format: "blocknote-json";
                             /** @enum {integer} */
                             schemaVersion: 1;
                         };
@@ -936,9 +950,11 @@ export interface operations {
                             content: {
                                 document: {
                                     [key: string]: unknown;
-                                };
+                                }[];
                                 /** @enum {string} */
-                                format: "prosemirror-json";
+                                editorVersion: "0.55.0";
+                                /** @enum {string} */
+                                format: "blocknote-json";
                                 /** @enum {integer} */
                                 schemaVersion: 1;
                             };
@@ -1317,9 +1333,11 @@ export interface operations {
                     content: {
                         document: {
                             [key: string]: unknown;
-                        };
+                        }[];
                         /** @enum {string} */
-                        format: "prosemirror-json";
+                        editorVersion: "0.55.0";
+                        /** @enum {string} */
+                        format: "blocknote-json";
                         /** @enum {integer} */
                         schemaVersion: 1;
                     };
@@ -1381,9 +1399,11 @@ export interface operations {
                             content: {
                                 document: {
                                     [key: string]: unknown;
-                                };
+                                }[];
                                 /** @enum {string} */
-                                format: "prosemirror-json";
+                                editorVersion: "0.55.0";
+                                /** @enum {string} */
+                                format: "blocknote-json";
                                 /** @enum {integer} */
                                 schemaVersion: 1;
                             };

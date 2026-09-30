@@ -4,6 +4,7 @@
 import { expect, test, type APIRequestContext, type BrowserContext, type Page } from '@playwright/test';
 import { mkdir } from 'node:fs/promises';
 import { validateContent } from '../../src/core/documents/content.js';
+import type { ContentEnvelope } from '../../src/shared/content.js';
 import type { DemoRole } from '../../scripts/demo-config.js';
 import type { DemoBResult } from '../../scripts/demo-b.js';
 import type { operations } from '../../web/src/api/schema.js';
@@ -62,7 +63,7 @@ async function readDocument(context: BrowserContext, id = seeded.documentId) {
     throw new Error('The real API returned an invalid document snapshot');
   }
   const etag = response.headers().etag;
-  expect(etag).toMatch(/^"doc-[0-9a-f-]+-v[1-9][0-9]*"$/i);
+  expect(etag).toMatch(/^"doc-[0-9a-f-]+-bn1-v[1-9][0-9]*"$/i);
   return { data: value as Document, etag: etag! };
 }
 
@@ -82,12 +83,33 @@ async function actions(page: Page) {
 }
 
 async function assertNoBrowserPersistence(page: Page) {
-  expect(await page.evaluate(() => ({ local: Object.keys(localStorage), session: Object.keys(sessionStorage) })))
-    .toEqual({ local: [], session: [] });
+  const stored = await page.evaluate(() => ({
+    local: Object.entries(localStorage), session: Object.entries(sessionStorage),
+  }));
+  expect(stored.session).toEqual([]);
+  // Native toggles remember only expansion booleans, never a document body/title.
+  for (const [key, value] of stored.local) {
+    expect(key).toMatch(/^toggle-[A-Za-z0-9_-]+$/);
+    expect(['true', 'false']).toContain(value);
+  }
 }
 
-function formatting(page: Page) { return page.getByRole('toolbar', { name: 'Document formatting', exact: true }); }
+function formatting(page: Page) { return page.locator('.editor-content > .editor-mount .bn-formatting-toolbar').first(); }
 function discardChanges(page: Page) { return page.getByRole('button', { name: 'Discard changes', exact: true }); }
+
+const textProps = { backgroundColor: 'default', textColor: 'default', textAlignment: 'left' };
+const text = (value: string, styles: Record<string, string | boolean> = {}) => ({ type: 'text', text: value, styles });
+const paragraph = (id: string, value: string) => ({ id, type: 'paragraph', props: textProps, content: [text(value)], children: [] });
+function nativeContent(document: unknown[]): ContentEnvelope {
+  return validateContent({ format: 'blocknote-json', schemaVersion: 1, editorVersion: '0.55.0', document }).content;
+}
+async function slashBlock(page: Page, query: string, title: string) {
+  await body(page).focus();
+  await page.keyboard.press('ControlOrMeta+End');
+  await page.keyboard.press('Enter');
+  await page.keyboard.type(`/${query}`);
+  await page.getByRole('option', { name: new RegExp(`^${title}\\b`) }).click();
+}
 
 async function confirmDiscard(page: Page) {
   await discardChanges(page).click();
@@ -169,83 +191,97 @@ test('create, edit, explicit save and reload persist the real selected revision'
   await assertNoBrowserPersistence(page);
 });
 
-test('editor round-trips every supported native node, mark and attribute without dropping content', async ({ page, context }) => {
+test('editor round-trips native standard blocks, styles, nesting, media placeholders and table cells', async ({ page, context }) => {
   await login(page);
-  const content = validateContent({ format: 'prosemirror-json', schemaVersion: 1, document: {
-    type: 'doc', content: [
-      ...[1, 2, 3, 4, 5, 6].map(level => ({ type: 'heading', attrs: { level }, content: [{ type: 'text', text: `Heading ${level}` }] })),
-      { type: 'paragraph', content: [
-        { type: 'text', text: 'Bold italic code link', marks: [
-          { type: 'bold' }, { type: 'italic' }, { type: 'code' }, { type: 'link', attrs: { href: 'https://example.test/guide' } },
-        ] },
-        { type: 'hardBreak', marks: [{ type: 'bold' }] },
-        { type: 'text', text: 'HTTP link', marks: [{ type: 'link', attrs: { href: 'http://example.test/guide' } }] },
-        { type: 'text', text: 'Email link', marks: [{ type: 'link', attrs: { href: 'mailto:synthetic@example.test' } }] },
-      ] },
-      { type: 'bulletList', content: [{ type: 'listItem', content: [
-        { type: 'paragraph', content: [{ type: 'text', text: 'Bullet item' }] },
-        { type: 'orderedList', attrs: { start: 7 }, content: [{ type: 'listItem', content: [
-          { type: 'paragraph', content: [{ type: 'text', text: 'Nested item seven' }] },
-        ] }] },
-      ] }] },
-      { type: 'orderedList', attrs: { start: 4 }, content: [{ type: 'listItem', content: [
-        { type: 'paragraph', content: [{ type: 'text', text: 'Ordered item four' }] },
-      ] }] },
-      { type: 'codeBlock', attrs: { language: 'typescript' }, content: [{ type: 'text', text: 'const synthetic = true;\n' }] },
-      { type: 'codeBlock', attrs: { language: null }, content: [{ type: 'text', text: 'plain code' }] },
-      { type: 'paragraph' },
-    ],
-  } }).content;
+  const content = nativeContent([
+    ...[1, 2, 3, 4, 5, 6].map(level => ({ id: `native-heading-${level}`, type: 'heading', props: { ...textProps, level }, content: [text(`Heading ${level}`)], children: [] })),
+    { id: 'native-styles', type: 'paragraph', props: textProps, content: [
+      text('Bold italic underline strike', { bold: true, italic: true, underline: true, strike: true }),
+      text(' Highlights ', { textColor: 'green', backgroundColor: 'yellow' }), text('Line one\nLine two '),
+      { type: 'link', href: 'https://example.test/guide', content: [text('HTTP guide')] },
+      { type: 'link', href: 'mailto:synthetic@example.test', content: [text('Email guide')] },
+      text('native.code', { code: true }),
+    ], children: [] },
+    { id: 'native-bullet', type: 'bulletListItem', props: textProps, content: [text('Bullet item')], children: [
+      { id: 'native-nested-number', type: 'numberedListItem', props: { ...textProps, start: 7 }, content: [text('Nested item seven')], children: [] },
+    ] },
+    { id: 'native-number', type: 'numberedListItem', props: { ...textProps, start: 4 }, content: [text('Ordered item four')], children: [] },
+    { id: 'native-check', type: 'checkListItem', props: { ...textProps, checked: true }, content: [text('Checked item')], children: [] },
+    { id: 'native-toggle', type: 'toggleListItem', props: textProps, content: [text('Toggle notes')], children: [
+      { id: 'native-nested-heading', type: 'heading', props: { ...textProps, level: 3 }, content: [text('Nested heading')], children: [] },
+    ] },
+    { id: 'native-quote', type: 'quote', props: { backgroundColor: 'default', textColor: 'default' }, content: [text('A native quotation.')], children: [] },
+    { id: 'native-table', type: 'table', props: { textColor: 'default' }, content: {
+      type: 'tableContent', columnWidths: [140, 160], headerRows: 1, rows: [
+        { cells: ['Check', 'Result'].map(value => ({ type: 'tableCell', props: { ...textProps, colspan: 1, rowspan: 1 }, content: [text(value)] })) },
+        { cells: ['Round trip', 'Retained'].map(value => ({ type: 'tableCell', props: { ...textProps, colspan: 1, rowspan: 1 }, content: [text(value, { bold: true })] })) },
+      ],
+    }, children: [] },
+    { id: 'native-code', type: 'codeBlock', props: { language: 'typescript' }, content: [text('const synthetic = true;\n')], children: [] },
+    { id: 'native-divider', type: 'divider', props: {}, children: [] },
+    ...['image', 'video'].map(type => ({ id: `native-${type}`, type, props: { textAlignment: 'left', backgroundColor: 'default', name: '', url: '', caption: '', showPreview: true }, children: [] })),
+    { id: 'native-audio', type: 'audio', props: { backgroundColor: 'default', name: '', url: '', caption: '', showPreview: true }, children: [] },
+    { id: 'native-file', type: 'file', props: { backgroundColor: 'default', name: '', url: '', caption: '' }, children: [] },
+    paragraph('native-end', ''),
+  ]);
   const response = await apiRequest(context, `/api/v1/spaces/${seeded.spaceId}/documents`, {
-    method: 'POST', headers: { Origin: demo.origin }, data: { title: 'All supported content', content },
+    method: 'POST', headers: { Origin: demo.origin }, data: { title: 'Native BlockNote content', content },
   });
   expect(response.status()).toBe(201);
   const created: unknown = await response.json();
   if (created === null || typeof created !== 'object' || !('id' in created) || typeof created.id !== 'string') {
-    throw new Error('Rich native fixture creation did not return a document ID');
+    throw new Error('Native fixture creation did not return a document ID');
   }
   const before = await readDocument(context, created.id);
   await page.goto(url({ ...seeded, documentId: created.id }));
-  await expect(title(page)).toHaveValue('All supported content');
-  await expect(body(page).locator('h1, h2, h3, h4, h5, h6')).toHaveCount(6);
-  await expect(body(page).locator('ol[start="7"]')).toHaveCount(1);
-  await expect(body(page).locator('ol[start="4"]')).toHaveCount(1);
-  await body(page).locator('p').last().click();
+  await expect(title(page)).toHaveValue('Native BlockNote content');
+  await expect(body(page).locator('h1,h2,h3,h4,h5,h6')).toHaveCount(7);
+  await expect(body(page).getByRole('table')).toHaveCount(1);
+  await expect(body(page).getByRole('columnheader')).toHaveCount(2);
+  await expect(body(page).locator('u')).toHaveText('Bold italic underline strike');
+  await body(page).locator('[data-id="native-end"] p').last().click();
   await page.keyboard.insertText('Temporary native round-trip edit');
-  await expect(body(page).locator('p').last()).toHaveText('Temporary native round-trip edit');
+  await expect(body(page).locator('[data-id="native-end"] p').last()).toHaveText('Temporary native round-trip edit');
   await expect(save(page)).toBeEnabled();
   await page.keyboard.press('ControlOrMeta+z');
-  await expect(body(page).locator('p').last()).toHaveText('');
+  await expect(body(page).locator('[data-id="native-end"] p').last()).toHaveText('');
   await expect(save(page)).toBeDisabled();
-  await title(page).fill('All supported content, title edited');
+  await title(page).fill('Native BlockNote content, title edited');
   await explicitSave(page);
   const after = await readDocument(context, created.id);
   expect(after.data.revision.content).toEqual(before.data.revision.content);
   expect(after.data.currentRevisionNumber).toBe(2);
+  await assertNoBrowserPersistence(page);
 });
 
-test('unsupported HTML paste is rejected visibly and retains the complete local draft', async ({ page, context }) => {
+test('normal rich HTML paste preserves underline, quote and table content through a real save', async ({ page, context }) => {
   await login(page);
-  await title(page).fill('Local draft before paste');
-  await body(page).fill('Retain this full local body.');
-  const originalBody = await body(page).innerText();
-  let remoteRequests = 0;
-  page.on('request', request => { if (new URL(request.url()).hostname === 'example.test') remoteRequests++; });
+  await title(page).fill('Native rich paste');
+  await body(page).fill('');
   await body(page).evaluate(element => {
     const clipboard = new DataTransfer();
-    clipboard.setData('text/html', '<p>Unsupported image<img src="https://example.test/no.png"></p>');
-    clipboard.setData('text/plain', 'Unsupported image');
+    clipboard.setData('text/html', '<p><u>Underlined synthetic text</u></p><blockquote>A native quote</blockquote><table><tbody><tr><td>Check</td><td>Result</td></tr><tr><td>Rich paste</td><td>Retained</td></tr></tbody></table>');
+    clipboard.setData('text/plain', 'Underlined synthetic text\nA native quote\nCheck Result\nRich paste Retained');
     element.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: clipboard }));
   });
-  await expect(page.getByRole('alert').filter({ hasText: 'Paste was rejected' })).toBeVisible();
-  await expect(title(page)).toHaveValue('Local draft before paste');
-  await expect(body(page)).toHaveText(originalBody);
-  await expect(save(page)).toBeDisabled();
-  expect(remoteRequests).toBe(0);
-  expect((await readDocument(context)).data.currentRevisionNumber).toBe(1);
-  await body(page).fill('Retain this full local body with a valid edit.');
+  await expect(body(page).locator('u')).toHaveText('Underlined synthetic text');
+  await expect(body(page).getByRole('table')).toHaveCount(1);
+  await expect(body(page).getByRole('cell', { name: 'Retained', exact: true })).toBeVisible();
   await expect(save(page)).toBeEnabled();
+  expect((await readDocument(context)).data.currentRevisionNumber).toBe(1);
   await explicitSave(page);
+  const saved = await readDocument(context);
+  const native = validateContent(saved.data.revision.content).content;
+  expect(native.format).toBe('blocknote-json');
+  expect(native.editorVersion).toBe('0.55.0');
+  expect(native.document.map(block => block.type)).toContain('table');
+  expect(native.document.map(block => block.type)).toContain('quote');
+  expect(saved.data.revision.plainText).toContain('Underlined synthetic text');
+  expect(saved.data.revision.plainText).toContain('Retained');
+  await page.reload();
+  await expect(title(page)).toHaveValue('Native rich paste');
+  await expect(body(page).locator('u')).toHaveText('Underlined synthetic text');
+  await expect(body(page).getByRole('cell', { name: 'Retained', exact: true })).toBeVisible();
 });
 
 test('history restore appends a revision, archive preserves history, and native export matches the selected content', async ({ page, context }) => {
@@ -310,6 +346,7 @@ test('reader controls are read-only and real API denies every mutation', async (
   await expect(title(page)).toHaveValue('Release checklist');
   await expect(title(page)).toHaveAttribute('readonly', '');
   await expect(body(page)).toHaveAttribute('contenteditable', 'false');
+  await expect(body(page).getByRole('checkbox').first()).toBeDisabled();
   await cannotSave(page);
   const newDocument = page.getByRole('button', { name: 'New document', exact: true });
   expect(await newDocument.count() === 0 || await newDocument.isDisabled()).toBe(true);
@@ -541,9 +578,7 @@ test('a mismatched space/document query cannot grant editor controls for a reade
     const original = await readDocument(administratorContext, readerSpace.documentId);
     const updated = await apiRequest(administratorContext, `/api/v1/documents/${readerSpace.documentId}`, {
       method: 'PATCH', headers: { Origin: demo.origin, 'If-Match': original.etag },
-      data: { title: 'Reader-only other-space document', content: validateContent({ format: 'prosemirror-json', schemaVersion: 1,
-        document: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Keep this body out of the wrong space pane.' }] }] },
-      }).content },
+      data: { title: 'Reader-only other-space document', content: nativeContent([paragraph('native-other-space', 'Keep this body out of the wrong space pane.')]) },
     });
     expect(updated.status()).toBe(200);
     const space = await apiRequest(administratorContext, `/api/v1/spaces/${readerSpace.spaceId}`);
@@ -728,7 +763,7 @@ test('the outline follows actual document headings, scrolls and focuses sections
   await lastLink.focus();
   await page.keyboard.press('Enter');
   const heading = body(page).getByRole('heading', { name: lastName, exact: true });
-  await expect(heading).toBeFocused();
+  await expect(body(page).locator('.bn-block-content[data-content-type="heading"]').filter({ has: heading })).toBeFocused();
   expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
   const position = await heading.boundingBox();
   expect(position?.y).toBeGreaterThanOrEqual(-1);
@@ -745,223 +780,237 @@ test('the outline follows actual document headings, scrolls and focuses sections
   expect(updated.data.revision.plainText).toContain('Updated synthetic section');
 });
 
-test('formatting commands preserve native content and undo/redo remain usable across successful saves', async ({ page, context }) => {
+test('nested native heading navigation opens its toggle ancestors without changing saved content', async ({ page, context }) => {
+  await login(page);
+  const content = nativeContent([
+    paragraph('nested-intro', 'Synthetic nested outline'),
+    { id: 'nested-toggle-parent', type: 'toggleListItem', props: textProps, content: [text('Closed native parent')], children: [
+      { id: 'nested-toggle-child', type: 'toggleListItem', props: textProps, content: [text('Closed native child')], children: [
+        { id: 'nested-target', type: 'heading', props: { ...textProps, level: 3 }, content: [text('Nested outline target')], children: [] },
+      ] },
+    ] },
+    paragraph('nested-end', ''),
+  ]);
+  const created = await apiRequest(context, `/api/v1/spaces/${seeded.spaceId}/documents`, {
+    method: 'POST', headers: { Origin: demo.origin }, data: { title: 'Nested native outline', content },
+  });
+  expect(created.status()).toBe(201);
+  const value: unknown = await created.json();
+  if (value === null || typeof value !== 'object' || !('id' in value) || typeof value.id !== 'string') throw new Error('Missing native document ID');
+  const original = await readDocument(context, value.id);
+  await page.goto(url({ ...seeded, documentId: value.id }));
+  await expect(title(page)).toHaveValue('Nested native outline');
+  const target = body(page).getByRole('heading', { name: 'Nested outline target', exact: true });
+  await expect(target).not.toBeVisible();
+  const link = page.getByRole('navigation', { name: 'On this page', exact: true }).getByRole('link', { name: 'Nested outline target', exact: true });
+  await link.focus();
+  await page.keyboard.press('Enter');
+  await expect(target).toBeVisible();
+  await expect(body(page).locator('.bn-block-content[data-content-type="heading"]').filter({ has: target })).toBeFocused();
+  await expect(save(page)).toBeDisabled();
+  expect(await readDocument(context, value.id)).toEqual(original);
+  await assertNoBrowserPersistence(page);
+});
+
+test('supplied formatting controls and native undo/redo work across successful saves and first creation', async ({ page, context }) => {
   await login(page);
   await expect(title(page)).toHaveValue('Release checklist');
+  await body(page).fill('Native supplied formatting');
+  await body(page).locator('p').first().selectText();
   const toolbar = formatting(page);
-  const undo = toolbar.getByRole('button', { name: 'Undo', exact: true });
-  const redo = toolbar.getByRole('button', { name: 'Redo', exact: true });
-  await expect(undo).toBeDisabled();
-  await expect(redo).toBeDisabled();
-  await body(page).fill('Native toolbar formatting');
-  await body(page).locator('p').selectText();
   const bold = toolbar.getByRole('button', { name: 'Bold', exact: true });
+  await expect(bold).toBeVisible();
   await bold.focus();
   await page.keyboard.press('Enter');
   await expect(bold).toHaveAttribute('aria-pressed', 'true');
-  await bold.focus();
-  await page.keyboard.press('ArrowRight');
-  const italic = toolbar.getByRole('button', { name: 'Italic', exact: true });
-  await expect(italic).toBeFocused();
-  await page.keyboard.press('Enter');
-  await expect(italic).toHaveAttribute('aria-pressed', 'true');
-  await italic.focus();
-  await page.keyboard.press('ArrowRight');
-  const code = toolbar.getByRole('button', { name: 'Inline code', exact: true });
-  await expect(code).toBeFocused();
-  await page.keyboard.press('Enter');
-  await expect(code).toHaveAttribute('aria-pressed', 'true');
-  await toolbar.getByRole('combobox', { name: 'Text style', exact: true }).selectOption('heading-2');
-  await expect(body(page).getByRole('heading', { name: 'Native toolbar formatting', exact: true })).toBeVisible();
+  await toolbar.getByRole('button', { name: 'Italic', exact: true }).click();
+  await toolbar.getByRole('button', { name: 'Underline', exact: true }).click();
+  await toolbar.getByRole('button', { name: 'Strike', exact: true }).click();
+  await toolbar.getByRole('combobox').click();
+  await page.getByRole('option', { name: 'Heading 2', exact: true }).click();
+  await expect(body(page).getByRole('heading', { name: 'Native supplied formatting', exact: true })).toBeVisible();
+  await evidence(page, 'editor-toolbar');
   await explicitSave(page);
   const saved = await readDocument(context);
-  expect(saved.data.revision.content).toEqual(validateContent({ format: 'prosemirror-json', schemaVersion: 1,
-    document: { type: 'doc', content: [{ type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: 'Native toolbar formatting',
-      marks: [{ type: 'bold' }, { type: 'italic' }, { type: 'code' }],
-    }] }] },
-  }).content);
-  await evidence(page, 'editor-toolbar');
+  const native = validateContent(saved.data.revision.content).content;
+  expect(native.document[0]).toMatchObject({ type: 'heading', props: { level: 2 }, content: [
+    { type: 'text', text: 'Native supplied formatting', styles: { bold: true, italic: true, underline: true, strike: true } },
+  ] });
   const savedBody = await body(page).innerHTML();
-  await expect(undo).toBeEnabled();
-  await expect(redo).toBeDisabled();
   await body(page).focus();
   await page.keyboard.press('ControlOrMeta+z');
-  await expect(redo).toBeEnabled();
   await expect(save(page)).toBeEnabled();
   expect(await body(page).innerHTML()).not.toBe(savedBody);
   await page.keyboard.press('ControlOrMeta+Shift+z');
-  await expect(redo).toBeDisabled();
-  await expect(save(page)).toBeDisabled();
-  expect(await body(page).innerHTML()).toBe(savedBody);
-  await undo.click();
-  await expect(save(page)).toBeEnabled();
-  await redo.click();
   await expect(save(page)).toBeDisabled();
   expect(await body(page).innerHTML()).toBe(savedBody);
   expect((await readDocument(context)).data).toEqual(saved.data);
   expect(await demo.database.prisma.documentRevision.count({ where: { documentId: seeded.documentId } })).toBe(2);
+  await page.reload();
+  await expect(title(page)).toHaveValue(saved.data.revision.title);
+  await expect(body(page).getByRole('heading', { name: 'Native supplied formatting', exact: true })).toBeVisible();
+  await expect(body(page).locator('u')).toHaveText('Native supplied formatting');
 
   await page.getByRole('button', { name: 'New document', exact: true }).click();
   await title(page).fill('Undo after first creation');
-  await body(page).fill('This first saved body remains in editor history.');
+  await body(page).fill('The first saved body remains in native editor history.');
   const created = page.waitForResponse(response => response.request().method() === 'POST'
     && new URL(response.url()).pathname === `/api/v1/spaces/${seeded.spaceId}/documents`);
   await save(page).click();
   expect((await created).status()).toBe(201);
   await expect(save(page)).toBeDisabled();
-  await expect(undo).toBeEnabled();
-  await undo.click();
-  await expect(body(page)).not.toHaveText('This first saved body remains in editor history.');
+  await body(page).focus();
+  await page.keyboard.press('ControlOrMeta+z');
+  await expect(body(page)).not.toHaveText('The first saved body remains in native editor history.');
   await expect(title(page)).toHaveValue('Undo after first creation');
   await expect(save(page)).toBeEnabled();
-  await redo.click();
-  await expect(body(page)).toHaveText('This first saved body remains in editor history.');
+  await page.keyboard.press('ControlOrMeta+Shift+z');
+  await expect(body(page)).toHaveText('The first saved body remains in native editor history.');
   await expect(save(page)).toBeDisabled();
   expect(await demo.database.prisma.document.count({ where: { spaceId: seeded.spaceId } })).toBe(2);
 });
 
-test('list, hard-break and code-block toolbar commands persist only supported native attributes', async ({ page, context }) => {
+test('supplied slash menu creates rich blocks and editable tables that persist natively', async ({ page, context }) => {
   await login(page);
+  await body(page).fill('A native rich document');
+  await slashBlock(page, 'h2', 'Heading 2');
+  await page.keyboard.insertText('Created through the slash menu');
+  await slashBlock(page, 'check', 'Check List');
+  await page.keyboard.insertText('A real checklist item');
+  await slashBlock(page, 'quote', 'Quote');
+  await page.keyboard.insertText('A native quotation');
+  await slashBlock(page, 'table', 'Table');
+  const table = body(page).getByRole('table');
+  await expect(table).toBeVisible();
+  const cell = table.getByRole('cell').first();
+  await cell.click();
+  await page.keyboard.insertText('Native table edit');
+  await expect(cell).toHaveText('Native table edit');
+  await explicitSave(page);
+  const saved = await readDocument(context);
+  const native = validateContent(saved.data.revision.content).content;
+  expect(native.document.map(block => block.type)).toEqual(expect.arrayContaining(['paragraph', 'heading', 'checkListItem', 'quote', 'table']));
+  expect(saved.data.revision.plainText).toContain('Created through the slash menu');
+  expect(saved.data.revision.plainText).toContain('Native table edit');
+  await page.reload();
   await expect(title(page)).toHaveValue('Release checklist');
-  const toolbar = formatting(page);
-  await body(page).fill('');
-  await body(page).evaluate(element => {
-    const clipboard = new DataTransfer();
-    clipboard.setData('text/plain', '1. Synthetic first\n2. Synthetic second\nA. Synthetic lettered\nB. Synthetic next');
-    element.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: clipboard }));
-  });
-  await expect(body(page).locator('ol, ul')).toHaveCount(0);
-  expect(await body(page).locator('p').allTextContents()).toEqual([
-    '1. Synthetic first', '2. Synthetic second', 'A. Synthetic lettered', 'B. Synthetic next',
-  ]);
-  expect((await readDocument(context)).data.currentRevisionNumber).toBe(1);
-  await body(page).fill('First numbered item');
-  const bullets = toolbar.getByRole('button', { name: 'Bulleted list', exact: true });
-  const numbers = toolbar.getByRole('button', { name: 'Numbered list', exact: true });
-  await bullets.click();
-  await expect(bullets).toHaveAttribute('aria-pressed', 'true');
-  await expect(body(page).locator('ul > li')).toHaveCount(1);
-  await bullets.click();
-  await expect(bullets).toHaveAttribute('aria-pressed', 'false');
-  await expect(body(page).locator('ul')).toHaveCount(0);
-  await numbers.click();
-  await expect(numbers).toHaveAttribute('aria-pressed', 'true');
-  await expect(body(page).locator('ol > li')).toHaveCount(1);
-  await numbers.click();
-  await expect(numbers).toHaveAttribute('aria-pressed', 'false');
-  await expect(body(page).locator('ol')).toHaveCount(0);
-  await numbers.click();
-  await page.getByRole('spinbutton', { name: 'Numbered list start', exact: true }).fill('7');
-  await expect(body(page).locator('ol')).toHaveAttribute('start', '7');
-  await body(page).focus();
-  await page.keyboard.press('ControlOrMeta+End');
-  await page.keyboard.press('Enter');
-  await page.keyboard.insertText('Second numbered item');
-  await page.keyboard.press('Shift+Enter');
-  await page.keyboard.insertText('continued item');
-  await expect(body(page).locator('ol > li')).toHaveCount(2);
-  await expect(body(page).locator('ol > li').last().locator('br')).toHaveCount(1);
-  await explicitSave(page);
-  expect((await readDocument(context)).data.revision.content).toEqual(validateContent({ format: 'prosemirror-json', schemaVersion: 1,
-    document: { type: 'doc', content: [{ type: 'orderedList', attrs: { start: 7 }, content: [
-      { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'First numbered item' }] }] },
-      { type: 'listItem', content: [{ type: 'paragraph', content: [
-        { type: 'text', text: 'Second numbered item' }, { type: 'hardBreak' }, { type: 'text', text: 'continued item' },
-      ] }] },
-    ] }] },
-  }).content);
-
-  await body(page).fill('const synthetic = true;');
-  await toolbar.getByRole('combobox', { name: 'Text style', exact: true }).selectOption('codeBlock');
-  await page.getByRole('textbox', { name: 'Code language', exact: true }).fill('typescript');
-  await expect(body(page).locator('pre > code')).toHaveText('const synthetic = true;');
-  await explicitSave(page);
-  const codeBlock = await readDocument(context);
-  expect(codeBlock.data.currentRevisionNumber).toBe(3);
-  expect(codeBlock.data.revision.content).toEqual(validateContent({ format: 'prosemirror-json', schemaVersion: 1,
-    document: { type: 'doc', content: [{ type: 'codeBlock', attrs: { language: 'typescript' },
-      content: [{ type: 'text', text: 'const synthetic = true;' }],
-    }] },
-  }).content);
+  await expect(body(page).getByRole('cell', { name: 'Native table edit', exact: true })).toBeVisible();
+  await expect(page.getByRole('navigation', { name: 'On this page', exact: true })
+    .getByRole('link', { name: 'Created through the slash menu', exact: true })).toBeVisible();
 });
 
-test('the link popover adds, edits and removes exact native links without losing selection or accepting unsafe URLs', async ({ page, context }) => {
+test('official media embed accepts a URL, renders the image and preserves it through reload and export', async ({ page, context }) => {
   await login(page);
-  await expect(title(page)).toHaveValue('Release checklist');
+  const mediaURL = `${demo.origin}/synthetic-native-image.png`;
+  await page.route(mediaURL, route => route.fulfill({ status: 200, contentType: 'image/png', body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aLXsAAAAASUVORK5CYII=', 'base64') }));
+  await body(page).fill('A linked native image');
+  await slashBlock(page, 'image', 'Image');
+  const embed = page.getByPlaceholder('Enter URL', { exact: true });
+  await expect(embed).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Upload', exact: true })).toHaveCount(0);
+  await embed.fill(mediaURL);
+  await page.getByRole('button', { name: 'Embed image', exact: true }).click();
+  const image = body(page).locator(`img[src="${mediaURL}"]`);
+  await expect(image).toBeVisible();
+  await expect.poll(() => image.evaluate(element => element instanceof HTMLImageElement && element.complete && element.naturalWidth > 0)).toBe(true);
+  await explicitSave(page);
+  const saved = await readDocument(context);
+  expect(validateContent(saved.data.revision.content).content.document.find(block => block.type === 'image'))
+    .toMatchObject({ type: 'image', props: { url: mediaURL, name: 'synthetic-native-image.png' } });
+  await page.reload();
+  await expect(image).toBeVisible();
+  const exported = await apiRequest(context, `/api/v1/documents/${seeded.documentId}/export`);
+  expect(exported.status()).toBe(200);
+  const snapshot: unknown = await exported.json();
+  if (snapshot === null || typeof snapshot !== 'object' || !('content' in snapshot)) throw new Error('Missing export native content');
+  expect(validateContent(snapshot.content).content).toEqual(validateContent(saved.data.revision.content).content);
+});
+
+test('supplied link UI creates, edits, cancels and removes native links without silently saving', async ({ page, context }) => {
+  const browserErrors: string[] = [];
+  page.on('pageerror', error => browserErrors.push(error.message));
+  await login(page);
   await body(page).fill('Read the synthetic release guide.');
-  await body(page).locator('p').selectText();
-  const linkButton = formatting(page).getByRole('button', { name: 'Link', exact: true });
-  await linkButton.click();
-  const dialog = page.getByRole('dialog', { name: 'Edit link', exact: true });
-  const href = dialog.getByRole('textbox', { name: 'Link URL', exact: true });
+  await body(page).locator('p').first().selectText();
+  await formatting(page).getByRole('button', { name: 'Create link', exact: true }).click();
+  const href = page.getByPlaceholder('Edit URL', { exact: true });
   await expect(href).toBeFocused();
   await href.fill('https://example.test/release-guide');
   await href.press('Enter');
-  await expect(dialog).not.toBeVisible();
   const anchor = body(page).getByRole('link', { name: 'Read the synthetic release guide.', exact: true });
   await expect(anchor).toHaveAttribute('href', 'https://example.test/release-guide');
   await expect(body(page)).toBeFocused();
-  await explicitSave(page);
+  try { await explicitSave(page); }
+  catch (error) {
+    if (browserErrors.length) throw new Error(`Browser integration failed: ${browserErrors.join('; ')}`);
+    throw error;
+  }
   const original = await readDocument(context);
-  const nativeLinked = (address: string) => validateContent({ format: 'prosemirror-json', schemaVersion: 1,
-    document: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Read the synthetic release guide.',
-      marks: [{ type: 'link', attrs: { href: address } }],
-    }] }] },
-  }).content;
-  expect(original.data.revision.content).toEqual(nativeLinked('https://example.test/release-guide'));
+  expect(validateContent(original.data.revision.content).content.document[0]).toMatchObject({ content: [
+    { type: 'link', href: 'https://example.test/release-guide', content: [{ type: 'text', text: 'Read the synthetic release guide.', styles: {} }] },
+  ] });
 
-  const location = page.url();
-  await title(page).fill('Link editor retains the complete local title');
-  await anchor.click();
-  await expect(dialog).toBeVisible();
-  await expect(href).toHaveValue('https://example.test/release-guide');
-  await evidence(page, 'link-editor');
-  expect(page.url()).toBe(location);
-  await href.fill('javascript:alert(1)');
-  await dialog.getByRole('button', { name: 'Apply link', exact: true }).click();
-  await expect(dialog.getByRole('alert')).toBeVisible();
-  await expect(anchor).toHaveAttribute('href', 'https://example.test/release-guide');
-  await expect(save(page)).toBeEnabled();
-  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
-  await expect(dialog).not.toBeVisible();
-  await expect(body(page)).toBeFocused();
-  await expect(title(page)).toHaveValue('Link editor retains the complete local title');
-  await expect(save(page)).toBeEnabled();
-  expect((await readDocument(context)).data).toEqual(original.data);
-
-  await linkButton.focus();
-  await page.keyboard.press('Enter');
-  await expect(dialog).toBeVisible();
+  await body(page).locator('p').first().selectText();
+  await body(page).focus();
+  await page.keyboard.press('ControlOrMeta+k');
   await expect(href).toBeFocused();
   await expect(href).toHaveValue('https://example.test/release-guide');
+  await evidence(page, 'link-editor');
   await href.fill('https://example.test/cancelled');
   await href.press('Escape');
-  await expect(dialog).not.toBeVisible();
+  await expect(href).not.toBeVisible();
   await expect(anchor).toHaveAttribute('href', 'https://example.test/release-guide');
-  await expect(body(page)).toBeFocused();
-  await linkButton.click();
+  expect((await readDocument(context)).data).toEqual(original.data);
+
+  await body(page).locator('p').first().selectText();
+  await page.keyboard.press('ControlOrMeta+k');
   await href.fill('mailto:synthetic@example.test');
   await href.press('Enter');
   await expect(anchor).toHaveAttribute('href', 'mailto:synthetic@example.test');
   await expect(body(page)).toHaveText('Read the synthetic release guide.');
   await explicitSave(page);
-  expect((await readDocument(context)).data.revision.content).toEqual(nativeLinked('mailto:synthetic@example.test'));
-
-  await expect(body(page)).toHaveAttribute('contenteditable', 'true');
-  await anchor.click();
-  await expect(dialog).toBeVisible();
-  await expect(href).toHaveValue('mailto:synthetic@example.test');
-  await expect(dialog.getByRole('button', { name: 'Remove link', exact: true })).toBeVisible();
-  await dialog.getByRole('button', { name: 'Remove link', exact: true }).click();
-  await expect(dialog).not.toBeVisible();
+  const updated = await readDocument(context);
+  expect(validateContent(updated.data.revision.content).content.document[0]).toMatchObject({ content: [
+    { type: 'link', href: 'mailto:synthetic@example.test' },
+  ] });
+  await anchor.hover();
+  const linkToolbar = page.locator('.bn-link-toolbar');
+  await expect(linkToolbar.getByRole('button', { name: 'Remove link', exact: true })).toBeVisible();
+  await linkToolbar.getByRole('button', { name: 'Remove link', exact: true }).click();
   await expect(body(page).getByRole('link')).toHaveCount(0);
   await expect(body(page)).toHaveText('Read the synthetic release guide.');
   await explicitSave(page);
   const unlinked = await readDocument(context);
   expect(unlinked.data.currentRevisionNumber).toBe(4);
-  expect(unlinked.data.revision.content).toEqual(validateContent({ format: 'prosemirror-json', schemaVersion: 1,
-    document: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Read the synthetic release guide.' }] }] },
-  }).content);
+  expect(validateContent(unlinked.data.revision.content).content.document[0]).toMatchObject({ content: [
+    { type: 'text', text: 'Read the synthetic release guide.', styles: {} },
+  ] });
+});
+
+test('invalid native link content stays local, blocks Save and can be undone without changing history', async ({ page, context }) => {
+  await login(page);
+  const original = await readDocument(context);
+  await title(page).fill('Unsaved title before invalid link');
+  await body(page).fill('Keep the entire local body.');
+  await body(page).locator('p').first().selectText();
+  await formatting(page).getByRole('button', { name: 'Create link', exact: true }).click();
+  const href = page.getByPlaceholder('Edit URL', { exact: true });
+  await href.fill('javascript:alert(1)');
+  await href.press('Enter');
+  await expect(page.getByRole('alert').filter({ hasText: 'cannot be saved' })).toBeVisible();
+  await expect(title(page)).toHaveValue('Unsaved title before invalid link');
+  await expect(body(page)).toHaveText('Keep the entire local body.');
+  await expect(save(page)).toBeDisabled();
+  await expect(body(page).locator('a[href^="javascript:"]')).toHaveCount(0);
+  expect(await readDocument(context)).toEqual(original);
+  await body(page).focus();
+  await page.keyboard.press('ControlOrMeta+z');
+  await expect(page.getByRole('alert').filter({ hasText: 'cannot be saved' })).toHaveCount(0);
+  await expect(save(page)).toBeEnabled();
+  await confirmDiscard(page);
+  await expect(title(page)).toHaveValue(original.data.revision.title);
+  expect(await readDocument(context)).toEqual(original);
+  expect(await demo.database.prisma.documentRevision.count({ where: { documentId: seeded.documentId } })).toBe(1);
 });
 
 test('discard requires confirmation and resets the complete title/body baseline without a write or new revision', async ({ page, context }) => {
@@ -996,8 +1045,10 @@ test('discard requires confirmation and resets the complete title/body baseline 
   expect(await body(page).locator('h1, h2, h3, h4, h5, h6').allTextContents()).toEqual(baselineHeadings);
   await expect(save(page)).toBeDisabled();
   await expect(discardChanges(page)).toBeDisabled();
-  await expect(toolbar.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
-  await expect(toolbar.getByRole('button', { name: 'Redo', exact: true })).toBeDisabled();
+  await body(page).focus();
+  await page.keyboard.press('ControlOrMeta+z');
+  await expect(body(page)).toHaveText(baselineBody, { useInnerText: true });
+  await expect(save(page)).toBeDisabled();
   expect(mutations).toBe(0);
   expect(await readDocument(context)).toEqual(baseline);
   expect(await demo.database.prisma.documentRevision.count({ where: { documentId: seeded.documentId } })).toBe(1);
@@ -1021,8 +1072,9 @@ test('discarding a new document returns its initial local baseline without creat
   await confirmDiscard(page);
   await expect(title(page)).toHaveValue('Untitled document');
   await expect(body(page)).toHaveText('');
-  await expect(formatting(page).getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
-  await expect(formatting(page).getByRole('button', { name: 'Redo', exact: true })).toBeDisabled();
+  await body(page).focus();
+  await page.keyboard.press('ControlOrMeta+z');
+  await expect(body(page)).toHaveText('');
   expect(creations).toBe(0);
   expect(await demo.database.prisma.document.count({ where: { spaceId: seeded.spaceId } })).toBe(1);
   expect(await readDocument(context)).toEqual(original);
@@ -1062,8 +1114,10 @@ test('discard after a stale save keeps the old baseline and requires deliberate 
     await expect(second.getByRole('heading', { name: 'Save conflict', exact: true })).toBeVisible();
     await expect(second.getByText(latest.data.revision.title, { exact: true }).last()).toBeVisible();
     await expect(save(second)).toBeDisabled();
-    await expect(formatting(second).getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
-    await expect(formatting(second).getByRole('button', { name: 'Redo', exact: true })).toBeDisabled();
+    await body(second).focus();
+    await second.keyboard.press('ControlOrMeta+z');
+    await expect(body(second)).toHaveText(baselineBody, { useInnerText: true });
+    await expect(save(second)).toBeDisabled();
     expect(attempts).toBe(1);
     expect(etags).toEqual([original.etag]);
     expect(await readDocument(context)).toEqual(latest);

@@ -43,7 +43,7 @@ async function checked<T>(request: Promise<{ data?: T; error?: unknown; response
 }
 function loaded(data: WireDocument, response: Response): LoadedDocument {
   const etag = response.headers.get('etag');
-  if (!etag || !/^"doc-[0-9a-f-]+-v[1-9][0-9]*"$/i.test(etag)) throw new ApiError(502);
+  if (!etag || !/^"doc-[0-9a-f-]+-bn1-v[1-9][0-9]*"$/i.test(etag)) throw new ApiError(502);
   return { document: { ...data, revision: { ...data.revision, content: validateContent(data.revision.content).content } }, etag };
 }
 

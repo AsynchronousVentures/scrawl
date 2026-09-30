@@ -26,6 +26,7 @@ for await (const file of glob(['src/**/*.ts', 'web/src/**/*.{ts,tsx}'], { exclud
       violations.push(`${file}: documents must use the space module's exported operations`);
     }
     if (file.startsWith('src/shared/') && (imported.startsWith('node:')
+      || imported === '@blocknote/server-util'
       || imported.startsWith('@prisma/') || imported === 'prisma' || imported === 'pg' || imported === 'fastify'
       || (imported.startsWith('.') && !target.startsWith('src/shared/'))
       || target.startsWith('src/db/') || target.startsWith('src/generated/') || target.startsWith('src/http/')
@@ -33,6 +34,7 @@ for await (const file of glob(['src/**/*.ts', 'web/src/**/*.{ts,tsx}'], { exclud
       violations.push(`${file}: shared content validation cannot import server dependencies`);
     }
     if (file.startsWith('web/src/') && (imported.startsWith('node:')
+      || imported === '@blocknote/server-util'
       || imported.startsWith('@prisma/') || imported === 'prisma' || imported === 'pg' || imported === 'fastify'
       || imported.startsWith('src/') || imported.startsWith('/')
       || (imported.startsWith('@scrawl/') && imported !== '@scrawl/content')

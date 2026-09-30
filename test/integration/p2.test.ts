@@ -13,10 +13,11 @@ import { createCore } from '../../src/core/index.js';
 import { createOperator } from '../../src/core/identity/operator.js';
 import { HttpProblem } from '../../src/http/problems.js';
 import { buildApp } from '../../src/app.js';
+import { CONTENT_LIMITS, validateContent } from '../../src/core/documents/content.js';
 
 function content(text: string) {
-  return { format: 'prosemirror-json', schemaVersion: 1,
-    document: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text }] }] } };
+  return validateContent({ format: 'blocknote-json', schemaVersion: 1, editorVersion: '0.55.0',
+    document: [{ id: 'synthetic-body', type: 'paragraph', content: [{ type: 'text', text, styles: {} }] }] }).content;
 }
 
 test('P2 documents and immutable history against PostgreSQL and authenticated HTTP sessions', async (t) => {
@@ -50,8 +51,9 @@ test('P2 documents and immutable history against PostgreSQL and authenticated HT
   const migrations = await database.pool.query<{ migration_name: string }>(
     'SELECT migration_name FROM "_prisma_migrations" WHERE finished_at IS NOT NULL ORDER BY migration_name',
   );
-  assert.equal(migrations.rows.length, 2, 'P2 must extend the existing P1 migration history');
+  assert.equal(migrations.rows.length, 3, 'Native content extends the same reviewed migration history');
   assert.equal(migrations.rows[0]?.migration_name, '20260930000000_identity_spaces');
+  assert.equal(migrations.rows[2]?.migration_name, '20260930020000_blocknote_native');
   const address = await app.listen({ host: '127.0.0.1', port: 0 });
 
   function client(peer: string) {
@@ -164,7 +166,7 @@ test('P2 documents and immutable history against PostgreSQL and authenticated HT
     firstRevisionId = result.data.revision.id;
     etag = String(result.headers.etag);
     assert.equal(result.headers.location, documentPath());
-    assert.equal(etag, `"doc-${documentId}-v1"`);
+    assert.equal(etag, `"doc-${documentId}-bn1-v1"`);
     assert.deepEqual(Object.keys(result.data).sort(), ['id', 'spaceId', 'currentRevisionNumber', 'lockVersion',
       'createdAt', 'createdBy', 'updatedAt', 'archivedAt', 'archivedBy', 'revision'].sort());
     assert.deepEqual(Object.keys(result.data.revision).sort(), ['id', 'documentId', 'revisionNumber', 'title',
@@ -191,6 +193,20 @@ test('P2 documents and immutable history against PostgreSQL and authenticated HT
     assert.equal(updatedSecond.status, 200);
     secondRevisionId = updatedSecond.data.revision.id;
     assert.equal(updatedSecond.data.currentRevisionNumber, 2);
+  });
+
+  await t.test('native snapshots retain their producing version and PostgreSQL refuses invalid native encodings', async () => {
+    const original = await database.prisma.documentRevision.findUniqueOrThrow({ where: { id: firstRevisionId } });
+    assert.equal(original.contentFormat, 'blocknote-json');
+    assert.equal(original.contentSchemaVersion, 1);
+    assert.equal(original.contentEditorVersion, '0.55.0');
+    for (const version of [null, 'future']) {
+      await assert.rejects(database.pool.query('UPDATE "DocumentRevision" SET "contentEditorVersion" = $1 WHERE "id" = $2', [version, firstRevisionId]),
+        (error: unknown) => error instanceof Error && 'code' in error && error.code === '23514');
+    }
+    await assert.rejects(database.pool.query('UPDATE "DocumentRevision" SET "body" = $1 WHERE "id" = $2', ['{}', firstRevisionId]),
+      (error: unknown) => error instanceof Error && 'code' in error && error.code === '23514');
+    assert.deepEqual(await database.prisma.documentRevision.findUniqueOrThrow({ where: { id: firstRevisionId } }), original);
   });
 
   await t.test('PostgreSQL checks missing and cross-document heads at transaction commit', async () => {
@@ -421,24 +437,32 @@ test('P2 documents and immutable history against PostgreSQL and authenticated HT
     }
   });
 
-  await t.test('the complete restricted schema persists and reads back through native JSON DTOs', async () => {
-    const richContent = { format: 'prosemirror-json', schemaVersion: 1, document: { type: 'doc', content: [
-      { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: 'Synthetic heading', marks: [{ type: 'bold' }, { type: 'italic' }] }] },
-      { type: 'paragraph', content: [
-        { type: 'text', text: 'Synthetic link', marks: [{ type: 'link', attrs: { href: 'https://example.test/docs' } }] },
-        { type: 'hardBreak' }, { type: 'text', text: 'Synthetic after break', marks: [{ type: 'code' }] },
+  await t.test('native blocks, formatting, media and advanced table cells persist without schema expansion or loss', async () => {
+    const richContent = validateContent({ format: 'blocknote-json', schemaVersion: 1, editorVersion: '0.55.0', document: [
+      { id: 'heading', type: 'heading', props: { level: 6, isToggleable: true }, content: [{ type: 'text', text: 'Synthetic heading', styles: { bold: true, italic: true } }] },
+      { id: 'paragraph', type: 'paragraph', content: [
+        { type: 'text', text: 'Synthetic after break\n', styles: { underline: true, strike: true, textColor: 'blue', backgroundColor: 'yellow' } },
+        { type: 'link', href: 'https://example.test/docs', content: [{ type: 'text', text: 'Synthetic link', styles: {} }] },
       ] },
-      { type: 'bulletList', content: [{ type: 'listItem', content: [
-        { type: 'paragraph', content: [{ type: 'text', text: 'Synthetic bullet' }] },
-      ] }] },
-      { type: 'orderedList', attrs: { start: 3 }, content: [{ type: 'listItem', content: [
-        { type: 'paragraph', content: [{ type: 'text', text: 'Synthetic ordered' }] },
-      ] }] },
-      { type: 'codeBlock', attrs: { language: 'ts' }, content: [{ type: 'text', text: 'const synthetic = 1;' }] },
-    ] } };
+      { id: 'inline-code', type: 'paragraph', content: [{ type: 'text', text: 'Synthetic inline code', styles: { code: true } }] },
+      { id: 'bullet', type: 'bulletListItem', content: [{ type: 'text', text: 'Synthetic bullet', styles: {} }] },
+      { id: 'ordered', type: 'numberedListItem', props: { start: 3 }, content: [{ type: 'text', text: 'Synthetic ordered', styles: {} }] },
+      { id: 'code', type: 'codeBlock', props: { language: 'typescript' }, content: [{ type: 'text', text: 'const synthetic = 1;', styles: {} }] },
+      { id: 'check', type: 'checkListItem', props: { checked: true }, content: [{ type: 'text', text: 'Synthetic check', styles: {} }] },
+      { id: 'toggle', type: 'toggleListItem', children: [{ id: 'nested', type: 'paragraph', content: [{ type: 'text', text: 'Synthetic nested', styles: {} }] }] },
+      { id: 'quote', type: 'quote', content: [{ type: 'text', text: 'Synthetic quote', styles: {} }] },
+      { id: 'divider', type: 'divider' },
+      ...['audio', 'file', 'image', 'video'].map(type => ({ id: type, type,
+        props: { url: `https://example.test/synthetic.${type}`, caption: `Synthetic ${type}` } })),
+      { id: 'table', type: 'table', content: { type: 'tableContent', columnWidths: [200, null], headerRows: 1, rows: [
+        { cells: [{ type: 'tableCell', props: { colspan: 2, backgroundColor: 'yellow', textAlignment: 'center' }, content: [{ type: 'text', text: 'Synthetic table header', styles: { bold: true } }] }] },
+        { cells: [[], [{ type: 'text', text: 'Synthetic table cell', styles: {} }]] },
+      ] } },
+    ] }).content;
     const saved = await editor.send('PATCH', documentPath(), { content: richContent }, { 'if-match': etag });
     assert.equal(saved.status, 200);
-    assert.deepEqual(saved.data.revision.content, richContent);
+    assert.deepEqual(validateContent(saved.data.revision.content).content, richContent);
+    assert.equal(new Set(richContent.document.map(block => block.type)).size, 14);
     for (const text of ['Synthetic heading', 'Synthetic link', 'Synthetic after break', 'Synthetic bullet', 'Synthetic ordered', 'const synthetic = 1;']) {
       assert(saved.data.revision.plainText.includes(text));
     }
@@ -449,11 +473,13 @@ test('P2 documents and immutable history against PostgreSQL and authenticated HT
     assert.deepEqual(reloaded.data.revision, saved.data.revision);
     const historical = await reader.send('GET', documentPath() + '/revisions/' + saved.data.revision.id);
     assert.equal(historical.status, 200);
-    assert.deepEqual(historical.data.content, richContent);
+    assert.deepEqual(validateContent(historical.data.content).content, richContent);
     const reordered = structuredClone(richContent);
-    const firstInline = reordered.document.content[0]?.content?.[0];
-    assert(firstInline && 'marks' in firstInline && firstInline.marks);
-    firstInline.marks.reverse();
+    const firstBlock = reordered.document[0];
+    assert(firstBlock?.type === 'heading');
+    const firstInline = firstBlock.content[0];
+    assert(firstInline?.type === 'text');
+    firstInline.styles = { italic: true, bold: true };
     const canonicalNoOp = await editor.send('PATCH', documentPath(), {
       title: '  ' + saved.data.revision.title + '  ', content: reordered, changeNote: 'Ignored canonical no-op',
     }, { 'if-match': etag });
@@ -548,22 +574,24 @@ test('P2 documents and immutable history against PostgreSQL and authenticated HT
     assert(restoredList.data.items.some((item: { id: string }) => item.id === documentId));
   });
 
-  await t.test('unsupported content, attributes, URLs, depth, node count, and bytes fail without new history', async () => {
+  await t.test('malformed native content, properties, URLs and resource limits fail without new history', async () => {
     const before = await database.prisma.document.findUniqueOrThrow({ where: { id: documentId } });
     const beforeCount = await revisionCount();
-    const envelope = (nodes: unknown[]) => ({ format: 'prosemirror-json', schemaVersion: 1, document: { type: 'doc', content: nodes } });
+    const envelope = (document: unknown[]) => ({ format: 'blocknote-json', schemaVersion: 1, editorVersion: '0.55.0', document });
     const invalid = [
       { ...initialContent, schemaVersion: 2 }, { ...initialContent, format: 'html' }, { ...initialContent, extra: true },
-      envelope([{ type: 'image', attrs: { src: 'https://example.test/synthetic.png' } }]),
-      envelope([{ type: 'paragraph', attrs: { hidden: true }, content: [{ type: 'text', text: 'Synthetic content' }] }]),
-      envelope([{ type: 'heading', attrs: { level: 7 }, content: [{ type: 'text', text: 'Synthetic content' }] }]),
-      envelope([{ type: 'paragraph', content: [{ type: 'text', text: 'Synthetic content', marks: [{ type: 'unknown' }] }] }]),
-      envelope([{ type: 'codeBlock', content: [{ type: 'text', text: 'Synthetic code', marks: [{ type: 'bold' }] }] }]),
+      { ...initialContent, format: 'prosemirror-json' }, { ...initialContent, editorVersion: 'future' },
+      envelope([{ id: 'unsupported', type: 'unregisteredCustomBlock' }]),
+      envelope([{ id: 'paragraph', type: 'paragraph', props: { hidden: true }, content: [{ type: 'text', text: 'Synthetic content', styles: {} }] }]),
+      envelope([{ id: 'heading', type: 'heading', props: { level: 7 }, content: [{ type: 'text', text: 'Synthetic content', styles: {} }] }]),
+      envelope([{ id: 'paragraph', type: 'paragraph', content: [{ type: 'text', text: 'Synthetic content', styles: { unknown: true } }] }]),
+      envelope([{ id: 'code', type: 'codeBlock', content: [{ type: 'text', text: 'Synthetic code', styles: { bold: true } }] }]),
     ];
     for (const href of ['javascript:alert(1)', 'data:text/plain,synthetic', 'file:///synthetic', '/relative',
       'https://user:password@example.test', 'https://example.test/%0a', 'https://example.test/ space']) {
-      invalid.push(envelope([{ type: 'paragraph', content: [{ type: 'text', text: 'Synthetic content',
-        marks: [{ type: 'link', attrs: { href } }] }] }]));
+      invalid.push(envelope([{ id: 'paragraph', type: 'paragraph', content: [{ type: 'link', href,
+        content: [{ type: 'text', text: 'Synthetic content', styles: {} }] }] }]));
+      invalid.push(envelope([{ id: 'media', type: 'image', props: { url: href } }]));
     }
     for (const malformed of invalid) {
       expectProblem(await editor.send('PATCH', documentPath(), { content: malformed }, { 'if-match': etag }), 400);
@@ -587,17 +615,17 @@ test('P2 documents and immutable history against PostgreSQL and authenticated HT
       }, { 'if-match': etag }), 400);
     }
     assert.equal(await database.prisma.document.count(), beforeDocuments);
-    let nested: unknown = { type: 'paragraph', content: [] };
-    for (let i = 0; i < 17; i++) {
-      nested = { type: 'bulletList', content: [{ type: 'listItem', content: [{ type: 'paragraph', content: [] }, nested] }] };
+    let nested: unknown = { id: 'leaf', type: 'paragraph', content: [] };
+    for (let i = 0; i < CONTENT_LIMITS.maxDepth; i++) {
+      nested = { id: `nested-${i}`, type: 'bulletListItem', children: [nested] };
     }
     const tooDeep = envelope([nested]);
-    const tooMany = envelope(Array.from({ length: 10_000 }, () => ({ type: 'paragraph', content: [] })));
-    const tooManyBytes = content('🙂'.repeat(66_000));
+    const tooMany = envelope(Array.from({ length: 10_000 }, (_, index) => ({ id: `many-${index}`, type: 'paragraph', content: [] })));
+    const tooManyBytes = envelope([{ id: 'large', type: 'paragraph', content: [{ type: 'text', text: '🙂'.repeat(66_000), styles: {} }] }]);
     for (const oversized of [tooDeep, tooMany, tooManyBytes]) {
       expectProblem(await editor.send('PATCH', documentPath(), { content: oversized }, { 'if-match': etag }), 413);
     }
-    expectProblem(await editor.send('PATCH', documentPath(), { content: content('x'.repeat(1_048_576)) }, { 'if-match': etag }), 413);
+    expectProblem(await editor.send('PATCH', documentPath(), { content: envelope([{ id: 'large', type: 'paragraph', content: [{ type: 'text', text: 'x'.repeat(1_048_576), styles: {} }] }]) }, { 'if-match': etag }), 413);
     await assert.rejects(core.documents.update(new Headers({ cookie: editor.cookie }), documentId, { content: tooManyBytes }, etag),
       (error: unknown) => error instanceof HttpProblem && error.status === 413);
     assert.equal(await revisionCount(), beforeCount);

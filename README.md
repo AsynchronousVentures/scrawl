@@ -21,11 +21,11 @@ The supplied Fastify scaffold provides environment validation, liveness/readines
 
 P1 adds real local sessions, closed registration, host account commands, and administrator-managed space access. Authorization lives in core operations; Prisma records do not become HTTP DTOs.
 
-P2 adds restricted headless content validation, document create/read/update, immutable revision history/restore, and archive/unarchive. Existing-document mutations require a current strong ETag; title/body saves and lifecycle lock versions remain separate.
+P2 established document create/read/update, immutable revision history/restore, archive/unarchive and conditional writes. The integration branch replaces its restricted body with native BlockNote content while retaining those guarantees.
 
 P3 adds a repeatable real HTTP Demo A runner, explicit disposable fixture setup/reset, and authorized native single-document JSON export. Follow [the walkthrough](docs/demo-walkthrough.md#run-demo-a) to run it and inspect a local export.
 
-P4 adds a React/Vite private document interface with a restricted Tiptap editor, explicit saves, confirmed local draft discard, conflict comparison, revision history, lifecycle actions, and native export. The approved charcoal/sage prototype remains separate from the connected application. The live UI has no simulated search or fixture controls.
+The React/Vite interface uses BlockNote's official shadcn editor in the approved charcoal/sage layout, with explicit saves, confirmed local draft discard, conflict comparison, revision history, lifecycle actions and native export. The disconnected prototype remains preserved. The integration branch and remaining work are tracked in [the integration backlog](docs/integration-backlog.md); branch implementation is not a merged release.
 
 **Publishing, search, attachments, bulk export/import, SSO, and API keys are not implemented.** Use synthetic documentation during this pre-release demo and keep it private.
 

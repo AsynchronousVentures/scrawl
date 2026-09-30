@@ -20,16 +20,14 @@ function object(value: unknown): Record<string, unknown> {
 }
 
 function syntheticContent(text: string) {
-  return {
-    format: 'prosemirror-json', schemaVersion: 1,
-    document: { type: 'doc', content: [
-      { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: 'Synthetic export' }] },
-      { type: 'paragraph', content: [{ type: 'text', text, marks: [{ type: 'bold' }] },
-        { type: 'hardBreak' }, { type: 'text', text: 'Local fixture', marks: [
-          { type: 'link', attrs: { href: 'https://example.test/reference' } },
-        ] }] },
-    ] },
-  };
+  return validateContent({
+    format: 'blocknote-json', schemaVersion: 1, editorVersion: '0.55.0',
+    document: [
+      { id: 'export-heading', type: 'heading', props: { level: 2 }, content: [{ type: 'text', text: 'Synthetic export', styles: {} }] },
+      { id: 'export-paragraph', type: 'paragraph', content: [{ type: 'text', text: text + '\n', styles: { bold: true } },
+        { type: 'link', href: 'https://example.test/reference', content: [{ type: 'text', text: 'Local fixture', styles: {} }] }] },
+    ],
+  }).content;
 }
 
 test('P3 native export against PostgreSQL and authenticated HTTP sessions', async (t) => {

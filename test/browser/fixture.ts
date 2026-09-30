@@ -34,6 +34,7 @@ export async function createBrowserDemo() {
   let output = '';
   const secrets = [decodeURIComponent(target.password)];
   let closed = false;
+  let setupStage = 'target verification';
 
   async function stopServer() {
     if (!server || server.exitCode !== null) return;
@@ -57,8 +58,11 @@ export async function createBrowserDemo() {
     try { await stopServer(); } catch { failed = true; }
     try {
       if (database) {
-        const sessions = await database.prisma.session.findMany({ select: { token: true } });
-        secrets.push(...sessions.map((session) => session.token));
+        const tables = await database.pool.query<{ present: string | null }>("SELECT to_regclass('session')::text AS present");
+        if (tables.rows[0]?.present) {
+          const sessions = await database.prisma.session.findMany({ select: { token: true } });
+          secrets.push(...sessions.map((session) => session.token));
+        }
       }
       if (secrets.some((secret) => secret && output.includes(secret))) failed = true;
     } catch { failed = true; }
@@ -92,6 +96,7 @@ export async function createBrowserDemo() {
     if (existing.rowCount !== 0) throw new Error('Refusing an existing browser demo database');
     await administrator.pool.query('CREATE DATABASE "scrawl_demo_a"');
     ownsDatabase = true;
+    setupStage = 'private fixture initialization';
     target.pathname = `/${DEMO_DATABASE}`;
     target.search = '';
     target.hash = '';
@@ -114,15 +119,18 @@ export async function createBrowserDemo() {
     Object.assign(values, {
       DATABASE_URL: target.href, POSTGRES_USER: decodeURIComponent(target.username),
       POSTGRES_PASSWORD: decodeURIComponent(target.password), POSTGRES_DB: DEMO_DATABASE,
+      DEMO_DB_PORT: target.port || '5432',
       PORT: String(port), APP_ORIGIN: origin, LOG_LEVEL: 'info', AUTH_SECRET: randomBytes(32).toString('hex'),
     });
     secrets.push(values.AUTH_SECRET);
     await writeFile(environmentPath, Object.entries(values).map(([name, value]) => `${name}=${value}`).join('\n') + '\n', { mode: 0o600 });
+    setupStage = 'migrations and account provisioning';
     await command('demo-fixtures.ts', ['setup', '--database', DEMO_DATABASE]);
     const accounts: DemoCredentials = await readDemoCredentials(join(cwd, 'artifacts/demo/credentials.json'));
     secrets.push(...Object.values(accounts.accounts).map((account) => account.password));
     if ((await stat(join(repository, 'web/dist/index.html'))).isFile() !== true) throw new Error('Build the frontend before browser acceptance');
 
+    setupStage = 'server startup and readiness';
     server = spawn(process.execPath, ['--import', 'tsx', join(repository, 'scripts/demo-server.ts')], {
       cwd, env: process.env, stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -195,9 +203,10 @@ export async function createBrowserDemo() {
       close,
     };
   } catch {
-    await close();
+    let cleanupFailed = false;
+    try { await close(); } catch { cleanupFailed = true; }
     // PostgreSQL/child errors can disclose connection URLs. Keep failure diagnostics static.
-    throw new Error('Browser demo setup failed. Check local PostgreSQL, database creation privileges, frontend build, and absence of another designated demo database.');
+    throw new Error(`Browser demo setup failed during ${setupStage}.${cleanupFailed ? ' Cleanup also failed.' : ' Disposable resources were cleaned up.'} Check local PostgreSQL, fixture targets and the frontend build.`);
   }
 }
 

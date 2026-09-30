@@ -50,10 +50,11 @@ The maintainer's BlockNote decision supersedes the earlier editor restrictions a
 1. **Native foundation, assigned now:** all standard BlockNote blocks/styles and supplied UI, strict native validation/server utilities, persistence, nested outline, rendering, revisions/restore, native export, and explicit save/undo/discard/conflict protections. Preserve existing data through a backed-up finite format conversion.
 2. **Private attachments:** supplied `uploadFile`/`resolveFileUrl` hooks backed by authorized application-owned bytes and revision reference retention. Define failure recovery and deletion policy before storage is broadly used.
 3. **XL layouts and exporters:** use OSS multi-column, PDF, DOCX and ODT packages with matching native schemas and authorized attachment resolution. Override exporter proxy defaults; private assets must not be sent to vendor services.
-4. **Collaboration and comments:** durable server-authorized Yjs state, immutable checkpoints, restore epochs and user-scoped undo, followed by supplied comment stores/UI with server-checked mutations. Implement [the live-state contract](adr/0001-native-blocknote-documents.md) before enabling live sessions.
-5. **Publishing and optional AI:** publish selected immutable revisions with explicit attachment grants. Add AI only as an opt-in provider integration through supplied accept/reject UI and authorized editing operations. No provider is required to run Scrawl.
+4. **PostgreSQL 18 and search:** a fresh 18 volume with retained 17 compatibility, weighted indexed search over current saved authorized content, then the real keyboard-accessible search dialog.
+5. **Publishing:** selected immutable revisions with explicit attachment grants, disabled by default and publisher-authorized.
+6. **Collaboration and comments, then optional AI:** durable server-authorized Yjs state, immutable checkpoints, restore epochs and user-scoped undo, followed by supplied comment stores/UI with server-checked mutations. Implement [the live-state contract](adr/0001-native-blocknote-documents.md) before enabling live sessions. Add AI only as an opt-in provider integration through supplied accept/reject UI and authorized editing operations. No provider is required to run Scrawl.
 
-Search, nesting, full portability and release hardening keep their separate bounded packets. Stop for review after the native foundation; do not implement later items in this assignment.
+The maintainer expanded the integration session across earlier review boundaries. [The integration backlog](integration-backlog.md) tracks priorities, dependencies and actual branch status. Nesting, full portability and release hardening remain separate work. Keep the integration branch runnable through focused commits; do not merge or deploy it.
 
 ## 4. Stack and version policy
 

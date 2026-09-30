@@ -3,14 +3,15 @@
 
 import { useEffect, useRef, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
-import { validateContent } from '@scrawl/content';
+import { extractPlainText, validateContent } from '@scrawl/content';
 import { Editor } from './Editor';
 import { api, ApiError } from './api/client';
 import type { DocumentSummary, Draft, LoadedDocument, Revision, RevisionSummary, Space, User } from './api/client';
 
-const emptyDraft = (): Draft => ({ title: 'Untitled document', content: {
-  format: 'prosemirror-json', schemaVersion: 1, document: { type: 'doc', content: [{ type: 'paragraph' }] },
-} });
+const emptyDraft = (): Draft => ({ title: 'Untitled document', content: validateContent({
+  format: 'blocknote-json', schemaVersion: 1, editorVersion: '0.55.0',
+  document: [{ id: crypto.randomUUID(), type: 'paragraph', content: [] }],
+}).content });
 const draftFrom = (loaded: LoadedDocument): Draft => ({ title: loaded.document.revision.title, content: loaded.document.revision.content });
 const failureMessage = (error: unknown) => error instanceof ApiError ? error.message : 'The response could not be used. Your unsaved work is retained.';
 const validId = (value: string | null) => value && /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(value) ? value : undefined;
@@ -73,10 +74,11 @@ export function App() {
   const titleInput = useRef<HTMLInputElement>(null);
   const owner = useRef<string | null>(null);
   const draftSpaceId = useRef<string | null>(null);
+  const newDraftBaseline = useRef<Draft | null>(null);
   const dirty = Boolean(draft && (!base || draft.title !== base.document.revision.title
     || JSON.stringify(draft.content) !== JSON.stringify(base.document.revision.content)));
-  const discardBaseline = base ? draftFrom(base) : emptyDraft();
-  const hasDraftChanges = Boolean(draft && (draft.title !== discardBaseline.title
+  const discardBaseline = base ? draftFrom(base) : newDraftBaseline.current;
+  const hasDraftChanges = Boolean(draft && discardBaseline && (draft.title !== discardBaseline.title
     || JSON.stringify(draft.content) !== JSON.stringify(discardBaseline.content)));
   const dirtyRef = useRef(dirty); dirtyRef.current = dirty;
   const mayEdit = Boolean(user && !accessIssue && space?.access === 'editor' && !base?.document.archivedAt);
@@ -90,6 +92,7 @@ export function App() {
   }
   function resetDocument() {
     draftSpaceId.current = null;
+    newDraftBaseline.current = null;
     setBase(null); setDraft(null); dirtyRef.current = false; setContentError(null);
     setConflict(null); setSaveError(''); setNotice(''); setHistoryOpen(false);
     setRevisions([]); setRevision(null); historyGeneration.current++;
@@ -119,7 +122,7 @@ export function App() {
     if (dirtyRef.current) setPending({ action }); else action();
   }
   function resetDraftToBaseline() {
-    setDraft(base ? draftFrom(base) : emptyDraft());
+    setDraft(base ? draftFrom(base) : newDraftBaseline.current);
     setEditorKey(key => key + 1);
     setContentError(null); setSaveError('');
     dirtyRef.current = !base;
@@ -261,7 +264,9 @@ export function App() {
   }
   function newDocument() {
     guarded(() => {
-      generation.current++; resetDocument(); setDraft(emptyDraft()); setEditorKey(key => key + 1);
+      generation.current++; resetDocument();
+      const initial = emptyDraft(); newDraftBaseline.current = initial; setDraft(initial);
+      setEditorKey(key => key + 1);
       draftSpaceId.current = space?.id ?? null;
       rememberSelection(space?.id ?? null, null);
       requestAnimationFrame(() => { titleInput.current?.focus(); titleInput.current?.select(); });
@@ -349,7 +354,7 @@ export function App() {
               {mayEdit && <div className="save-actions"><button disabled={busy || (!hasDraftChanges && !contentError)} onClick={discardChanges}>Discard changes</button><button className="primary" disabled={busy || !dirty || Boolean(conflict) || Boolean(contentError)} onClick={save}>Save</button></div>}
             </div>}
             {accessIssue && <div className="notice" role="alert"><strong>{saveError || (accessIssue === 'session' ? 'Your session expired.' : 'Access to this document is unavailable.')}</strong><p>{dirty ? 'Your complete unsaved title and body are retained in this tab. Nothing was saved. Server actions are unavailable. Copy your draft before closing or reloading.' : 'Sign in or ask an administrator to verify your access.'}</p>
-              {dirty && draft && <button onClick={() => { void navigator.clipboard.writeText(draft.title+'\n\n'+validateContent(draft.content).plainText).then(() => setNotice('Local draft text copied. Nothing was saved.')).catch(() => setNotice('Copy is unavailable. Select and copy the retained title and body.')); }}>Copy local draft text</button>}
+              {dirty && draft && <button onClick={() => { void navigator.clipboard.writeText(draft.title+'\n\n'+extractPlainText(draft.content.document)).then(() => setNotice('Local draft text copied. Nothing was saved.')).catch(() => setNotice('Copy is unavailable. Select and copy the retained title and body.')); }}>Copy local draft text</button>}
             </div>}
             {!accessIssue && saveError && <div className="notice" role="alert"><strong>{saveError}</strong>{dirty && <p>Your complete local draft is retained. It has not been saved.</p>}{!draft && <button onClick={() => { const id=validId(new URLSearchParams(location.search).get('document')); if(id)void loadDocument(id); }}>Retry</button>}</div>}
             {notice && <p className="notice" role="status">{notice}</p>}

@@ -12,9 +12,11 @@ await mkdir(output, { recursive: true });
 // Package the actual checkout that produced this build, including uncommitted source.
 // An explicit source inventory excludes private environments, generated data and fixtures.
 const { stdout } = await execute('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z']);
-const files = stdout.split('\0').filter(Boolean).filter(path =>
+const { stdout: removed } = await execute('git', ['ls-files', '--deleted', '-z']);
+const deleted = new Set(removed.split('\0').filter(Boolean));
+const files = stdout.split('\0').filter(path => path && !deleted.has(path)).filter(path =>
   /^(?:src\/(?!generated\/)|web\/(?!dist\/|node_modules\/)|scripts\/|test\/|docs\/|prisma\/|\.github\/)/.test(path)
-  || /^(?:AGENTS\.md|LICENSE|README\.md|CONTRIBUTING\.md|VALIDATION\.md|THIRD_PARTY_NOTICES\.md|package(?:-lock)?\.json|tsconfig(?:\.build)?\.json|prisma\.config\.ts|playwright\.config\.ts|compose(?:\.demo)?\.yaml|\.env\.example|\.gitignore|\.node-version)$/.test(path));
+  || /^(?:AGENTS\.md|CONTEXT\.md|LICENSE|README\.md|CONTRIBUTING\.md|VALIDATION\.md|THIRD_PARTY_NOTICES\.md|package(?:-lock)?\.json|tsconfig(?:\.build)?\.json|prisma\.config\.ts|playwright\.config\.ts|compose(?:\.demo)?(?:\.postgres17)?\.yaml|\.env\.example|\.gitignore|\.node-version)$/.test(path));
 for (const path of files) {
   if (path.startsWith('-') || path.split('/').some(part => part === '..')
     || /(?:^|\/)(?:\.env(?:\.|$)|artifacts|node_modules|generated|dist)(?:\/|$)/.test(path) && path !== '.env.example') {

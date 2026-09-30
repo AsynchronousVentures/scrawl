@@ -49,9 +49,10 @@ function revisionSummary(revision: RevisionMetadata) {
 }
 
 function revisionDto(revision: DocumentRevision) {
-  return { ...revisionSummary(revision), content: {
-    format: revision.contentFormat, schemaVersion: revision.contentSchemaVersion, document: revision.body,
-  }, plainText: revision.plainText };
+  return { ...revisionSummary(revision), content: content({
+    format: revision.contentFormat, schemaVersion: revision.contentSchemaVersion,
+    editorVersion: revision.contentEditorVersion, document: revision.body,
+  }).content, plainText: revision.plainText };
 }
 
 function documentSummary(document: Document & { head: Pick<DocumentRevision, 'title'> }) {
@@ -69,7 +70,7 @@ function documentDto(document: Head) {
 }
 
 export function documentEtag(document: { id: string; lockVersion: number }) {
-  return `"doc-${document.id}-v${document.lockVersion}"`;
+  return `"doc-${document.id}-bn1-v${document.lockVersion}"`;
 }
 
 function precondition(document: Document, expectedEtag: string | undefined) {
@@ -118,7 +119,11 @@ export function createDocuments(prisma: PrismaClient, identity: Identity, spaces
     await tx.documentRevision.create({ data: {
       id: randomUUID(), documentId: document.id, revisionNumber, title: snapshot.title,
       contentFormat: snapshot.content.content.format, contentSchemaVersion: snapshot.content.content.schemaVersion,
-      body: snapshot.content.content.document, plainText: snapshot.content.plainText,
+      contentEditorVersion: snapshot.content.content.editorVersion,
+      // JSON transport encodes native undefined table widths as null and omits
+      // optional props. Persist that same representation, never library objects.
+      body: JSON.parse(JSON.stringify(snapshot.content.content.document)) as Prisma.InputJsonValue,
+      plainText: snapshot.content.plainText,
       authorId: actor.id, changeNote: snapshot.changeNote,
     } });
     const updated = await tx.document.updateMany({
@@ -153,7 +158,9 @@ export function createDocuments(prisma: PrismaClient, identity: Identity, spaces
         await tx.documentRevision.create({ data: {
           id: randomUUID(), documentId: document.id, revisionNumber: 1, title: snapshot.title,
           contentFormat: snapshot.content.content.format, contentSchemaVersion: snapshot.content.content.schemaVersion,
-          body: snapshot.content.content.document, plainText: snapshot.content.plainText,
+          contentEditorVersion: snapshot.content.content.editorVersion,
+          body: JSON.parse(JSON.stringify(snapshot.content.content.document)) as Prisma.InputJsonValue,
+          plainText: snapshot.content.plainText,
           authorId: actor.id, changeNote: snapshot.changeNote,
         } });
         return documentDto(await tx.document.findUniqueOrThrow({ where: { id: document.id }, include: { head: true } }));

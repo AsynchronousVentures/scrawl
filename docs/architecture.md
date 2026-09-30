@@ -72,15 +72,15 @@ This is a small lifecycle contract required by an actual capability, not an excu
 
 Fastify input/output schemas are the HTTP contract; generate OpenAPI from registered schemas. Auth endpoints keep the library's request/response semantics. [S3][S4][S6]
 
-Use a restricted ProseMirror-compatible document schema that runs headlessly. A shared content-schema module can later be consumed by the editor, but it cannot import the database or server-only dependencies. Validate node types, marks, attributes, links, byte/depth/node limits. Do not just accept arbitrary JSON and hope the editor sanitizes it. [S8]
+Use BlockNote's native standard blocks and supplied shadcn UI. The shared content contract remains browser-safe and imports official core schema/conversion utilities only; it cannot import Prisma, Fastify, server-util or jsdom. The backend content adapter performs a second official server-utility round trip after strict shared validation. Unknown content and unsafe URLs are rejected before permissive conversion can discard anything.
 
-Persist revision snapshots and derive plain text deterministically. HTML is a rendered view, not a second source of truth. Add no collaboration server or CRDT state in these demos.
+Persist immutable native revision snapshots and derive plain text deterministically. HTML is a rendered view, not another source of truth. [ADR 0001](adr/0001-native-blocknote-documents.md) separates future durable live Yjs state from immutable checkpoints, user-scoped undo from baseline discard, and publishing from private/live heads. No collaboration runtime is enabled by the native foundation.
 
 ## Runtime and dependencies
 
 One backend process and PostgreSQL. Add a private file volume in P7. No Redis, queue, vector database, dynamic module loading or microservices. Fastify's built-in plugin registration is sufficient for composing first-party route groups. [S12]
 
-P1 uses Better Auth 1.7.6 and Prisma 7.10.0, with one pg pool shared by Prisma and readiness. Better Auth's generated auth model layout feeds the reviewed Prisma migration history; no second migration engine is used. Core identity resolves real sessions and rechecks current sessions/roles after transaction locks. Core spaces owns visibility queries and membership transactions. Core documents consumes those authorized space operations, owns document/revision transactions, and uses the browser-compatible headless content module. HTTP adapters only validate, translate, and serialize explicit DTOs. [S5]
+P1 uses Better Auth 1.7.6 and Prisma 7.10.0, with one pg pool shared by Prisma and readiness. Better Auth's generated auth model layout feeds the reviewed Prisma migration history; no second migration engine is used. Core identity resolves real sessions and rechecks current sessions/roles after transaction locks. Core spaces owns visibility queries and membership transactions. Core documents consumes those authorized space operations, owns document/revision transactions, and uses the browser-safe native content contract and a server-utility adapter. HTTP adapters only validate, translate, and serialize explicit DTOs. [S5]
 
 A small exporter does not need an asynchronous job. Large import/export workloads may justify durable jobs later; do not add them before measuring the synchronous limits. Events that must survive crashes require durable delivery when introduced, never a correctness-critical in-memory emitter.
 

@@ -8,12 +8,14 @@ import { documentEtag } from '../core/documents/index.js';
 import { problemSchema } from './problems.js';
 
 const contentSchema = {
-  type: 'object', additionalProperties: false, required: ['format', 'schemaVersion', 'document'],
+  type: 'object', additionalProperties: false, required: ['format', 'schemaVersion', 'editorVersion', 'document'],
   properties: {
-    format: { type: 'string', enum: ['prosemirror-json'] },
+    format: { type: 'string', enum: ['blocknote-json'] },
     schemaVersion: { type: 'integer', enum: [1] },
-    // Core validates the exact native node/mark schema; preserve its validated JSON in responses.
-    document: { type: 'object', additionalProperties: true },
+    editorVersion: { type: 'string', enum: ['0.55.0'] },
+    // Core validates native blocks/styles/props. Preserve every validated block
+    // field instead of letting response serialization discard library metadata.
+    document: { type: 'array', items: { type: 'object', additionalProperties: true } },
   },
 } as const;
 const titleSchema = { type: 'string', minLength: 1, maxLength: 200, pattern: '\\S' } as const;

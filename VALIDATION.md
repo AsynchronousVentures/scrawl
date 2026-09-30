@@ -1,5 +1,24 @@
 # Validation
 
+## Native BlockNote integration milestone, in progress
+
+Work is on `integration/blocknote-demo`, based on completed P4 `445bae2`. This branch is not merged or released. The session now continues beyond earlier packet review boundaries; [tracking issues](docs/integration-backlog.md) record the remaining work. Earlier validation sections below are historical.
+
+Implemented: native BlockNote 0.55.0 standard blocks and official shadcn UI, Scrawl-owned format/schema/editor version metadata, strict browser-safe validation and official server round trips, native persistence/history/restore/export, nested heading outline and local save/discard protections. No collaboration runtime or private upload path is enabled by this milestone. All existing resolved dependency versions and backend pins remain unchanged; only necessary native packages and stable Yjs peers were added.
+
+Observed checks so far: 63 unit/config/HTTP/CLI tests, 22 authenticated PostgreSQL document/export tests, two offline-upgrade PostgreSQL tests, root/web strict types, import boundaries and the production frontend/source archive build passed. The upgrade tests cover durable owner-only original-data archives, metadata/head preservation, repeat execution, refusal of unknown/unrepresentable content and rollback after an injected failure between revision conversions. Focused browser validation reached the real native editor: 10/13 cases passed; fixture corrections and two UI integration fixes are in progress. The complete regression suite, PostgreSQL 18 runtime and final screenshots are not yet verified.
+
+Migration `20260930020000_blocknote_native` adds nullable producing-editor metadata and a reviewed format/body check. It does not rewrite or reset existing payloads. Product writes use `blocknote-json`, schema 1, editor 0.55.0, native blocks arrays; old strong tags are invalidated by the `bn1` representation identifier. The original PostgreSQL 17 demo remains unchanged. Rehearse format upgrades on a disposable copy, with the application stopped:
+
+```sh
+node --env-file=.env.copy node_modules/prisma/build/index.js migrate deploy
+node --env-file=.env.copy --import tsx scripts/content-upgrade.ts --dry-run
+node --env-file=.env.copy --import tsx scripts/content-upgrade.ts --apply --backup /private/path/original-document-revisions.json
+node --env-file=.env.copy --import tsx scripts/content-upgrade.ts --dry-run
+```
+
+Use an owner-only `.env.copy` targeting that explicit local copy. The original-data archive contains private document bodies/provenance and must stay out of Git, screenshots and issues. The command refuses production/remote targets, requires an exclusive new archive file before writes, converts all revisions atomically, and preserves revision IDs/numbers/titles/authors/times and document lifecycle/head fields. Native inline code cannot combine with other styles or links; legacy hard-break mark attribution can also be unrepresentable. Such snapshots abort conversion rather than lose formatting. This finite upgrade reader is confined to operator scripts, never the product runtime.
+
 ## P4 editor refinement, verified locally on 2026-09-30
 
 This refinement starts from completed P4 `9630659` and stops at P4 review. Node.js `v24.20.0`, npm `10.9.9`, PostgreSQL `17.11`, and Chromium were used. The approved prototype and layout remain intact. The initial P4 editor used ProseMirror directly; it now uses actual Tiptap with maintained OSS controls as requested. Earlier packet results below are historical.

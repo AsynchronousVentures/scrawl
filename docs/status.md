@@ -1,5 +1,22 @@
 # Implementation status
 
+## Integration branch, current
+
+The maintainer expanded this session to a cohesive BlockNote demo. Work is on `integration/blocknote-demo`, not merged or released. The original remote `main` contains completed P4 `445bae2`. [The integration backlog](integration-backlog.md) tracks five issues and dependencies.
+
+| Area | Implemented | Verified |
+| --- | --- | --- |
+| Native BlockNote foundation | Standard native blocks, official shadcn UI/server utilities, versioned persistence, native history/restore/export | 63 unit tests, 22 authenticated PostgreSQL document/export cases; browser integration still being corrected |
+| Preservation | Finite backed-up offline format conversion; no runtime dual editor/parser | Two real PostgreSQL upgrade tests, including mid-write rollback; retained original 17 data unchanged |
+| Existing backend guarantees | Core authorization, immutable revisions, ETag concurrency, space-before-document locks, lifecycle versions | Focused concurrency/rollback/revocation/outsider/export tests pass; full regression pending |
+| PostgreSQL 18/search | Fresh 18 configuration in progress; current data on 17 retained | Runtime 18/search not yet verified |
+| Attachments/PDF/DOCX | Planned next integration | Not yet implemented |
+| Publishing/collaboration/comments | Dependency contracts recorded, implementation planned | Not enabled |
+
+[VALIDATION.md](../VALIDATION.md) records actual commands and unverified items. The final persistent demo and current screenshots are pending this integration run. Historical P4 status below describes its completed checkpoint, not the current integration result.
+
+## Completed P4 checkpoint
+
 Recorded 2026-09-30 after the P4 editor refinement on completed P4 baseline `9630659`. See [VALIDATION.md](../VALIDATION.md) for observed results, exact commands, migration effects, screenshots, and limits.
 
 | Area | Status |
