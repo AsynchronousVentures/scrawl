@@ -1,6 +1,6 @@
 # Integration demo work
 
-Work is on `integration/blocknote-demo`. GitHub's `main` contains the completed P4 checkpoint `445bae2`; integration work is not merged or released. The maintainer authorized this session to continue across packet boundaries, push the integration branch and maintain a draft PR. No merge, public tunnel or production deployment is authorized.
+Work is on `integration/blocknote-demo`. GitHub's `main` contains the completed P4 checkpoint `445bae2`; integration work is not merged or released. The maintainer authorized this session to continue across packet boundaries, push the integration branch and maintain a draft PR. A later explicit request authorizes public Tailscale Funnel access for the synthetic Scrawl preview and stale-preview cleanup. No merge or production deployment is authorized.
 
 | Priority | Issue | State | Depends on |
 | --- | --- | --- | --- |

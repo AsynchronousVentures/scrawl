@@ -4,7 +4,7 @@ Scrawl's integrated demo uses actual authentication, the HTTP API, PostgreSQL 18
 
 ## Use the running demo
 
-Open [Scrawl's field guide](https://agentvm.beardie-tone.ts.net:8447/?space=f253ee5d-caad-4449-a299-296da6ecd70d&document=f76ece5c-20bd-47ad-a425-6200fb5ad6a2) from the existing private tailnet. The API listens on loopback 3100 and Tailscale Serve forwards private HTTPS 8447. Funnel is off. No public tunnel or production deployment was created.
+Open [Scrawl's field guide](https://agentvm.beardie-tone.ts.net:10000/?space=f253ee5d-caad-4449-a299-296da6ecd70d&document=f76ece5c-20bd-47ad-a425-6200fb5ad6a2) from any browser. At the maintainer's explicit request, Tailscale Funnel now forwards public HTTPS 10000 to the existing loopback API on 3100. Private documents still require authentication and current grants. This is a synthetic development preview, not a production deployment.
 
 Retrieve credentials locally, without copying them into issues, screenshots or chat:
 
@@ -15,7 +15,7 @@ less artifacts/demo18/artifacts/demo/credentials.json
 
 The file is ignored and owner-only. Use `administrator@example.test` for all capabilities, `editor@example.test` for editing, `reader@example.test` for reading/history/export, and `outsider@example.test` to verify isolation. Each has its own generated password. Use separate browser profiles when comparing roles. The editor and reader belong to "Scrawl field guide"; Demo A's separate spaces deliberately revoke their editor grant at the end of each run.
 
-An already approved synthetic revision is available at [the read-only handbook](https://agentvm.beardie-tone.ts.net:8447/publications/5cc554b9-c753-4de1-9502-0e1188323e9d), without signing in but still within the private tailnet. It includes only the approved revision and its scoped image.
+An already approved synthetic revision is available at [the read-only handbook](https://agentvm.beardie-tone.ts.net:10000/publications/5cc554b9-c753-4de1-9502-0e1188323e9d), publicly without signing in. It includes only the approved revision and its scoped image.
 
 The five useful documents are "Start here", "Your first week", "Service runbook", "Release checklist" and "Decisions and ownership". They include an uploaded private architecture image, nested/toggle content, checklists, rich formatting, code and tables. The release checklist is long enough to exercise scrolling and section navigation.
 
@@ -26,7 +26,7 @@ The five useful documents are "Start here", "Your first week", "Service runbook"
 5. Open History, select an older revision and Restore. A new revision is appended. Use Document actions to archive/unarchive or export saved JSON/PDF/DOCX; history also exports a selected saved revision. Exports exclude unsaved changes. PDFs and DOCX contain visible titles and embedded authorized images.
 6. Use the header Search control. Ctrl/Cmd+K opens search outside the editable editor; inside editable text, BlockNote keeps its native link shortcut. Arrow keys and Enter select a result. Search covers accessible current saved titles/bodies, excludes archives and unsaved edits, and respects the dirty-navigation confirmation.
 7. Open one document in two tabs, edit both, and save the first. Saving the second returns 412, retains its complete draft and shows the latest saved version separately. Use my changes deliberately changes the comparison baseline but writes nothing; review and press Save. Use server version asks before discarding dirty work. Missing/stale preconditions are never automatically retried.
-8. As administrator, choose Publish saved revision from Document actions, or select an older revision in History and use Publish revision. Confirm the explicit saved revision and its public scope. Private drafts and later saves remain private. View the approved page without signing in, then withdraw it. Archive invalidates the approval; unarchive requires a new deliberate approval. This anonymous page is still reachable only through the private development access in this demo.
+8. As administrator, choose Publish saved revision from Document actions, or select an older revision in History and use Publish revision. Confirm the explicit saved revision and its public scope. Private drafts and later saves remain private. View the approved page without signing in, then withdraw it. Archive invalidates the approval; unarchive requires a new deliberate approval. Approved pages are now internet-accessible through the explicitly authorized Funnel preview.
 9. Log in as reader and outsider. Readers can read, inspect history and export but cannot mutate. Outsiders receive no private titles/content/history/versions. Temporary save failure retains editable unsaved work; expiry/lost access clears unrelated navigation and server actions, retaining the draft read-only in the tab. Re-login as the draft's account rechecks access and requires deliberate reconciliation. Nothing is reported as saved after a failed write.
 
 Private draft title/body live only in memory. Closing/reloading can discard them after the browser warning. There is no persistent content cache, IndexedDB or service worker. Native toggle expansion booleans may use localStorage; document content does not. Collaboration/comments are not enabled.
@@ -45,7 +45,7 @@ If the transient unit is no longer loaded after a machine restart, recreate it:
 
 ```sh
 systemd-run --user --unit=scrawl-integration-demo \
-  --description='Scrawl private integration demo' \
+  --description='Scrawl integration demo' \
   --property=WorkingDirectory=/home/dev/t3/projects/scrawl/artifacts/demo18 \
   --property=Restart=on-failure --property=RestartSec=3 \
   --property=StandardOutput=append:/home/dev/t3/projects/scrawl/artifacts/demo18/server.log \
@@ -53,8 +53,17 @@ systemd-run --user --unit=scrawl-integration-demo \
   /home/dev/.nvm/versions/node/v24.20.0/bin/node \
   --import /home/dev/t3/projects/scrawl/node_modules/tsx/dist/loader.mjs \
   /home/dev/t3/projects/scrawl/scripts/demo-server.ts \
-  --origin https://agentvm.beardie-tone.ts.net:8447
+  --origin https://agentvm.beardie-tone.ts.net:10000
 ```
+
+The existing service has a runtime drop-in selecting that exact HTTPS origin. Tailscale retains its background route separately. To restore only Scrawl's authorized public route if needed:
+
+```sh
+sudo -n tailscale funnel --https=10000 --bg --yes http://127.0.0.1:3100
+tailscale funnel status
+```
+
+Do not use `tailscale serve reset` or `tailscale funnel reset`: those affect other services. The T3 Code connection on private HTTPS 443 remains unchanged. Old static preview paths and dead preview proxies were removed; the obsolete Scrawl prototype server was stopped. Their files and all retained database volumes remain intact. The old Scrawl 8447 route is no longer available.
 
 Inspect/start only the current PostgreSQL 18 project while preserving its data:
 
@@ -76,7 +85,7 @@ This opt-in authored acceptance runner uses fresh browser sessions against the a
 cd /home/dev/t3/projects/scrawl/artifacts/demo18
 node --import /home/dev/t3/projects/scrawl/node_modules/tsx/dist/loader.mjs \
   /home/dev/t3/projects/scrawl/scripts/demo-verify.ts \
-  --origin https://agentvm.beardie-tone.ts.net:8447
+  --origin https://agentvm.beardie-tone.ts.net:10000
 ```
 
 It expects the original synthetic field-guide titles/content. It exits nonzero on an assertion failure. Screenshots are ignored under `artifacts/demo18/artifacts/running-evidence`, taken only after credentials are absent from the page. Full mutation/conflict/permission/publication tests use their own disposable database, as described in validation.
@@ -110,11 +119,18 @@ node --import /home/dev/t3/projects/scrawl/node_modules/tsx/dist/loader.mjs \
 
 Open `http://127.0.0.1:3100/`. Repeat seed verifies its owner-only manifest and existing documents, then changes nothing. It refuses an existing named space without a matching manifest and never retries creates or resets implicitly. Initialization refuses an existing private config, and setup refuses existing credentials/populated users. If using another working directory/project or port, keep database/API settings consistent and choose a separate Compose project explicitly.
 
-For same-origin Vite development, stop the normal server and run the absolute `scripts/demo-dev.ts` from the fixture directory. It starts API and Vite together, proxies the browser's exact origin/cookies, and shuts both down with Ctrl-C. No wildcard CORS or authentication bypass is introduced. `--port 5175` selects a frontend port. Fixture/Demo A tools require the normal local API origin, so stop Vite and start normal `demo-server.ts` for them. For private HTTPS, use the existing authorized Serve origin with the explicit server-only `--origin` override, never Funnel.
+For same-origin Vite development, stop the normal server and run the absolute `scripts/demo-dev.ts` from the fixture directory. It starts API and Vite together, proxies the browser's exact origin/cookies, and shuts both down with Ctrl-C. No wildcard CORS or authentication bypass is introduced. `--port 5175` selects a frontend port. Fixture/Demo A tools require the normal local API origin, so stop Vite and start normal `demo-server.ts` for them. HTTPS previews require the exact authorized origin with the explicit server-only `--origin` override. Public Funnel access is authorized only for this synthetic Scrawl instance.
 
 ## Run Demo A
 
-Use the normal local-origin server from the disposable fixture directory, not the private HTTPS-origin service. To run it against the current synthetic demo, stop the user service explicitly, start the same `demo-server.ts` without `--origin` in one terminal, and run the following in another. Stop that local server and restart the user service afterward:
+Use the normal local-origin server from the disposable fixture directory, not the HTTPS-origin service. Running Demo A locally also requires turning off only Scrawl's public route first, so a local-origin server is not exposed through a mismatched public origin:
+
+```sh
+sudo -n tailscale funnel --https=10000 off
+systemctl --user stop scrawl-integration-demo.service
+```
+
+Start the same `demo-server.ts` without `--origin` in one terminal, and run the following in another. Stop that local server, restart the user service, verify readiness, and restore only the Scrawl Funnel route afterward using the commands above:
 
 ```sh
 cd /home/dev/t3/projects/scrawl/artifacts/demo18

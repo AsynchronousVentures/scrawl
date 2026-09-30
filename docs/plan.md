@@ -54,7 +54,7 @@ The maintainer's BlockNote decision supersedes the earlier editor restrictions a
 5. **Isolated collaboration and comments:** durable server-authorized Yjs state, immutable checkpoints, restore epochs and user-scoped undo, followed by supplied comment stores/UI with server-checked mutations. Implement and test [the live-state contract](adr/0003-collaboration-checkpoints.md) before enabling live sessions. Incomplete work stays isolated and unavailable in the working demo.
 6. **Optional AI:** an opt-in provider integration through the supplied accept/reject UI and authorized editing operations, after the document contracts are stable. No provider is required to run Scrawl. Missing provider access is not a blocker, and this session does not authorize paid provider calls.
 
-[The integration backlog](integration-backlog.md) tracks priorities, dependencies and actual branch status. The maintainer authorized reviewable commits, integration-branch pushes and a draft PR for this session. No merge, public tunnel or production deployment is authorized. Document hierarchies, full portability and release hardening remain separate work.
+[The integration backlog](integration-backlog.md) tracks priorities, dependencies and actual branch status. The maintainer authorized reviewable commits, integration-branch pushes and a draft PR for this session, then explicitly authorized public Funnel access for the synthetic Scrawl preview and stale-preview cleanup. No merge or production deployment is authorized. Document hierarchies, full portability and release hardening remain separate work.
 
 ## 4. Stack and version policy
 
@@ -119,7 +119,7 @@ The application must remain usable without an AI provider or any account with th
 
 Work in small reviewable commits through the currently authorized integration sequence. Historical packet boundaries remain useful regression and review checkpoints, not mandatory stops for this session. Report changed files, migration effects, actual commands/results and unresolved risks at each milestone. A failed check is work to resolve, not a reason to disable the check.
 
-P0 verified the supplied foundation and established pins/CI; P1 proved the ORM/auth integration. Their completed scope remains historical. The expanded integration authorization does not include unrelated roadmap work, merging, a public tunnel or production deployment. Preserve retained data and the approved prototype; ask before a destructive reset.
+P0 verified the supplied foundation and established pins/CI; P1 proved the ORM/auth integration. Their completed scope remains historical. The expanded integration authorization does not include unrelated roadmap work, merging or production deployment. Public Funnel access is authorized only for the synthetic Scrawl preview. Preserve retained data and the approved prototype files; ask before a destructive reset.
 
 Keep status truthful in [status.md](status.md); proposed API tables must not be copied into live OpenAPI as implemented endpoints. Dependencies and schemas should appear only when the assigned packet needs them.
 
