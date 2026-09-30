@@ -1,6 +1,8 @@
 # Demo work packets
 
-**All packets are implementation work unless status.md says otherwise.** Each packet is one bounded assignment; split a packet into smaller PRs rather than implementing future packets opportunistically. No calendar estimates are implied.
+P0-P4 below record the completed historical checkpoints and their acceptance criteria. [Status](status.md) distinguishes current implementation from verified behavior. The maintainer authorized this integration session to cross the earlier packet review boundaries, using small reviewable commits rather than another redesign. No calendar estimates are implied.
+
+The current dependency sequence is native BlockNote/private workflow, private attachments and supplied exporters, PostgreSQL 18 with 17 compatibility and authorized search, selected-revision publishing, isolated durable collaboration/comments, then optional AI. [The integration backlog](integration-backlog.md) tracks that work and its review state. The historical packet numbering does not override this sequence. Integration-branch pushes and a draft PR are authorized; merging, a public tunnel and production deployment are not.
 
 ## P0 — Verify and lock the existing foundation
 
@@ -30,9 +32,9 @@ Add `/api/v1/me`, administrator space creation, access-filtered listing/read, an
 
 **Depends on:** P1. **Goal:** the reusable document engine.
 
-Prove headless validation/text extraction/native round trip for a small ProseMirror-compatible schema: paragraphs, headings, basic marks, bullet/ordered lists, links and code blocks. Restrict URL protocols and body size/depth/node count; reject unknown content instead of dropping it. No HTML or uploads yet.
+The original P2 checkpoint proved headless validation/text extraction/native round trip for a small ProseMirror-compatible schema: paragraphs, headings, basic marks, bullet/ordered lists, links and code blocks. The native BlockNote foundation supersedes those feature restrictions while preserving strict URL/resource validation and rejecting unknown or lossy content. This section records the original document-engine guarantees, not a restriction on the current native editor.
 
-Add document/revision migrations and commit-time head integrity; create/list/read/update; current ETag; immutable revision list/read/restore; archive/unarchive. Restrict updates to documented fields. Title/body snapshots are authoritative. Review parent/archive semantics only when nesting is introduced later.
+Add document/revision migrations and commit-time head integrity; create/list/read/update; current ETag; immutable revision list/read/restore; archive/unarchive. Restrict updates to documented fields. Title/body snapshots are authoritative. Review parent/archive semantics only when document hierarchies are introduced later.
 
 **Acceptance:** real concurrent requests with the same ETag yield one save and one 412; missing precondition yields 428; forced mid-write failure creates no orphan/head mismatch; restored content receives a new revision number; revision IDs cannot cross documents; outsider gets no title/version; reader cannot mutate; unsupported nodes and oversized bodies fail safely.
 
@@ -46,7 +48,7 @@ Build a small demo runner using actual HTTP authentication, synthetic fixtures a
 
 **Acceptance:** run [demo-walkthrough.md](demo-walkthrough.md) Demo A from a fresh migrated database; tests assert denials and stale writes rather than just printing requests. Exported content validates through the same parser. Create actions are not automatically retried. Record fixture identities but do not commit real credentials.
 
-**Stop point:** demonstrate the API to the maintainer before a UI packet.
+**Historical review checkpoint:** demonstrate the API before adding the original UI. Demo A remains a required regression in the integration sequence.
 
 ## P4 — Demo B, thin private-document UI
 
@@ -60,41 +62,45 @@ Add explicit save feedback, dirty state/navigation warning and a 412 conflict vi
 
 **Do not build:** auto-save, multiplayer cursors, page designer, public branding, AI toolbar, widget dashboard or a component-library rewrite.
 
-## N1: native BlockNote foundation, assigned after P4
+## N1: native BlockNote foundation after P4
 
 The maintainer approved BlockNote and its official shadcn integration as the document foundation. This supersedes the earlier restricted editor/schema and feature ordering. Preserve P0-P4 authorization, concurrency, rollback, immutable history and draft protections.
 
-Use all standard native blocks/styles, supplied editing UI and server conversion utilities. Version the native `Block[]` contract explicitly; update validation, persistence, reading/editing, nested heading outline, history/restore and native JSON export together. Prove safe rich editing through real sessions and PostgreSQL. Checkpoint the old baseline and preserve every existing snapshot with a private original-data archive before an explicit transactional format conversion. Never reset data or keep a permanent product compatibility layer for prototype fixtures.
+Use all standard native blocks/styles, official shadcn editing UI and server conversion utilities. Version the native `Block[]` contract explicitly; update validation, persistence, reading/editing, nested heading outline, history/restore and native JSON export together. Prove safe rich editing through real sessions and PostgreSQL. Checkpoint the old baseline and preserve every existing snapshot with a private original-data archive before an explicit transactional format conversion. Rehearse on disposable copies; do not change the retained PostgreSQL 17 database or volume. Ask before changing or resetting real data. No permanent runtime compatibility layer for prototype fixtures is needed.
 
-**Acceptance:** standard blocks/styles, tables and nested content round-trip without dropped data; rich UI/links/keyboard undo work; explicit Save and Discard retain their revision semantics; reload/history/restore/export use native content; stale writes retain complete drafts; authorization and all earlier transaction tests remain effective. Capture actual application evidence and stop for review.
+**Acceptance:** standard blocks/styles, tables and nested content round-trip without dropped data; rich UI/links/keyboard undo work; explicit Save and Discard retain their revision semantics; reload/history/restore/export use native content; stale writes retain complete drafts; authorization and all earlier transaction tests remain effective. Capture actual application evidence and keep this foundation reviewable while continuing the authorized integration sequence.
 
-**Following bounded sequence:** N2 private attachments using native hooks; N3 XL layouts/exporters with authorized file resolution; N4 durable Yjs collaboration then supplied comments; N5 selected-snapshot publishing and optional provider-backed AI. [ADR 0001](adr/0001-native-blocknote-documents.md) resolves live storage, checkpoints, scoped undo/discard, restore epochs and publication before N4 wiring. Do not implement N2-N5 in N1.
+**Following sequence:** private attachments and OSS PDF/DOCX exporters; PostgreSQL 18 and indexed authorized search; selected-snapshot publishing; isolated durable Yjs collaboration then supplied comments; optional provider-backed AI. [ADR 0003](adr/0003-collaboration-checkpoints.md) resolves live storage, checkpoints, scoped undo/discard, restore epochs and publication before collaboration wiring. [ADR 0002](adr/0002-integration-storage-and-publication.md) defines file/search/publication policy. Further XL layouts/exporters need matching native schemas and verified available packages. Missing AI provider access is not a blocker, and no paid provider calls are authorized.
 
-## P5 — Demo C, public publishing as the first substantial capability
+## P5: Demo C, selected-revision publishing
 
-**Depends on:** the native foundation and attachment/live-state contracts above. The earlier text-only ordering is superseded. **Goal:** prove capabilities connect without bypassing the core.
+**Depends on:** the native foundation and private attachment contracts. The current integration sequence places this after PostgreSQL 18/search. **Goal:** prove capabilities connect without bypassing the core.
 
-Implement [public-publishing.md](public-publishing.md) API-first, then add administrator preview/publish/unpublish controls and an anonymous read-only view. Add publication/availability state only now. Publish an explicitly selected revision under the document version precondition; never advance the public revision on internal save. Separate public schemas from private DTOs. Start text-only with existing supported nodes; file publication is extended in P7.
+Implement selected-revision publishing API-first, then add administrator preview/publish/unpublish controls and an anonymous read-only view. Publishing defaults off. Publish an explicitly selected immutable native revision under the document version precondition; never advance the public revision on an internal save or future live editing. Include only the exact attachment allowlist recorded for that revision. Separate public schemas from private DTOs. The optional capability owns grant writes through the core's authorized transaction; core purpose-specific queries own public grant/lifecycle/revision/file visibility as recorded in ADR 0002.
 
 Use the application's host, opaque stable public IDs, no-store caching, and no anonymous search/navigation/history. Private referenced-page titles or breadcrumbs are not resolved into the public DTO. Explain that literal content/links are public and unpublishing cannot erase already copied data. Add source/license access for the running build before sharing the demo over a network.
 
-**Acceptance:** revision 2 public / revision 3 internal; newer title/body never leak; editor cannot publish; guessed revision IDs do not work; unpublish immediately denies new reads; archive/unarchive cannot revive an old grant; publishing off denies anonymous access while private API still works; stale publish fails. Public UI passes safe rendering tests.
+**Acceptance:** revision 2 public / revision 3 internal; newer title/body/files never leak; readers/editors cannot publish; guessed revision IDs and unrelated files do not work; unpublish immediately denies new reads; archive/unarchive cannot revive an old grant; publishing off denies anonymous access while private API still works; stale/missing preconditions fail without changing history. Publication and lock changes commit together. Public UI passes safe rendering tests.
 
-**Stop point:** the three requested demos are complete only after observed acceptance results.
+**Review checkpoint:** Demo C is complete only after observed acceptance results. Continue within the current authorized sequence; unfinished collaboration stays isolated from the working demo.
 
 ## P6 — Findability and lightweight organization
 
-**Depends on:** P5. **Goal:** make a growing private wiki navigable.
+**Depends on:** saved native content/plain text and current identity/membership policy for search. Search is integrated before publishing; document hierarchies remain a separate future assignment. **Goal:** make a growing private wiki navigable.
 
-Add PostgreSQL full-text search over current authorized nonarchived revisions, with title weighting and bounded query behavior. Keep result fields and snippets minimal. Add optional same-space parents, cycle validation and a basic tree once a flat list is insufficient. Choose a deterministic order; drag/drop ranking is optional and not a prerequisite.
+Add PostgreSQL full-text search over current authorized nonarchived heads, with title weighting, a language-neutral dictionary, bounded queries and plain excerpts. Apply current session/role/membership checks in SQL before ranking and limits. Keep the native content/history authoritative; generated vectors and their GIN index are rebuildable derived state. Use a fresh PostgreSQL 18 volume and preserve PostgreSQL 17 compatibility, rehearsing retained-data upgrades only on disposable copies.
 
-**Acceptance:** query a unique term in a forbidden page and receive no title/body/snippet/count evidence; permissions applied in the database query before results; archive excludes search; edit refreshes text; rebuild works. Reject cross-space/cyclic/self parents and archive with active children. Define bounded pagination, including search behavior when documents change.
+Optional same-space parents, cycle validation and a basic tree remain future work once a flat list is insufficient. Choose a deterministic order; drag/drop ranking is optional and not a prerequisite. Search does not authorize document hierarchy work in this session.
+
+**Acceptance:** query a unique term in a forbidden page and receive no title/body/snippet/count evidence; permissions applied in the database query before results; archive excludes search; edit refreshes text; rebuild works. Bound search results and verify consistency with committed changes. Future hierarchy acceptance must reject cross-space/cyclic/self parents and archive with active children.
 
 ## P7 — Private attachments, then published attachment grants
 
-**Depends on:** P5; may be independent of search after shared contracts settle.
+**Depends on:** native document ownership and revision references for private files; selected-revision publishing for public file grants. Private files/export precede search/publishing in the current sequence.
 
-Add immutable document-owned file metadata and local private storage, bounded uploads, normalized revision references, authenticated streams, and a visible image upload path. Prefer PNG/JPEG/WebP initially; do not inline active formats. Track staging/ready states and reconcile orphaned metadata/bytes; a database transaction does not include filesystem writes.
+Add immutable document-owned file metadata and local private storage, bounded MIME-checked uploads, normalized same-document revision references, authenticated streams, quotas and native upload/resolution hooks. Do not inline active formats. Use exclusive owner-only files and coordinated metadata commits; remove only a failed operation's confirmed uncommitted bytes. An ambiguous commit acknowledgement retains bytes, and process-crash orphans need explicit inspection rather than an automatic directory wipe. A database transaction does not include filesystem writes.
+
+Use the supplied OSS PDF/DOCX exporters with authorized immutable snapshots and private asset resolution. Keep rendering offline, bound asset bytes, reject unsupported external media instead of fetching it, and recheck access before returning the result. These downloads are rendered documents, not a full backup/import format. Additional layouts/exporters need their matching native schema and verified packages.
 
 Extend publishing with an exact allowlist of attachments referenced by the selected revision. Private-only new uploads remain private. Public stream authorization resolves through the active publication on every request. Retain blobs referenced by history. Define quotas and cleanup before inviting broad use.
 
@@ -122,4 +128,4 @@ Confirm the public Scrawl repository URL and private security reporting before p
 
 ## Required completion report for every packet
 
-Summarize changed behavior and files; list actual commands with results; identify schema/migration effects and remaining risks; update status.md; give the next bounded packet. Do not merge, push, deploy or proceed automatically beyond the assigned scope.
+Summarize changed behavior and files; list actual commands with results; identify schema/migration effects and remaining risks; update status.md. Work through the current authorized sequence in reviewable commits and the integration draft PR. The earlier packet stop boundaries do not require new permission in this session. Do not merge, create a public tunnel, deploy to production or expand into unrelated roadmap work.

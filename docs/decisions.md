@@ -30,9 +30,9 @@ These are proposed engineering choices the agent may refine through a short deci
 | Save | Explicit save, immutable revision, optimistic concurrency |
 | Frontend timing | Thin UI after private-core tests, not after all backend capabilities |
 | Publishing | Disabled by default, administrator action, selected-revision grant |
-| Search/files | Add after the first three demos, with their own API-first tests |
+| Search/files | Private attachments and supplied exporters, then indexed search, before selected publishing; API-first permission tests |
 | Dependencies | No speculative queue/cache/search service/plugin runtime |
 
 Technical pins are decided in P0/P1 and documented with command output. Licensing choice is no longer pending. See [plan.md](plan.md), [architecture.md](architecture.md), and [sources.md](sources.md).
 
-The BlockNote foundation replaces P2's restricted schema. Canonical no-op saves still keep the current revision/version; restore always appends history. Archive/unarchive changes lifecycle versions, preserves authorized history reads, and blocks content mutations while archived. The native format and future live-state/checkpoint boundaries are recorded in [ADR 0001](adr/0001-native-blocknote-documents.md); durable vocabulary is in [CONTEXT.md](../CONTEXT.md).
+The BlockNote foundation replaces P2's restricted schema. Canonical no-op saves still keep the current revision/version; restore always appends history. Archive/unarchive changes lifecycle versions, preserves authorized history reads, and blocks content mutations while archived. The native format is recorded in [ADR 0001](adr/0001-native-blocknote-documents.md), and the live-state/checkpoint boundary in [ADR 0003](adr/0003-collaboration-checkpoints.md); durable vocabulary is in [CONTEXT.md](../CONTEXT.md).

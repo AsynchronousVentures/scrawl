@@ -1,14 +1,57 @@
 # Validation
 
-## Native BlockNote integration milestone, in progress
+## BlockNote integration demo, current branch
 
-Work is on `integration/blocknote-demo`, based on completed P4 `445bae2`. This branch is not merged or released. The session now continues beyond earlier packet review boundaries; [tracking issues](docs/integration-backlog.md) record the remaining work. Earlier validation sections below are historical.
+Work is on `integration/blocknote-demo`, based on completed P4 `445bae2`. [Draft PR #6](https://github.com/AsynchronousVentures/scrawl/pull/6) and [five tracking issues](docs/integration-backlog.md) distinguish implemented-on-branch work from merged or released work. Nothing in this integration is merged or deployed publicly. The maintainer authorized the session to continue across earlier packet boundaries; historical packet results below are not the current editor's contract.
 
-Implemented: native BlockNote 0.55.0 standard blocks and official shadcn UI, Scrawl-owned format/schema/editor version metadata, strict browser-safe validation and official server round trips, native persistence/history/restore/export, nested heading outline and local save/discard protections. No collaboration runtime or private upload path is enabled by this milestone. All existing resolved dependency versions and backend pins remain unchanged; only necessary native packages and stable Yjs peers were added.
+Node.js 24.20.0, npm 10.9.9, PostgreSQL 17.11 and 18.6, and Playwright Chromium were used. The original retained 17 demo/data/history and disconnected approved prototypes remain intact. The integrated synthetic demo uses a separate fresh 18 volume and database at loopback 5434, with the official image's `/var/lib/postgresql` mount.
 
-Observed checks so far: 63 unit/config/HTTP/CLI tests, 22 authenticated PostgreSQL document/export tests, two offline-upgrade PostgreSQL tests, root/web strict types, import boundaries and the production frontend/source archive build passed. The upgrade tests cover durable owner-only original-data archives, metadata/head preservation, repeat execution, refusal of unknown/unrepresentable content and rollback after an injected failure between revision conversions. Focused browser validation reached the real native editor: 10/13 cases passed; fixture corrections and two UI integration fixes are in progress. The complete regression suite, PostgreSQL 18 runtime and final screenshots are not yet verified.
+### Implemented and observed
 
-Migration `20260930020000_blocknote_native` adds nullable producing-editor metadata and a reviewed format/body check. It does not rewrite or reset existing payloads. Product writes use `blocknote-json`, schema 1, editor 0.55.0, native blocks arrays; old strong tags are invalidated by the `bn1` representation identifier. The original PostgreSQL 17 demo remains unchanged. Rehearse format upgrades on a disposable copy, with the application stopped:
+Native BlockNote 0.55.0 and its official shadcn UI provide standard rich blocks, seven styles, slash menus, formatting/link UI, block controls, nested/toggle content and tables. Scrawl validates the native envelope before persistence and proves a loss-free official server round trip. Saved revisions stay immutable; restore appends history. Explicit save, native undo/redo, confirmed title/body discard, complete conflict comparison, expiry/revocation retention and mobile navigation remain in place. Discard writes nothing and never adopts a newer ETag after conflict.
+
+Private attachments use detected types, full bounded image decoding, immutable document-owned metadata and normalized revision references. Upload creates no content revision. Current access controls every download. Official OSS PDF/DOCX exporters run offline using bundled compiler/fonts, include visible snapshot titles, embed authorized images and retain authenticated file links. External media and unsupported export colors produce explicit errors. Native JSON export remains a saved snapshot, not a backup or import system.
+
+PostgreSQL search uses a stored generated weighted title/body vector and GIN index. Its parameterized query applies current session and space grants before ranking or excerpts, searches only saved current non-archived heads, and returns bounded plain text. The connected dialog has keyboard selection, debouncing, stale-response protection and guarded navigation.
+
+Publishing is disabled by default. Its implemented backend approves one explicitly selected immutable revision, validates publication-scoped attachment references and uses the document ETag inside core transactions. Private saves do not advance the publication; archive invalidates prior approval even after unarchive. Anonymous responses contain only approved title/content/publication time. The private synthetic demo explicitly enables this capability. All 41 browser workflows passed in a clean full run, including deterministic delayed-read protection and actual native external link/file opener isolation. Collaboration/comments remain isolated and unenabled.
+
+| Check | Observed result |
+| --- | --- |
+| `npm run check` | Exit 0: import boundaries, both strict TypeScript projects, 71 unit/config/HTTP/CLI tests, backend/frontend/source archive builds and generated OpenAPI drift check |
+| `NODE_ENV=test npm run test:db` on 17.11 | Exit 0: 86 tests, zero failures/skips |
+| Same complete database suite on 18.6 | Exit 0: 86 tests, zero failures/skips |
+| `SCRAWL_BROWSER_EVIDENCE=1 NODE_ENV=test npm run test:browser` | Exit 0: clean 41/41, zero retries/skips, actual HTTP API and PostgreSQL 17.11 |
+| Real API Demo A on fresh migrated 18 demo | 368 assertions; repeat runner/reset/no-retry behavior also passes in both complete database suites |
+| Hosted foundation matrix on `9874740` | Exit 0 on PostgreSQL 17 and 18: frozen install, complete check, migrations, database/browser suites and generated OpenAPI |
+| Rich workspace seed and repeat | Five native documents plus private image created; repeat changed no content/history/credentials |
+| Actual persistent HTTPS demo acceptance | Fresh administrator, reader and outsider sessions passed login/logout, saved native rendering/private image, indexed search, history, exact native export, read-only restrictions, isolation and narrow-screen overflow checks; a fresh anonymous session rendered the selected publication/scoped image without private controls |
+| Retained 17 to disposable 18 copy rehearsal | Exact restore, additive SQL migrations, backed-up finite native conversion, original revision identities/head metadata retained and original source unchanged |
+
+Meaningful coverage includes same-ETag concurrent saves, exactly one new revision, injected mid-write rollback, deferred same-document heads, immutable history, cross-document denial, session recovery/revocation, unsafe fixture reset refusal, overlapping memberships, search SQL rechecks and backfill/rebuild, attachment quotas/type/ownership/retention, and selected publication lifecycle/allowlists. Browser checks exercise actual sessions, APIs and PostgreSQL, without mocked successful writes. Earlier unsuccessful intermediate checks were fixed and rerun; failures and skips are never counted as passing.
+
+The currently pinned backend baseline remains Better Auth 1.7.6, Prisma 7.10.0, Fastify 5.12.5, pg 8.23.0 and ProseMirror model 1.25.12. Existing remaining resolved dependency versions/integrities were compared and stayed unchanged. Necessary native editor/export/media/testing packages are exact-pinned; obsolete direct custom-editor/toolbar dependencies were removed. XL exporter packages use their GPL-3.0 OSS license. Full dependency/font notices and the exact checkout source archive are included with the built app. Final `npm ci` passed with zero audit advisories; the CI-equivalent `NODE_ENV=test npm run check` also passed. Earlier hosted runs failed a generated-type drift check on the intermediate search commit; the committed generation now passes locally. The complete PR matrix on `0cf2d80` passed on 17 and 18. One duplicate push job exposed a new-draft/loading race; `9874740` fixes it with a deterministic delayed-read regression. The [complete hosted push matrix on `9874740`](https://github.com/AsynchronousVentures/scrawl/actions/runs/36680339346) passed on both PostgreSQL 17 and 18, including the 41-case browser suite; documentation-only commits follow that verified code checkpoint.
+
+### Repeat the checks
+
+Use an ordinary local test connection in owner-only `.env`, separate from either retained demo. Database and browser suites reserve the same disposable name and must run sequentially on each PostgreSQL instance:
+
+```sh
+npm ci
+npm run check
+npm run db:migrate
+NODE_ENV=test npm run test:db
+PLAYWRIGHT_SKIP_BROWSER_GC=1 npx playwright install --with-deps chromium
+SCRAWL_BROWSER_EVIDENCE=1 npm run test:browser
+```
+
+Fresh development defaults to PostgreSQL 18 with `docker compose up -d --wait`. To test an existing 17 development volume, use its original Compose project and `compose.postgres17.yaml` explicitly. Do not mount 17's old volume into the 18 image or run tests against the retained review database. A second test instance can use an owner-only alternate environment file and an explicit free loopback port. This session ran 18 tests on the task-owned 5435 instance, never the final 5434 demo.
+
+### Migration and preservation instructions
+
+The single history now has six migrations: identity/spaces, documents/revisions, native BlockNote metadata, indexed search, private attachments and selected publication. `migrate deploy` is additive and never converts content automatically. Search backfill changes only generated derived state. Publication adds a separate positive availability generation. Existing native instances need normal deployment of the additive migrations, not content conversion.
+
+For retained legacy content, stop the application and rehearse on an explicitly disposable local copy first:
 
 ```sh
 node --env-file=.env.copy node_modules/prisma/build/index.js migrate deploy
@@ -17,7 +60,30 @@ node --env-file=.env.copy --import tsx scripts/content-upgrade.ts --apply --back
 node --env-file=.env.copy --import tsx scripts/content-upgrade.ts --dry-run
 ```
 
-Use an owner-only `.env.copy` targeting that explicit local copy. The original-data archive contains private document bodies/provenance and must stay out of Git, screenshots and issues. The command refuses production/remote targets, requires an exclusive new archive file before writes, converts all revisions atomically, and preserves revision IDs/numbers/titles/authors/times and document lifecycle/head fields. Native inline code cannot combine with other styles or links; legacy hard-break mark attribution can also be unrepresentable. Such snapshots abort conversion rather than lose formatting. This finite upgrade reader is confined to operator scripts, never the product runtime.
+Use an owner-only `.env.copy` targeting that copy. The original-data archive contains private bodies/provenance and stays out of Git, screenshots and issues. Conversion creates an exclusive owner-only archive and fsyncs it before any writes, then converts all revisions atomically under exclusive locks. It preserves IDs, numbers, titles, authors, times, heads, lifecycle and lock versions. Unknown or unrepresentable legacy content aborts instead of stripping formatting. Native inline code cannot combine with other marks/links; legacy hard-break mark attribution may also be unrepresentable. Two real PostgreSQL conversion tests cover preservation, repeat execution and rollback after injected mid-conversion failure. The finite reader lives only in operator scripts, not runtime compatibility code.
+
+For derived search maintenance on an explicit local target:
+
+```sh
+node --env-file=.env.copy --import tsx scripts/search-index.ts rebuild
+```
+
+### Running application and honest limits
+
+[The current walkthrough](docs/demo-walkthrough.md) records the private URL, safe local credential retrieval, exact restart/setup/reset commands and suggested workflows. Actual running-demo captures are separate from prototype artifacts. T3 preview navigation/evaluation works, but its snapshot operation returned an execution failure; authored real-browser acceptance produced screenshots without exposing credentials.
+
+No collaboration/comments, AI/provider calls, document hierarchies, full backup/import, external search service or generic plugin framework is enabled. File crash-orphan cleanup, range/seek media responses, desktop Office rendering, Firefox/WebKit/native mobile, screen-reader testing, formal PDF accessibility certification, production operation and load testing remain unverified or unimplemented. Custom CSS colors outside exporter presets/six-digit hex and external images remain valid native content but cannot yet be rendered by the offline exporters; the app reports this explicitly. No private document content is persisted to browser storage. Native toggle expansion booleans are the sole localStorage exception. The task-owned ordinary 17 and extra 18 test containers/volumes/networks and temporary upgrade/proof files were removed after validation. The running 18 demo, retained 17 demo, private uploads, owner-only credentials and ignored evidence/logs remain intentionally available. One post-restart browser probe ran before startup finished and failed; after readiness was confirmed, all fresh-session acceptance checks passed again. The native editor bundle emits a nonblocking large-chunk warning (about 1.57 MB minified / 469 kB gzip for the main chunk).
+
+### Current running-demo screenshots
+
+These captures are from the persistent application and synthetic workspace, after actual authentication; no passwords, cookies or tokens appear. Generated PNGs remain ignored. Published through `t3code-publish-evidence`:
+
+- [Document, navigation and outline](https://uwvqig7mu5.ufs.sh/f/tJOw1mn9psOEtShRG7n9psOEgi62D1HuWBIdXRlvM5wjaer0)
+- [Actual indexed search](https://uwvqig7mu5.ufs.sh/f/tJOw1mn9psOEA5GivBJQwKgCvrG4dfBPDk3UtpaVSO2ny9Aj)
+- [Authorized private image](https://uwvqig7mu5.ufs.sh/f/tJOw1mn9psOEt9jHdBn9psOEgi62D1HuWBIdXRlvM5wjaer0)
+- [Native table, checklist, formatting and code](https://uwvqig7mu5.ufs.sh/f/tJOw1mn9psOEneza6DuPu5RwaceHS9ImGo6YL4DOxq0QVJhz)
+- [Narrow-screen document](https://uwvqig7mu5.ufs.sh/f/tJOw1mn9psOE91YfLeHa3mMo6IegLYGHK7XhZJ5lr2PDBUjW)
+- [Anonymous approved revision](https://uwvqig7mu5.ufs.sh/f/tJOw1mn9psOEu0AzzT3BENg7VJrQhHPY3inoRKcTZytmM2sl)
 
 ## P4 editor refinement, verified locally on 2026-09-30
 
@@ -291,7 +357,7 @@ npm run openapi:export
 
 `db:migrate` applies `20260930010000_documents_revisions` after the unchanged P1 migration. It adds Document and DocumentRevision, indexes, positive versions, restricted content-format/schema-version checks, paired archive fields, auth/space/revision references, and the deferred same-document head foreign key. It does not transform or delete existing P1 data. Prisma owns the one migration history; no schema push/reset or alternate engine is used. Regeneration restores the ignored client, not schema state.
 
-The create envelope is `{title, content, changeNote?}`; PATCH accepts title/content changes only, with an optional note. Read the current document ETag and send that single strong tag as `If-Match` for PATCH/restore/archive/unarchive. A canonical no-op save returns unchanged state; a note alone is not a save, and a note on a no-op is ignored. Restore always appends an immutable attributed snapshot. Archive/unarchive advances only lifecycle lock versions; a repeated current state is a no-op after checking its precondition. See [API contracts](docs/api-design.md) and [exact content/lifecycle limits](docs/core-schema.md#p2-content-and-lifecycle-policy).
+The create envelope is `{title, content, changeNote?}`; PATCH accepts title/content changes only, with an optional note. Read the current document ETag and send that single strong tag as `If-Match` for PATCH/restore/archive/unarchive. A canonical no-op save returns unchanged state; a note alone is not a save, and a note on a no-op is ignored. Restore always appends an immutable attributed snapshot. Archive/unarchive advances only lifecycle lock versions; a repeated current state is a no-op after checking its precondition. See [API contracts](docs/api-design.md) and [exact content/lifecycle limits](docs/core-schema.md#native-blocknote-content-and-lifecycle-policy).
 
 ### Remaining limits and cleanup
 

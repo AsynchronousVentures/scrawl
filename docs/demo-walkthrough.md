@@ -1,203 +1,154 @@
 # Demo walkthrough
 
-Demo A and the connected Demo B use the actual API, local authentication, and PostgreSQL. Demo C remains a later acceptance script. Use synthetic content only. See [VALIDATION.md](../VALIDATION.md) for observed results and limits.
+Scrawl's integrated demo uses actual authentication, the HTTP API, PostgreSQL 18, native BlockNote, private files and saved revisions. All seeded content is synthetic. [Validation](../VALIDATION.md) records observed checks and limits; [the integration backlog](integration-backlog.md) records review state. The integration branch is not merged or released.
 
-## Run Demo A
+## Use the running demo
 
-Requires Node.js 24, npm, Docker Compose, and free loopback ports 5433 and 3100. Run from the repository root. This uses its own private `.env.demo` and disposable PostgreSQL database `scrawl_demo_a`, separate from ordinary `.env` development configuration.
+Open [Scrawl's field guide](https://agentvm.beardie-tone.ts.net:8447/?space=f253ee5d-caad-4449-a299-296da6ecd70d&document=f76ece5c-20bd-47ad-a425-6200fb5ad6a2) from the existing private tailnet. The API listens on loopback 3100 and Tailscale Serve forwards private HTTPS 8447. Funnel is off. No public tunnel or production deployment was created.
 
-```sh
-npm ci
-npm run demo:init
-docker compose --env-file .env.demo -f compose.demo.yaml up -d --wait postgres
-npm run demo:setup -- --database scrawl_demo_a
-npm run demo:serve
-```
-
-Leave the server running. In a second terminal at the repository root:
+Retrieve credentials locally, without copying them into issues, screenshots or chat:
 
 ```sh
-npm run demo:a
-npm run demo:a
-cat artifacts/demo/export.json
-cat artifacts/demo/result.json
+cd /home/dev/t3/projects/scrawl
+less artifacts/demo18/artifacts/demo/credentials.json
 ```
 
-Each successful run creates a fresh "Demo Handbook" space and "Release checklist" document through actual HTTP requests. It leaves three immutable revisions and revokes its editor membership at the end. Repeating the runner preserves earlier spaces/documents and the four provisioned accounts. `result.json` records the latest successful run's IDs and assertion count; `export.json` is its current revision's native snapshot. Both are ignored, owner-only local files. They are written after the walkthrough assertions pass.
+The file is ignored and owner-only. Use `administrator@example.test` for all capabilities, `editor@example.test` for editing, `reader@example.test` for reading/history/export, and `outsider@example.test` to verify isolation. Each has its own generated password. Use separate browser profiles when comparing roles. The editor and reader belong to "Scrawl field guide"; Demo A's separate spaces deliberately revoke their editor grant at the end of each run.
 
-The runner exits nonzero on assertion, transport, or parser failure. It never retries creates or saves. A failed run can leave partial synthetic data and live sessions until expiry or explicit reset; it does not silently clean up. Failures before artifact writing preserve the latest successful files. Existing authentication rate limits remain active, so rapid repeated sign-ins can fail. The tested Linux runner uses distinct loopback source addresses for actors rather than bypassing those limits.
+An already approved synthetic revision is available at [the read-only handbook](https://agentvm.beardie-tone.ts.net:8447/publications/5cc554b9-c753-4de1-9502-0e1188323e9d), without signing in but still within the private tailnet. It includes only the approved revision and its scoped image.
 
-## Fixtures and explicit reset
+The five useful documents are "Start here", "Your first week", "Service runbook", "Release checklist" and "Decisions and ownership". They include an uploaded private architecture image, nested/toggle content, checklists, rich formatting, code and tables. The release checklist is long enough to exercise scrolling and section navigation.
 
-`demo:init` exclusively creates owner-only `.env.demo` with locally generated authentication and database secrets. It refuses to overwrite existing configuration. `demo:setup` applies the existing Prisma migration history and uses the existing host operator operations to bootstrap/provision:
+1. Open "Start here". Use the actual heading-derived "On this page" links, then inspect the private image. On a narrow screen, Navigation opens a drawer and the outline collapses above the document.
+2. Create a document, edit its title and use `/` for BlockNote's supplied blocks. Select text for formatting/link UI, use the block handle for actions/nesting, and try a table, checklist and code block. Save explicitly and reload. There is no autosave.
+3. Use Ctrl/Cmd+Z and the platform redo shortcut, including after Save. Discard changes beside Save asks before resetting title/body to this tab's baseline, clears local undo and creates no revision. Keep editing cancels.
+4. Save a new document before using BlockNote's Upload tab for an image/file. Uploaded bytes are private; Save records their reference. Removing a current block leaves older revisions' attachments readable to authorized users. Rejected uploads leave local work intact.
+5. Open History, select an older revision and Restore. A new revision is appended. Use Document actions to archive/unarchive or export saved JSON/PDF/DOCX; history also exports a selected saved revision. Exports exclude unsaved changes. PDFs and DOCX contain visible titles and embedded authorized images.
+6. Use the header Search control. Ctrl/Cmd+K opens search outside the editable editor; inside editable text, BlockNote keeps its native link shortcut. Arrow keys and Enter select a result. Search covers accessible current saved titles/bodies, excludes archives and unsaved edits, and respects the dirty-navigation confirmation.
+7. Open one document in two tabs, edit both, and save the first. Saving the second returns 412, retains its complete draft and shows the latest saved version separately. Use my changes deliberately changes the comparison baseline but writes nothing; review and press Save. Use server version asks before discarding dirty work. Missing/stale preconditions are never automatically retried.
+8. As administrator, choose Publish saved revision from Document actions, or select an older revision in History and use Publish revision. Confirm the explicit saved revision and its public scope. Private drafts and later saves remain private. View the approved page without signing in, then withdraw it. Archive invalidates the approval; unarchive requires a new deliberate approval. This anonymous page is still reachable only through the private development access in this demo.
+9. Log in as reader and outsider. Readers can read, inspect history and export but cannot mutate. Outsiders receive no private titles/content/history/versions. Temporary save failure retains editable unsaved work; expiry/lost access clears unrelated navigation and server actions, retaining the draft read-only in the tab. Re-login as the draft's account rechecks access and requires deliberate reconciliation. Nothing is reported as saved after a failed write.
 
-| Identity | Instance role | Per-run access |
-| --- | --- | --- |
-| `administrator@example.test` | Administrator | Creates space and manages memberships |
-| `editor@example.test` | Member | Editor, with two separate authenticated cookie jars |
-| `reader@example.test` | Member | Reader |
-| `outsider@example.test` | Member | No membership |
+Private draft title/body live only in memory. Closing/reloading can discard them after the browser warning. There is no persistent content cache, IndexedDB or service worker. Native toggle expansion booleans may use localStorage; document content does not. Collaboration/comments are not enabled.
 
-Passwords are generated locally into ignored, owner-only `artifacts/demo/credentials.json`. Commands print only fixture emails and IDs. Do not print or share this file, `.env.demo`, cookies, or session tokens. The runner keeps cookie jars in memory and signs out all five sessions after a successful run.
+## Restart the current demo
 
-Setup refuses an existing credential file or populated instance. Reset requires explicit confirmation of the fixed disposable database name. Both commands refuse production, missing development/disposable markers, non-demo database names, remote hosts, URL options, mismatched database settings, or a demo connection pool below two connections. They consume `.env.demo`, never an arbitrary ambient `DATABASE_URL`, and verify the actual connected database/user. Concurrent fixture commands are refused. Reset also refuses unexpected public tables.
-
-Stop `demo:serve` with Ctrl-C before resetting. Reset deletes synthetic document/access/authentication rows and the credential manifest, preserves the migration ledger and private configuration, and does not provision automatically:
+The demo uses a persistent user service, separate from the agent process:
 
 ```sh
-npm run demo:reset -- --database scrawl_demo_a
-npm run demo:setup -- --database scrawl_demo_a
-npm run demo:serve
+systemctl --user restart scrawl-integration-demo.service
+systemctl --user show scrawl-integration-demo.service --property=ActiveState,SubState,MainPID
+curl --fail --silent http://127.0.0.1:3100/health/ready
 ```
 
-Then run `npm run demo:a` in the second terminal again. Reset without `--database scrawl_demo_a` fails without changing data. The next setup generates new account IDs and passwords. Existing successful export/result files are retained as local artifacts until another successful run.
-
-To remove this disposable database, first stop the server and explicitly reset as above, then:
+If the transient unit is no longer loaded after a machine restart, recreate it:
 
 ```sh
-docker compose --env-file .env.demo -f compose.demo.yaml down -v
-rm .env.demo
+systemd-run --user --unit=scrawl-integration-demo \
+  --description='Scrawl private integration demo' \
+  --property=WorkingDirectory=/home/dev/t3/projects/scrawl/artifacts/demo18 \
+  --property=Restart=on-failure --property=RestartSec=3 \
+  --property=StandardOutput=append:/home/dev/t3/projects/scrawl/artifacts/demo18/server.log \
+  --property=StandardError=append:/home/dev/t3/projects/scrawl/artifacts/demo18/server.log \
+  /home/dev/.nvm/versions/node/v24.20.0/bin/node \
+  --import /home/dev/t3/projects/scrawl/node_modules/tsx/dist/loader.mjs \
+  /home/dev/t3/projects/scrawl/scripts/demo-server.ts \
+  --origin https://agentvm.beardie-tone.ts.net:8447
 ```
 
-This removes only this Compose project's demo volume. Keep `.env.demo` if retaining the database volume, since it contains that database's generated credentials. Port changes must keep `PORT`/`APP_ORIGIN` and `DEMO_DB_PORT`/`DATABASE_URL` consistent in the private file.
+Inspect/start only the current PostgreSQL 18 project while preserving its data:
 
-## Demo A assertions
+```sh
+cd /home/dev/t3/projects/scrawl
+docker compose --env-file artifacts/demo18/.env.demo -f compose.demo.yaml ps
+docker compose --env-file artifacts/demo18/.env.demo -f compose.demo.yaml up -d --wait postgres
+```
 
-Revision 1 contains "Run tests before deploying." Revision 2 adds "Verify the backup." Restoring revision 1 creates revision 3 with the original content and leaves revisions 1 and 2 intact. The private marker used in Demo C below is not added by Demo A.
+The project is `scrawl-demo-a18`, volume `scrawl-demo-a18_demo_postgres18_data`, port 5434, official image mount `/var/lib/postgresql`. Private uploads live under `artifacts/demo18/var/private-attachments`; preserve them with this database. The original 17 project `scrawl-p4-demo`, port 5433 and volume `scrawl-p4-demo_demo_postgres_data` remain untouched. Manage that old database only with its unchanged root `.env.demo`, original project and `compose.demo.postgres17.yaml`. Never use the current fixture reset on retained data or mount a 17 volume into the 18 image.
 
-| Step | Action | Asserted evidence |
-| --- | --- | --- |
-| 1 | Explicitly migrate/provision a fresh disposable database; sign in each actor | Real sessions and identities; anonymous product access denied |
-| 2 | Administrator creates space/grants membership | Outsider sees no space; reader cannot administer |
-| 3 | Editor creates the checklist | One document and revision 1; server ETag |
-| 4 | Two isolated editor clients read the same document | Matching representation and starting ETag |
-| 5 | Client A saves revision 2; client B submits the old tag | Success then 412; exactly one new revision; rejected write leaves head/history unchanged |
-| 6 | Submit a mutation without If-Match | 428; unchanged head/history |
-| 7 | Reader attempts edit/restore/archive/unarchive | 404; unchanged head/history |
-| 8 | Outsider guesses document/revision IDs and attempts a write | 404 without resource fields or ETag; anonymous requests 401; unchanged history |
-| 9 | Editor restores revision 1 | Revision 3 has a new ID and original content; intervening history preserved |
-| 10 | Reader exports native JSON; outsider and anonymous clients try export | Authorized snapshot matches selected content through the existing parser; denied exports; exact allowlisted keys and no secret/session values |
-| 11 | Editor archives; administrator unarchives | Only lifecycle lock versions advance; current content/history retained; default list excludes archived document |
-| 12 | Administrator revokes editor; both existing editor sessions request again | Read/write/history/export denied; original cookie unchanged and `/me` still works; history unchanged |
-| 13 | Sign out all authenticated clients | Subsequent `/me` requests return 401 |
+Publishing defaults off in normal configuration. It is explicitly `true` only in this synthetic demo's owner-only `.env.demo`. Global disabling pauses otherwise valid grants; unpublish/archive revoke approval. Re-enabling does not revive an approval invalidated by archive.
 
-The mandatory PostgreSQL suite separately preserves P2's actual overlapping-save race and forced failure between revision insertion and head advance. The runner demonstrates stale clients in sequence; it does not replace those transaction tests. P3 tests run the executable twice, verify persisted counts, inject a failed save and prove a nonzero exit with exactly one attempt, reject unsafe resets, explicitly reset/reseed, and run again.
+## Verify the actual running demo
 
-## Native export scope
+This opt-in authored acceptance runner uses fresh browser sessions against the actual persistent origin. It reads private credentials safely, checks native blocks/private image/search/history/export/mobile/reader/outsider, logs no passwords/cookies, and creates no document revisions or reset:
 
-`GET /api/v1/documents/{id}/export` returns the current authorized snapshot as an `application/json` attachment, including for an archived document. Readers, editors, and administrators with access can export. Outsiders receive 404 and anonymous callers 401. There is no revision selector or format query.
+```sh
+cd /home/dev/t3/projects/scrawl/artifacts/demo18
+node --import /home/dev/t3/projects/scrawl/node_modules/tsx/dist/loader.mjs \
+  /home/dev/t3/projects/scrawl/scripts/demo-verify.ts \
+  --origin https://agentvm.beardie-tone.ts.net:8447
+```
 
-The envelope contains `format: "scrawl-document"`, `exportVersion: 1`, minimal document/revision provenance, and `content` with `format: "blocknote-json"`, `schemaVersion: 1`, `editorVersion: "0.55.0"`, and the native blocks array. Provenance includes document/space/revision IDs, revision number/title, timestamps, and creator/author IDs. It excludes profiles, emails, roles, memberships, credentials, session data, and authentication records. Content is validated by the native BlockNote parser in the core operation and revalidated/matched by the runner.
-
-This is one current document snapshot, not complete revision history, bulk portability, import, or an instance backup. See [API contracts](api-design.md) for the exact field allowlists. The runner's export is revision 3, after restore, containing "Run tests before deploying.".
+It expects the original synthetic field-guide titles/content. It exits nonzero on an assertion failure. Screenshots are ignored under `artifacts/demo18/artifacts/running-evidence`, taken only after credentials are absent from the page. Full mutation/conflict/permission/publication tests use their own disposable database, as described in validation.
 
 ## Run Demo B
 
-Use the same explicitly designated disposable database as Demo A. From a fresh checkout, install and build before starting any fixture command:
+Do not repeat init/setup/reset on the running demo. For a new local fixture workspace, use a new private working directory and free configured ports. These example commands use `artifacts/demo18` and assume it does not already exist:
 
 ```sh
+cd /home/dev/t3/projects/scrawl
 npm ci
 npm run check
-npm run demo:init
-docker compose --env-file .env.demo -f compose.demo.yaml up -d --wait postgres
-npm run demo:setup -- --database scrawl_demo_a
-npm run demo:serve
+mkdir -m 700 artifacts/demo18
+cd artifacts/demo18
+node --import /home/dev/t3/projects/scrawl/node_modules/tsx/dist/loader.mjs \
+  /home/dev/t3/projects/scrawl/scripts/demo-fixtures.ts init
+docker compose --env-file .env.demo -f /home/dev/t3/projects/scrawl/compose.demo.yaml up -d --wait postgres
+node --import /home/dev/t3/projects/scrawl/node_modules/tsx/dist/loader.mjs \
+  /home/dev/t3/projects/scrawl/scripts/demo-fixtures.ts setup --database scrawl_demo_a
+node --import /home/dev/t3/projects/scrawl/node_modules/tsx/dist/loader.mjs \
+  /home/dev/t3/projects/scrawl/scripts/demo-server.ts
 ```
 
-In a second terminal, seed the connected interface through real authenticated HTTP requests:
+In another terminal with that same private working directory, seed through the actual local HTTP API:
 
 ```sh
-npm run demo:b:seed -- --database scrawl_demo_a
-cat artifacts/demo/b-result.json
+cd /home/dev/t3/projects/scrawl/artifacts/demo18
+node --import /home/dev/t3/projects/scrawl/node_modules/tsx/dist/loader.mjs \
+  /home/dev/t3/projects/scrawl/scripts/demo-workspace.ts --database scrawl_demo_a
 ```
 
-Open `http://127.0.0.1:3100/`. The seed creates a fresh "Demo B handbook" space and a longer "Release checklist" with headings. Repetition adds a separate synthetic space/document without deleting earlier data. It grants editor and reader access, leaves the outsider without membership, and signs out its seed session. It never resets or retries writes. Initial setup is unnecessary when a valid existing fixture configuration and database are already provisioned. Reset remains the explicit stopped-server procedure above.
+Open `http://127.0.0.1:3100/`. Repeat seed verifies its owner-only manifest and existing documents, then changes nothing. It refuses an existing named space without a matching manifest and never retries creates or resets implicitly. Initialization refuses an existing private config, and setup refuses existing credentials/populated users. If using another working directory/project or port, keep database/API settings consistent and choose a separate Compose project explicitly.
 
-Open the owner-only `artifacts/demo/credentials.json` locally in your editor and enter the chosen fixture account's generated credentials in the login form. Do not print, commit, screenshot, or share that file. Use separate browser profiles for `editor@example.test`, `reader@example.test`, and `outsider@example.test` if comparing access side by side. The administrator account sees all spaces. Demo A creates additional separate spaces and revokes its own editor grants, so select "Demo B handbook" when following this UI walkthrough.
+For same-origin Vite development, stop the normal server and run the absolute `scripts/demo-dev.ts` from the fixture directory. It starts API and Vite together, proxies the browser's exact origin/cookies, and shuts both down with Ctrl-C. No wildcard CORS or authentication bypass is introduced. `--port 5175` selects a frontend port. Fixture/Demo A tools require the normal local API origin, so stop Vite and start normal `demo-server.ts` for them. For private HTTPS, use the existing authorized Serve origin with the explicit server-only `--origin` override, never Funnel.
 
-### Same-origin development
+## Run Demo A
 
-Stop `demo:serve` first, then run:
+Use the normal local-origin server from the disposable fixture directory, not the private HTTPS-origin service. To run it against the current synthetic demo, stop the user service explicitly, start the same `demo-server.ts` without `--origin` in one terminal, and run the following in another. Stop that local server and restart the user service afterward:
 
 ```sh
-npm run demo:dev
+cd /home/dev/t3/projects/scrawl/artifacts/demo18
+node --import /home/dev/t3/projects/scrawl/node_modules/tsx/dist/loader.mjs \
+  /home/dev/t3/projects/scrawl/scripts/demo-a.ts
+node --import /home/dev/t3/projects/scrawl/node_modules/tsx/dist/loader.mjs \
+  /home/dev/t3/projects/scrawl/scripts/demo-a.ts
 ```
 
-Open `http://127.0.0.1:5173/`. This starts the API on the configured loopback port and Vite on 5173, proxies API/health/OpenAPI on the browser origin, and configures the API to accept exactly that development origin. `npm run demo:dev -- --port 5175` changes only the frontend port. Ctrl-C stops both processes. Fixture setup/reset/seed and Demo A continue to require the normal `demo:serve` origin, so stop the development server and start `demo:serve` for those commands. No permissive CORS or authentication bypass is used.
+Each successful run creates a separate synthetic "Demo Handbook" space with a checklist and three immutable revisions. It asserts real sessions, missing-precondition 428, stale-write 412, unchanged rejected history, reader/outsider denial, restore append, archive/unarchive, native export and revocation of two existing editor sessions. It signs out all five session jars after success. Repeating preserves earlier spaces/documents/accounts. It never retries creates or failed saves, and fails nonzero. The complete PostgreSQL suite separately proves the actual overlapping-write race and mid-write rollback.
 
-For a normal non-demo database, build with `npm run check`, migrate with `npm run db:migrate`, then run `npm start` with your existing private configuration. A missing frontend build leaves the backend-only workflows available; a present invalid build fails startup. Unknown API routes retain problem responses rather than becoming HTML.
-
-### Retained P4 review workspace
-
-The current private app is [Scrawl on Tailscale](https://agentvm.beardie-tone.ts.net:8447/). Its synthetic accounts/configuration and database on 5433 are already provisioned; do not repeat init/setup unless performing the explicit stopped-server reset. The approved static prototype remains on the separate 8446 route. This retained database uses the task-specific Compose project `scrawl-p4-demo`, so inspect/manage that project explicitly:
+Inspect the latest owner-only export/result locally:
 
 ```sh
-COMPOSE_PROJECT_NAME=scrawl-p4-demo docker compose --env-file .env.demo -f compose.demo.yaml ps
+cd /home/dev/t3/projects/scrawl/artifacts/demo18
+node --input-type=module -e 'import {readFile} from "node:fs/promises"; const x=JSON.parse(await readFile("artifacts/demo/export.json","utf8")); console.log(JSON.stringify({format:x.format,exportVersion:x.exportVersion,document:x.document,revision:x.revision,content:x.content},null,2))'
 ```
 
-Use the same project prefix for `up`/`down` when managing this retained database. Fresh setups above use Compose's normal `scrawl-demo-a` project name. Do not start a second project on the occupied port or remove the private file while retaining its database volume.
+Native export contains `scrawl-document`, export version 1, minimal document/revision provenance, and `blocknote-json`, schema version 1, editor version 0.55.0, with native blocks. No credentials, profiles, memberships or session records are included. This is a current single-document snapshot, not history backup/import. PDF/DOCX endpoints export the current saved snapshot or explicit selected revision and preserve authorization; external images or unsupported colors return explicit errors rather than fetch/flatten them.
 
-### Private Tailscale preview
+## Explicit fixture reset
 
-Build first. Stop the development or normal demo server, then use an existing private Tailscale node and an unused HTTPS Serve port:
+Only the designated development `scrawl_demo_a` with a matching disposable marker may be reset. Stop its server first and inspect the target. Reset consumes the owner-only `.env.demo`, never arbitrary ambient `DATABASE_URL`, checks the actual connected database/user, refuses production/remote/mismatched targets and unexpected public tables, and requires the exact confirmation:
 
 ```sh
-npm run demo:serve -- --origin https://<node>.<tailnet>.ts.net:8447
+cd /home/dev/t3/projects/scrawl/artifacts/demo18
+node --import /home/dev/t3/projects/scrawl/node_modules/tsx/dist/loader.mjs \
+  /home/dev/t3/projects/scrawl/scripts/demo-fixtures.ts reset --database scrawl_demo_a
+node --import /home/dev/t3/projects/scrawl/node_modules/tsx/dist/loader.mjs \
+  /home/dev/t3/projects/scrawl/scripts/demo-fixtures.ts setup --database scrawl_demo_a
 ```
 
-In another terminal:
+Reset removes synthetic rows and the credential/workspace/result/export manifests, preserves migrations/private config, and provisions nothing automatically. The next explicit setup creates new account IDs/passwords. It does not wipe private byte storage; inaccessible orphan files require later explicit inspection/cleanup. Never run this procedure on retained real content or an unrelated database. Avoid `down -v` on retained projects.
 
-```sh
-tailscale serve --bg --https=8447 http://127.0.0.1:3100
-tailscale serve status
-```
+## Resume implementation
 
-Open that exact HTTPS origin from a device on the tailnet. This explicit server-only override keeps the guarded local database configuration unchanged and enables Secure cookies. Do not enable Funnel. The prototype's existing separate preview can stay intact. Stop only this task's route with `tailscale serve --https=8447 off` when no longer needed. The built footer provides the AGPL license, third-party notices, and actual build source without exposing private environments or fixture credentials. A public deployment/source-delivery review is still outside P4.
-
-### Connected workflows
-
-1. Log in as editor, select the handbook, read the checklist, and follow an "On this page" heading link. Edit a heading and see the outline follow the actual content. On narrow screens use Navigation to open the space/document drawer; the outline collapses above the document.
-2. Create a document with New document, edit its title/body, and press Save. Reload to verify persisted content. The Tiptap toolbar supports the existing text styles, bold, italic, inline code, lists, and links. Undo/Redo use editor history and remain available after Save; keyboard shortcuts are Ctrl/Cmd+Z and Ctrl/Cmd+Shift+Z. Title input uses native browser editing. Save stays disabled while unchanged or invalid. There is no autosave.
-3. Open History, select an earlier revision, and restore it. Restore appends a new revision. Unsaved changes require explicit discard; Keep editing returns to the complete local draft.
-4. Open Document actions to archive, unarchive, or Export JSON. Show archived includes archived documents in the list. Archive/unarchive preserves history and advances only the lifecycle lock version. Archived content is read-only.
-5. Inspect the downloaded `scrawl-document-<id>.json` in a text editor, or run `cat /path/to/download.json`. It contains the current saved native snapshot and minimal provenance, not unsaved edits or authentication/session records. Export remains permission-checked and is not a full backup/import system.
-6. Open the same document in two tabs. Edit both title and body in the second tab, save the first, then save the second. The 412 panel keeps the full local draft and displays the latest saved version separately. Use my changes deliberately adopts that version as the comparison base without writing; review and press Save yourself. Use server version requires confirmation before discarding a dirty draft. No stale write is retried automatically.
-7. Navigate with a dirty draft and choose Keep editing. A reload/close uses the browser's unsaved-change warning. Temporary save failures retain an editable draft with failure feedback. Session expiry or lost access clears space/document navigation and server actions, retains dirty work read-only in the tab, and says that nothing was saved. Re-login as the draft's account rechecks access and requires reconciliation for an existing document. Copy the retained draft before closing if access remains unavailable.
-8. Log in as reader: read, history, and authorized export are available; mutations are denied by the API as well as absent from the controls. Log in as outsider: no private titles, content, history, or versions appear. The live app has no search UI or simulated results; fixture search remains only in the approved disconnected prototype.
-
-Private drafts live only in memory. No localStorage, IndexedDB, service worker, persisted query cache, or background refresh stores/replaces private content. Concurrent changes are discovered on explicit operations, not a collaboration channel.
-
-BlockNote supplies the editing controls. Select text for the floating formatting toolbar, use `/` for the slash menu, and use the block handle for block actions. Standard checklists, nested/toggle blocks, tables, code, links and seven text styles retain native content through save, reload, history and export. Links use the supplied Create/Edit link form. Use Ctrl/Cmd+Z and the platform redo shortcut for native undo/redo, including after an explicit save. Unsafe or oversized local edits stay in the tab with Save disabled until corrected or discarded. Native toggle expansion booleans may be stored locally; private document titles/bodies are not persisted in browser storage.
-
-Discard changes beside Save opens the same confirmation as dirty navigation. Keep editing preserves the complete draft. Confirming resets both title and body to this tab's baseline and clears local editor undo history, without an API write, new revision, or ETag change. A new document returns to "Untitled document" with an empty paragraph and remains uncreated until Save. After a 412, discard restores the old local baseline while retaining the latest-server comparison and conflict. Choose Use my changes or Use server version deliberately before another save; discard never silently adopts a newer ETag.
-
-### Browser acceptance commands
-
-The browser suite uses the ordinary `.env` PostgreSQL connection as a local database administrator, creates its own freshly migrated `scrawl_demo_a`, invokes the guarded fixture commands, and runs the real built server on a free loopback port. It refuses an existing `scrawl_demo_a` on that server and drops only its own database. It does not touch the separate retained demo database on port 5433. Run database and browser suites sequentially:
-
-```sh
-npm run check
-PLAYWRIGHT_SKIP_BROWSER_GC=1 npx playwright install --with-deps chromium
-NODE_ENV=test npm run test:db
-npm run test:browser
-```
-
-The browser suite has no automatic retries. Authentication pacing follows the unchanged pinned library's rate limits. Failure screenshots, traces, and videos are disabled to avoid credential artifacts; the application clears its password field at submit. Manually captured review screenshots contain only synthetic document content. Browser tests cover real sessions, protected writes, persisted editor round trips, toolbar/link commands, undo/redo across saves, confirmed local discard, unsupported paste, history/restore, lifecycle/export, reader/outsider policy, two-tab reconciliation, dirty navigation, failed saves, session expiry, actual membership revocation, loading/error/empty states, keyboard operation, and the heading outline. They also execute Demo A against the same running API. P2 rollback/concurrency coverage remains in `test:db`.
-
-Observed results and [current editor screenshots](../VALIDATION.md#actual-checks-and-review-evidence) are recorded in validation. P4 stops for review; publishing and real search remain unimplemented.
-
-## Demo C — selective public publishing
-
-Enable publishing explicitly. Administrator previews and publishes revision 2. Use a completely separate unauthenticated browser/cookie jar to read the public view. Internally save revision 3 containing the private marker and a different title; the public page must still show revision 2's title/body.
-
-Try changing public URLs to access private revision IDs, parent metadata, history and unrelated pages. All must fail or omit that material. Ordinary editors/readers cannot publish. Unpublish and issue a new anonymous request: not found. Re-publish explicitly, archive, then unarchive: anonymous access stays denied until another explicit publish action.
-
-Turn global publishing off: private documentation still works and public access stops. Re-enabling resumes still-active grants only; it does not undo per-document revocation/archive invalidation. Display source/license information for the actual running build before sharing this demo remotely.
-
-## Later acceptance additions
-
-P6: searching `INTERNAL-DEMO-NOTE-7391` as an outsider returns nothing; archived pages disappear; same-space hierarchy cycle tests pass.
-
-P7: publish a revision containing image A, then privately add B. Public readers can retrieve only A through the active publication. After unpublish, new file requests fail. Images retained in history remain available to authorized internal readers.
-
-P8/P9: export/import into another empty database with fresh IDs/private grants; back up and restore database plus file bytes into a blank instance; migrate from the previous schema. Record commands, artifact sizes/checksums, and outcomes without publishing credentials.
+Read status, validation, the five integration issues and accepted ADRs. Continue on `integration/blocknote-demo` and keep draft PR #6 unmerged. The next substantial work is isolated durable collaboration/comments under [ADR 0003](adr/0003-collaboration-checkpoints.md), with real storage/permission/reconnect/undo gates before enabling it. No paid AI calls, new provider accounts or generic extension framework are needed. Keep the existing demo runnable and preserve its history/private files.

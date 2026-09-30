@@ -1,6 +1,6 @@
-# Initial schema brief — relational invariants before ORM syntax
+# Core schema and relational invariants
 
-P1 identity/access and P2 documents/revisions are implemented in [schema.prisma](../prisma/schema.prisma) with Prisma 7.10.0 and one reviewed migration history. Sections for P5 onward remain implementation briefs, not implemented models.
+Identity/access, native documents/revisions, private attachments, derived search and selected-revision publication are implemented on the integration branch in [schema.prisma](../prisma/schema.prisma), with Prisma 7.10.0 and one reviewed migration history. Document hierarchies and collaboration remain proposals.
 
 ## P1: identity and access
 
@@ -16,7 +16,7 @@ Use text-compatible foreign keys for auth user IDs rather than assuming the libr
 
 ## P2: document identity and snapshots
 
-`Document`: stable ID, space ID, currentRevisionNumber, monotonic lockVersion, createdAt, createdBy, updatedAt, archivedAt (nullable), archivedBy (nullable).
+`Document`: stable ID, space ID, currentRevisionNumber, monotonic lockVersion, availabilityVersion, createdAt, createdBy, updatedAt, archivedAt (nullable), archivedBy (nullable).
 
 `DocumentRevision`: stable ID, document ID, revision number, title, content format, content schema version, producing editor version, body JSONB, derived plain text, author ID, timestamp, optional change note.
 
@@ -52,7 +52,7 @@ The BlockNote foundation supersedes P2's restricted body schema. Native content 
 - Native inline text/link content supports bold, italic, underline, strike, code, text color and background color. Native code marks are mutually exclusive with other marks/links; the validator refuses an unrepresentable combination rather than stripping it.
 - Tables retain structured cells, text/styles, spans, header rows/columns, colors and widths. Invalid geometry is rejected before repair commands could rewrite cells.
 - The browser-safe parser checks shape, official property types/enums, IDs, styles, safe colors and resource limits before native canonicalization. A semantic comparison proves normalization did not drop text, styles, links, properties or table geometry. The backend also uses `ServerBlockNoteEditor` conversion, native `node.check()` and a loss-free native round trip. No asynchronous HTML conversion or global DOM mutation is used in saves.
-- Links accept absolute http/https/mailto without credentials, whitespace, controls, encoded controls or backslashes. Media accepts empty native placeholders or absolute http/https URLs. Private attachment references are introduced by the attachment packet. The server does not fetch external content URLs.
+- Links accept absolute http/https/mailto without credentials, whitespace, controls, encoded controls or backslashes. Media accepts empty native placeholders or absolute http/https URLs. Exact private attachment and publication-scoped attachment paths are accepted; private references are checked against the same document inside revision creation. The server does not fetch external content URLs.
 - Submitted and canonical envelopes remain bounded at 262144 UTF-8 bytes, depth 32 and 10000 counted blocks/inline runs/rows/cells. Aggregate scalar bytes are checked before large serialization. HTTP retains its separate request cap. Unsupported/malformed content is 400; byte/depth/node limits are 413.
 - Plain text includes nested blocks, code/newlines, table cells separated by tabs and rows by newlines, and media captions. It is derived state; native blocks remain authoritative.
 
@@ -64,21 +64,33 @@ Administrators and space editors may create/save/restore/archive/unarchive; read
 
 Archive/unarchive updates lifecycle fields and lockVersion without adding a revision. Repeating the current lifecycle state is a no-op with a required current ETag. Archived documents remain readable with history to authorized users, disappear from default listings, and reject save/restore with 409 until unarchived. `includeArchived=true` includes both active and archived documents. No hard delete, nesting, move, or publication state exists in P2.
 
-## P5: actual capability state
+## Selected-revision publishing, implemented on branch
 
-Add `Document.availabilityVersion` when publishing is introduced; archive increases it, unarchive never restores an earlier value.
+`Document.availabilityVersion` starts at 1. A successful archive transition increases it; unarchive never restores an earlier value. This generation is separate from both content revision number and mutation lock version.
 
 `Publication`: public ID, document ID (at most one current grant per document), revision number, approved availability version, active/revoked state, publisher/time, updatedAt. Constrain the revision reference to the same document. A small grant-state history is optional, not a prerequisite to the demo.
 
 Publish/unpublish also advance document lockVersion atomically through a core transaction operation. Public content never reads currentRevisionNumber as its published head. Global publishing disabled means deny all public reads; re-enabling resumes still-active grants unless the document was archived or explicitly unpublished. The UI must describe this switch as a pause, not permanent revocation.
 
-## P6–P8: add only with the feature
+An administrator explicitly chooses a revision ID. Core checks current authorization under the space-before-document locks, the document ETag, lifecycle and exact revision attachment references. Anonymous DTOs contain only the selected title, native content and publication time. Scoped public attachment requests join the active grant, availability generation and selected revision allowlist. Newer private attachments remain inaccessible. Archive invalidation applies even after unarchive. See [ADR 0002](adr/0002-integration-storage-and-publication.md).
 
-Nesting adds a same-space parent reference, cycle protection and explicit archive-with-children policy. Reject archive of a page with active children initially; no silent recursive hide/move. Cross-space moves are deferred.
+## Private attachments, implemented on branch
 
-Attachments add immutable document-owned metadata/storage keys and normalized revision-to-attachment references. This both supports historical retention and makes a publication allowlist precise. No reuse across documents in the initial model.
+`Attachment` has immutable document-owned metadata, detected media type, byte count, SHA-256, uploader and timestamp. Bytes live in an owner-only application directory, never a static uploads directory. `RevisionAttachment` records saved references; composite foreign keys bind both endpoints to the same document. Metadata/reference triggers prevent update/delete. Upload creates no content revision, and removing a current block retains historical bytes.
 
-PostgreSQL search derives its indexed text from current authorized nonarchived revisions. An index is rebuildable derived state, not authoritative content. Whole-instance backup and document export are distinct: content import remaps IDs, preserves attribution as safe metadata, assigns a destination space, and never escalates membership or restores public grants implicitly.
+Upload requires an active saved document and current editor access, rechecked under the same lock order. Limits are 10 MiB/file, 100 MiB/document including retained files, and 40 million total decoded image pixels. Allowed types are bounded; SVG, HTML and executables are rejected. Filename input is bounded and excludes path separators and controls. An ambiguous commit acknowledgement retains private bytes rather than deleting a possibly committed file. Crash orphans remain inaccessible until a future explicit cleanup operation.
+
+## Indexed search, implemented on branch
+
+Each revision has a stored generated weighted `tsvector`, title weight A and body weight B, using PostgreSQL's language-neutral `simple` dictionary and a GIN index. The migration backfills derived state without changing authored snapshots. Search selects only current, saved, non-archived heads, with current session validity, role and space grants inside the SQL statement before rank, excerpts or limit. It returns bounded plain-text excerpts, document/space IDs and saved titles, without counts or revision metadata.
+
+Queries are parameterized, 1-200 trimmed characters, with optional space filtering and 1-50 results (20 by default). Rebuilding uses `REINDEX INDEX CONCURRENTLY`; it does not rewrite immutable revisions. Browser results render excerpts as text and reject stale asynchronous responses.
+
+## Add only with the feature
+
+A document hierarchy adds a same-space parent reference, cycle protection and explicit archive-with-children policy. Reject archive of a page with active children initially; no silent recursive hide/move. Cross-space moves are deferred.
+
+Whole-instance backup and document export remain distinct. Future content import must remap IDs, preserve attribution as safe metadata, assign a destination space, and never escalate membership or restore public grants implicitly. No import or full backup system is implemented.
 
 ## Not in this schema
 
