@@ -5,16 +5,21 @@ import { readConfig, readIdentityConfig } from './config.js';
 import { createDatabase } from './db/client.js';
 import { buildApp } from './app.js';
 import { createCore } from './core/index.js';
+import { fileURLToPath } from 'node:url';
+import { frontendRootIfBuilt } from './http/frontend.js';
 
 async function main(): Promise<void> {
   // Only this composition root reads the environment.
   const config = readConfig(process.env);
   const identityConfig = readIdentityConfig(process.env, config);
+  const frontendRoot = await frontendRootIfBuilt(fileURLToPath(new URL('../web/dist/', import.meta.url)));
   const database = createDatabase(config, () => {
     console.error('An idle database connection failed');
   });
   const core = createCore(database.prisma, identityConfig);
-  const app = await buildApp({ config, core, checkDatabase: () => database.ping() });
+  const app = await buildApp({ config, core, checkDatabase: () => database.ping(),
+    ...(frontendRoot ? { frontendRoot } : {}),
+  });
   app.addHook('onClose', async () => database.close());
 
   let stopping = false;

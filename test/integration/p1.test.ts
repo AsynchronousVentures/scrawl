@@ -180,6 +180,7 @@ test('P1 identity and space acceptance against migrated PostgreSQL and real HTTP
     assert.equal(result.status, 201);
     assert.equal(result.data.createdBy, adminUser!.id);
     assert.equal(result.data.lockVersion, 1);
+    assert.equal(result.data.access, 'editor');
     spaceId = result.data.id;
     etag = String(result.headers.etag);
     privateSpaceId = (await admin.send('POST', '/api/v1/spaces', { name: 'Synthetic hidden space' })).data.id;
@@ -208,10 +209,18 @@ test('P1 identity and space acceptance against migrated PostgreSQL and real HTTP
   });
 
   await t.test('visibility is filtered before titles, pagination, versions, or existence are returned', async () => {
-    assert.equal((await reader.send('GET', `/api/v1/spaces/${spaceId}`)).status, 200);
-    assert.equal((await editor.send('GET', `/api/v1/spaces/${spaceId}`)).status, 200);
+    const readerSpace = await reader.send('GET', `/api/v1/spaces/${spaceId}`);
+    const editorSpace = await editor.send('GET', `/api/v1/spaces/${spaceId}`);
+    assert.equal(readerSpace.status, 200);
+    assert.equal(readerSpace.data.access, 'reader');
+    assert.equal(editorSpace.status, 200);
+    assert.equal(editorSpace.data.access, 'editor');
+    assert.equal((await admin.send('GET', `/api/v1/spaces/${spaceId}`)).data.access, 'editor');
+    assert(!('memberships' in readerSpace.data));
     const listing = await reader.send('GET', '/api/v1/spaces?limit=1');
     assert.deepEqual(listing.data.items.map((s: { id: string }) => s.id), [spaceId]);
+    assert.equal(listing.data.items[0].access, 'reader');
+    assert.equal((await editor.send('GET', '/api/v1/spaces')).data.items[0].access, 'editor');
     assert.equal(listing.data.nextCursor, null);
     assert.deepEqual((await outsider.send('GET', '/api/v1/spaces')).data, { items: [], nextCursor: null });
     for (const id of [spaceId, privateSpaceId, randomUUID()]) {
@@ -219,6 +228,7 @@ test('P1 identity and space acceptance against migrated PostgreSQL and real HTTP
       assert.equal(result.status, 404);
       assert.equal(result.data.code, 'NOT_FOUND');
       assert.equal(result.headers.etag, undefined);
+      assert(!('access' in result.data));
       assert(!result.body.includes('Synthetic'));
     }
     assert.equal((await reader.send('GET', `/api/v1/spaces/${privateSpaceId}`)).status, 404);
@@ -290,6 +300,7 @@ test('P1 identity and space acceptance against migrated PostgreSQL and real HTTP
       const winner = results.findIndex((r) => r.status === 200);
       const current = await database.prisma.spaceMembership.findUniqueOrThrow({ where: { spaceId_userId: { spaceId, userId: editorUser.id } } });
       assert.equal(current.role, winner === 0 ? 'reader' : 'editor');
+      assert.equal((await editor.send('GET', `/api/v1/spaces/${spaceId}`)).data.access, current.role);
       etag = String(results[winner]!.headers.etag);
     } finally {
       await lock.query('ROLLBACK');

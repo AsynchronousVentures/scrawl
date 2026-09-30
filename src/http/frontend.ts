@@ -1,0 +1,30 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Asynchronous Ventures and contributors
+
+import { stat } from 'node:fs/promises';
+import { join } from 'node:path';
+import staticFiles from '@fastify/static';
+import type { FastifyInstance } from 'fastify';
+
+/** Backend-only workflows work without a frontend build. A present build must be valid. */
+export async function frontendRootIfBuilt(root: string) {
+  try {
+    if (!(await stat(join(root, 'index.html'))).isFile()) throw new Error('Frontend build is invalid');
+    return root;
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return undefined;
+    throw error;
+  }
+}
+
+export async function registerFrontend(app: FastifyInstance, root: string) {
+  // Restrict static serving to generated assets. API errors never become an HTML shell.
+  await app.register(staticFiles, {
+    root: join(root, 'assets'), prefix: '/assets/', schemaHide: true,
+    cacheControl: false, index: false, dotfiles: 'deny',
+    setHeaders(reply) { reply.header('x-content-type-options', 'nosniff'); },
+  });
+  app.get('/', { schema: { hide: true } }, async (_request, reply) => {
+    return reply.header('x-content-type-options', 'nosniff').sendFile('index.html', root, { cacheControl: false });
+  });
+}

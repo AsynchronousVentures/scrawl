@@ -17,11 +17,12 @@ const userSchema = {
 } as const;
 const spaceSchema = {
   type: 'object', additionalProperties: false,
-  required: ['id', 'name', 'createdBy', 'createdAt', 'updatedAt', 'lockVersion'],
+  required: ['id', 'name', 'createdBy', 'createdAt', 'updatedAt', 'lockVersion', 'access'],
   properties: {
     id: { type: 'string', format: 'uuid' }, name: { type: 'string' }, createdBy: { type: 'string' },
     createdAt: { type: 'string', format: 'date-time' }, updatedAt: { type: 'string', format: 'date-time' },
     lockVersion: { type: 'integer', minimum: 1 },
+    access: { type: 'string', enum: ['reader', 'editor'], description: 'Current caller access; the server checks every operation.' },
   },
 } as const;
 const errors = { '4xx': problemSchema, '5xx': problemSchema };

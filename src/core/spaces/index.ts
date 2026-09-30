@@ -6,10 +6,11 @@ import type { PrismaClient, Prisma, Space } from '../../generated/prisma/client.
 import type { Identity, Principal } from '../identity/index.js';
 import { HttpProblem } from '../../http/problems.js';
 
-function spaceDto(space: Space) {
+function spaceDto(space: Space, access: 'reader' | 'editor') {
   return {
     id: space.id, name: space.name, createdBy: space.createdBy,
     createdAt: space.createdAt.toISOString(), updatedAt: space.updatedAt.toISOString(), lockVersion: space.lockVersion,
+    access,
   };
 }
 
@@ -43,7 +44,7 @@ export function createSpaces(prisma: PrismaClient, identity: Identity) {
       return prisma.$transaction(async (tx) => {
         const actor = await identity.actor(principal, tx);
         if (actor.role !== 'administrator') throw new HttpProblem(403, 'ACCESS_DENIED');
-        return spaceDto(await tx.space.create({ data: { id: randomUUID(), name: name.trim(), createdBy: actor.id } }));
+        return spaceDto(await tx.space.create({ data: { id: randomUUID(), name: name.trim(), createdBy: actor.id } }), 'editor');
       });
     },
     async list(headers: Headers, input: { limit?: number; cursor?: string } = {}) {
@@ -55,18 +56,21 @@ export function createSpaces(prisma: PrismaClient, identity: Identity) {
           ...(actor.role === 'administrator' ? {} : { memberships: { some: { userId: actor.id } } }),
           ...(input.cursor ? { id: { gt: input.cursor } } : {}),
         },
+        include: { memberships: { where: { userId: actor.id }, select: { role: true } } },
         orderBy: { id: 'asc' }, take: limit + 1,
       });
-      const items = spaces.slice(0, limit).map(spaceDto);
+      const items = spaces.slice(0, limit).map((space) => spaceDto(space,
+        actor.role === 'administrator' || space.memberships.some((membership) => membership.role === 'editor') ? 'editor' : 'reader'));
       return { items, nextCursor: spaces.length > limit ? items.at(-1)!.id : null };
     },
     async read(headers: Headers, id: string) {
       const actor = await identity.me(headers);
       const space = await prisma.space.findFirst({ where: {
         id, ...(actor.role === 'administrator' ? {} : { memberships: { some: { userId: actor.id } } }),
-      } });
+      }, include: { memberships: { where: { userId: actor.id }, select: { role: true } } } });
       if (!space) throw new HttpProblem(404, 'NOT_FOUND');
-      return spaceDto(space);
+      return spaceDto(space,
+        actor.role === 'administrator' || space.memberships.some((membership) => membership.role === 'editor') ? 'editor' : 'reader');
     },
     async changeMembership(headers: Headers, input: {
       spaceId: string; userId: string; role: 'reader' | 'editor' | null; expectedEtag: string | undefined;
@@ -99,7 +103,7 @@ export function createSpaces(prisma: PrismaClient, identity: Identity) {
           data: { lockVersion: { increment: 1 } },
         });
         if (updated.count !== 1) throw new HttpProblem(412, 'PRECONDITION_FAILED');
-        return spaceDto(await tx.space.findUniqueOrThrow({ where: { id: space.id } }));
+        return spaceDto(await tx.space.findUniqueOrThrow({ where: { id: space.id } }), 'editor');
       });
     },
   };

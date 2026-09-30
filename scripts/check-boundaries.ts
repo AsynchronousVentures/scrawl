@@ -5,8 +5,8 @@ import { glob, readFile } from 'node:fs/promises';
 import { dirname, normalize } from 'node:path';
 
 const violations: string[] = [];
-for await (const file of glob('src/**/*.ts', { exclude: ['src/generated/**'] })) {
-  const imports = [...(await readFile(file, 'utf8')).matchAll(/\bfrom\s+['"]([^'"]+)['"]/g)];
+for await (const file of glob(['src/**/*.ts', 'web/src/**/*.{ts,tsx}'], { exclude: ['src/generated/**'] })) {
+  const imports = [...(await readFile(file, 'utf8')).matchAll(/\b(?:from\s+|import\s*\(\s*|import\s+|require\s*\(\s*)['"]([^'"]+)['"]/g)];
   for (const match of imports) {
     const imported = match[1]!;
     const target = normalize(`${dirname(file)}/${imported}`);
@@ -25,9 +25,19 @@ for await (const file of glob('src/**/*.ts', { exclude: ['src/generated/**'] }))
       && target !== 'src/core/spaces/index.js') {
       violations.push(`${file}: documents must use the space module's exported operations`);
     }
-    if (file === 'src/core/documents/content.ts' && (imported.startsWith('node:')
-      || target.startsWith('src/db/') || target.startsWith('src/generated/') || target.startsWith('src/http/'))) {
+    if (file.startsWith('src/shared/') && (imported.startsWith('node:')
+      || imported.startsWith('@prisma/') || imported === 'prisma' || imported === 'pg' || imported === 'fastify'
+      || (imported.startsWith('.') && !target.startsWith('src/shared/'))
+      || target.startsWith('src/db/') || target.startsWith('src/generated/') || target.startsWith('src/http/')
+      || target.startsWith('src/core/') || target.startsWith('src/modules/'))) {
       violations.push(`${file}: shared content validation cannot import server dependencies`);
+    }
+    if (file.startsWith('web/src/') && (imported.startsWith('node:')
+      || imported.startsWith('@prisma/') || imported === 'prisma' || imported === 'pg' || imported === 'fastify'
+      || imported.startsWith('src/') || imported.startsWith('/')
+      || (imported.startsWith('@scrawl/') && imported !== '@scrawl/content')
+      || (imported.startsWith('.') && !target.startsWith('web/')))) {
+      violations.push(`${file}: frontend imports must use browser packages, web files, or the public content contract`);
     }
   }
 }

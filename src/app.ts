@@ -10,16 +10,18 @@ import { registerSystemRoutes } from './modules/system/routes.js';
 import { registerAuthRoutes, registerCoreRoutes } from './http/core-routes.js';
 import type { Core } from './core/index.js';
 import { registerDocumentRoutes } from './http/document-routes.js';
+import { registerFrontend } from './http/frontend.js';
 
 type BuildOptions = {
   config: AppConfig;
   checkDatabase: () => Promise<void>;
   logging?: boolean;
   core?: Core;
+  frontendRoot?: string;
 };
 
 /** Builds the HTTP application without opening a port or connecting a database. */
-export async function buildApp({ config, checkDatabase, logging = true, core }: BuildOptions) {
+export async function buildApp({ config, checkDatabase, logging = true, core, frontendRoot }: BuildOptions) {
   const app = Fastify({
     logger: logging ? {
       level: config.logLevel,
@@ -82,6 +84,7 @@ export async function buildApp({ config, checkDatabase, logging = true, core }: 
   if (config.apiDocsEnabled) {
     app.get('/openapi.json', { schema: { hide: true } }, async () => app.swagger());
   }
+  if (frontendRoot) await registerFrontend(app, frontendRoot);
 
   return app;
 }

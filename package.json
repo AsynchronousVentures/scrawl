@@ -15,7 +15,7 @@
     "test": "node --import tsx --test test/*.test.ts",
     "test:db": "node --env-file-if-exists=.env --import tsx --test test/integration/*.test.ts",
     "openapi:export": "node --import tsx scripts/export-openapi.ts",
-    "check": "npm run check:boundaries && npm run typecheck && npm test && npm run build",
+    "check": "npm run check:boundaries && npm run typecheck && npm run web:typecheck && npm test && npm run build && npm run web:build && npm run web:generate:check",
     "db:generate": "node --env-file-if-exists=.env node_modules/prisma/build/index.js generate",
     "db:migrate": "node --env-file-if-exists=.env node_modules/prisma/build/index.js migrate deploy",
     "operator": "node --env-file-if-exists=.env --import tsx scripts/operator.ts",
@@ -25,9 +25,18 @@
     "demo:setup": "node --import tsx scripts/demo-fixtures.ts setup",
     "demo:reset": "node --import tsx scripts/demo-fixtures.ts reset",
     "demo:serve": "node --import tsx scripts/demo-server.ts",
-    "demo:a": "node --import tsx scripts/demo-a.ts"
+    "demo:a": "node --import tsx scripts/demo-a.ts",
+    "demo:b:seed": "node --import tsx scripts/demo-b.ts",
+    "web:generate": "npm run openapi:export && openapi-typescript artifacts/openapi.json -o web/src/api/schema.d.ts --alphabetize",
+    "web:generate:check": "npm run openapi:export && openapi-typescript artifacts/openapi.json -o web/src/api/schema.d.ts --alphabetize --check",
+    "web:dev": "npm run dev --workspace web",
+    "web:build": "npm run build --workspace web && node --import tsx scripts/build-web-source.ts",
+    "web:typecheck": "npm run typecheck --workspace web",
+    "test:browser": "node --env-file-if-exists=.env node_modules/@playwright/test/cli.js test",
+    "demo:dev": "node --import tsx scripts/demo-dev.ts"
   },
   "dependencies": {
+    "@fastify/static": "10.1.5",
     "@fastify/swagger": "9.9.0",
     "@prisma/adapter-pg": "7.10.0",
     "@prisma/client": "7.10.0",
@@ -37,8 +46,10 @@
     "prosemirror-model": "1.25.12"
   },
   "devDependencies": {
+    "@playwright/test": "1.63.0",
     "@types/node": "24.19.0",
     "@types/pg": "8.23.1",
+    "openapi-typescript": "7.13.0",
     "prisma": "7.10.0",
     "tsx": "4.23.15",
     "typescript": "5.9.3"
@@ -51,5 +62,8 @@
     "prisma": {
       "mysql2": "3.24.5"
     }
-  }
+  },
+  "workspaces": [
+    "web"
+  ]
 }

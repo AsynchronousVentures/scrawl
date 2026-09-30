@@ -1,6 +1,85 @@
 # Validation
 
-## P3, verified locally on 2026-09-30
+## P4, verified locally on 2026-09-30
+
+P4 is complete locally on P3 baseline `76da4c0`. Node.js `v24.20.0`, npm `10.9.9`, PostgreSQL `17.11`, and Playwright Chromium were used. No push, hosted CI, deployment, public exposure, or next packet ran. P0-P3 historical evidence follows this section.
+
+### Implementation and migration effects
+
+The real React/Vite app follows the approved charcoal/sage prototype: space/document navigation, a central document, explicit primary Save, accessible History, a document menu for lifecycle/export, and a heading-derived outline. Narrow screens use a navigation drawer and collapsed outline. The disconnected prototype at `artifacts/design-p4/scrawl-demo-b-prototype.html` is preserved separately; live code has no fixture selectors, simulation labels, or search results/control. Search remains unimplemented.
+
+The typed `openapi-fetch` product client uses checked-in types generated from the implemented OpenAPI. The three restricted authentication endpoints retain their existing library semantics; the app uses real sign-in/sign-out and `/me`, with same-origin HttpOnly sessions. Vite development preserves the browser Origin/cookies through its proxy. The built frontend is served only at `/` and `/assets/` on the application origin; unknown API paths remain JSON problem responses. Static assets retain no-store, nosniff, and server request IDs and are excluded from OpenAPI.
+
+The one API adjustment is additive `access: "reader" | "editor"` on authorized space DTOs, derived in core for the current caller. Administrators receive effective editor access. It enables honest read-only controls without probing write endpoints; every server operation remains authoritative. P1 tests assert reader/editor/admin access, changed membership roles, hidden-resource denial, and no leaked memberships. There are still 14 implemented OpenAPI paths and 18 operations.
+
+The unchanged P2 parser/schema is relocated byte-for-byte to `src/shared/content.ts`, with a compatibility re-export from core. Browser DOM representations add no persisted nodes, marks, or attributes. Native round-trip tests cover every accepted feature, including ordered-list start values, code language, heading levels, hard breaks, and link marks. Unsupported HTML/file paste is rejected before the editor can silently discard it; the parser enforces the same URLs, bytes, depth, and node limits on edits and saves. Heading navigation uses native ProseMirror decorations for IDs/focus targets, keeping presentation metadata out of stored content.
+
+No Prisma model, migration, content-schema version, auth baseline, or transaction/lock order changed. All 256 pre-existing resolved lock entries retain their versions and integrity values. Better Auth 1.7.6, Prisma 7.10.0, Fastify 5.12.5, pg 8.23.0, and ProseMirror model 1.25.12 remain pinned. New exact dependencies are limited to frontend/editor/dialog/client/build/browser tooling and `@fastify/static` for the built app. Existing instances run normal `npm ci`, `npm run db:migrate`, and `npm run check`; migrate deploy retains the existing two-migration history with no P4 data transformation.
+
+The build includes the AGPL license, browser-bundle third-party notices, and a source archive made from the actual checkout. Its explicit inventory excludes private environments, credentials, artifacts, dependencies, generated clients, and builds. The source download is available in the footer before private network review. [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) records the inspected 39-package browser module graph and injected bundler-helper notices. Full release packaging remains P9; one upstream notice correspondence limitation is recorded below.
+
+### Observed checks
+
+| Command/check | Result |
+| --- | --- |
+| `npm ci` | Exit 0; frozen install, Prisma client generation, zero audit advisories |
+| Baseline lock comparison against `76da4c0` | All 256 existing resolved versions/integrities unchanged; no missing baseline entries |
+| `npm run check` | Exit 0; import boundaries, both strict TypeScript projects, 58 unit/config/HTTP/CLI tests, backend/frontend builds, and generated API type drift check |
+| `NODE_ENV=test npm run test:db` | Exit 0; 48 reported PostgreSQL tests, 0 skipped; P0-P3 auth/bootstrap/recovery/migration/rollback/concurrency/export/reset coverage preserved |
+| `npm run test:browser` | Exit 0; all 19 real-API/PostgreSQL Chromium scenarios passed, 0 retries, including Demo A |
+| Focused final-build native/outline/mobile/recovery browser run | Exit 0; 4/4 passed before the final full run |
+| Opt-in synthetic screenshot rerun and final history usability check | Exit 0; 5/5 evidence cases, then 1/1 history/restore/lifecycle/export after placing Restore above the long snapshot |
+| Guarded `demo:dev` runtime probe | Real same-origin proxy login/session/create/logout passed; foreign Origin and cross-site writes denied; API 404 remained JSON; both child processes stopped |
+| Fresh `demo:init`, Compose project `scrawl-p4-demo` on 5433, explicit setup, `demo:b:seed` and `demo:a` | Passed; two existing migrations applied, four generated accounts, heading-rich UI fixture through real HTTP, Demo A 327 assertions |
+| Stopped-server explicit reset/setup, then seed and Demo A again | Passed; migration history retained, new generated accounts, fresh UI fixture, Demo A 327 assertions |
+| Actual private Tailscale HTTPS preview | Real session `/me` 200, Secure/HttpOnly cookie, foreign-Origin product/auth and cross-site product writes 403; private Serve only |
+| Collaborative-preview outline inspection | Actual heading list matched content; activation focused "Archive and export" and scrolled to it; no JS-visible auth cookies, localStorage entries, or desktop overflow |
+| `npm audit` / `npm ls --depth=0` | Exit 0; zero advisories, exact pins installed |
+| Source archive inventory | 91 source files at the inspected build, required license/notices present, zero private/generated/dependency/artifact paths |
+
+The P3 and browser suites reserve the named `scrawl_demo_a` on ordinary PostgreSQL and refuse existing data. They ran sequentially on the task-owned server at 5432 and dropped only databases/schemas they created. The retained manual demo uses a different server at 5433. Do not run `test:db` and `test:browser` simultaneously against one PostgreSQL server, or alongside an independently retained database with the reserved name on that server. Install/build first; do not reinstall dependencies during fixture/server commands.
+
+### Browser acceptance and corrections
+
+The 19 cases use actual authenticated browser contexts and the built app against a freshly migrated disposable database. They assert login/logout and origin/cookie protections; create/edit/explicit save/reload; full supported native editor round trips; rejected unsupported paste without fetching remote assets; restore-as-new with preserved history; archive/unarchive and parser-matched native downloads; reader server denials; outsider isolation; two-tab stale-save behavior; dirty space/document/reload warnings; injected temporary save failure; actual session expiry; a new unsaved draft surviving expiry/re-login; mismatched space/document isolation; actual administrator membership revocation; loading/retry/empty states; keyboard/mobile navigation; executable Demo A; wrong-account/read-failure draft recovery; and live heading scroll/focus/update.
+
+On 412, the complete local title/native body stays intact and the latest server snapshot appears separately. No second PATCH occurs automatically. Use my changes deliberately changes the comparison base without writing, then the user explicitly saves. Use server version requires discard confirmation; Keep editing preserves the draft. A temporary failure retains editable work without claiming success. Expiry/revocation clears server navigation/actions and retains dirty work read-only in memory. Owner re-login rechecks space/document access; a different account cannot adopt or save the draft. Existing documents require explicit reconciliation even after read-recovery Retry. No persistent private-content cache or background replacement is used.
+
+Review/testing found and fixed genuine UI defects: expired unsaved new documents needed independent space/owner tracking; mismatched query space/document pairs could show wrong controls; read-recovery Retry could discard dirty work; late space-list responses could repopulate navigation after logout; archive-filter reads could arrive out of order; and direct heading DOM attributes were removed by ProseMirror. Heading decorations fixed the observed outline keyboard failure. Auth test pacing was corrected to follow the pinned library's inactivity-based limiter, without relaxing server limits, retrying writes, or weakening assertions. Selector/text-normalization fixes were test-harness corrections.
+
+### Exact commands, screenshots, and remaining limits
+
+[The walkthrough](docs/demo-walkthrough.md#run-demo-b) contains exact fresh setup, seed, built app, development proxy, private Tailscale, reset, export-inspection, and browser commands. Minimal local verification is:
+
+```sh
+npm ci
+npm run check
+NODE_ENV=test npm run test:db
+PLAYWRIGHT_SKIP_BROWSER_GC=1 npx playwright install --with-deps chromium
+npm run test:browser
+```
+
+Browser screenshots are captured only at asserted synthetic application states with `SCRAWL_BROWSER_EVIDENCE=1`. Failure screenshots/traces/videos stay disabled; evidence capture refuses populated password inputs. Actual running-application captures, inspected for synthetic content and no credentials/session data:
+
+- [Editing and heading outline](https://uwvqig7mu5.ufs.sh/f/tJOw1mn9psOEu77ytU3BENg7VJrQhHPY3inoRKcTZytmM2sl)
+- [Two-tab conflict with complete retained draft](https://uwvqig7mu5.ufs.sh/f/tJOw1mn9psOE9uvKe6Ha3mMo6IegLYGHK7XhZJ5lr2PDBUjW)
+- [History with restore above the snapshot](https://uwvqig7mu5.ufs.sh/f/tJOw1mn9psOEP2lYuoSVJw37gOsa4me9KNb8ldovCRxzMuZD)
+- [Lost access with retained local draft](https://uwvqig7mu5.ufs.sh/f/tJOw1mn9psOE6BXEQDmBtHDGsz3Ll8CM1XJypa9AQ2TIbFxi)
+- [Narrow-screen navigation and collapsed outline](https://uwvqig7mu5.ufs.sh/f/tJOw1mn9psOEON9x0Uyx2WwrmlSBoDzp4gydj8FEY1CtJZaf)
+
+Exact evidence command, after the ordinary PostgreSQL server is available:
+
+```sh
+SCRAWL_BROWSER_EVIDENCE=1 npm run test:browser -- --grep 'history restore|two tabs preserve|membership revocation|mobile navigation|the outline follows'
+```
+
+Local PNGs remain ignored in `artifacts/browser-evidence/`. Interactive T3 navigation/DOM inspection worked, but its active web client's screenshot operation failed repeatedly; the authored browser acceptance tests capture actual running-app evidence instead of substituting another interactive browser.
+
+No local P4 blocker remains. Hosted CI, Firefox/WebKit, native mobile browsers, screen-reader testing, production TLS/proxy/deployment, workload/scalability, backup/import/release remain unverified. Only essential mobile layout/keyboard behavior was exercised. Acceptance runs the built frontend; development proxy authentication/writes were probed, but HMR updates were not exercised. The Vite build reports a nonblocking 500 kB chunk warning (about 527 kB minified, 162 kB gzip); no speculative splitting/framework was added. One MIT package, `react-remove-scroll-bar@2.3.8`, omits its license file and has an unavailable recorded source commit; the official upstream notice is included, with exact-commit correspondence unverified. The P1 recovery/rate-limit limits and P3 Linux loopback/repetition limits remain. Private Tailscale HTTPS was tested; this is not a production-operation claim.
+
+The guarded manual demo database/private credentials and [connected private preview](https://agentvm.beardie-tone.ts.net:8447/) are retained for local P4 review. The task-owned ordinary PostgreSQL container/network/volume was removed after checks. The approved static prototype and its separate private route remain intact. Browser/integration scratch databases, injected objects, fixture credentials, and directories are removed by their harnesses. The one-use private screenshot sign-in helper used actual library authentication with locally read credentials, forwarded only HttpOnly cookies, and was removed immediately; no auth bypass or helper is part of the application. Screenshots and safe synthetic exports remain ignored review artifacts. Stop at P4 review. No publishing, uploads, search, nesting, autosave, collaboration, SSO, AI, admin console, or next packet was added.
+
+## P3 baseline, historical results
 
 P3 is complete locally on P2 baseline `457784e`. Node.js `v24.20.0`, npm `10.9.9`, and real PostgreSQL `17.11` were used. No hosted CI, push, or deployment ran. P0-P2 historical results follow this section.
 
