@@ -26,7 +26,7 @@ test('P1 identity and space acceptance against migrated PostgreSQL and real HTTP
   const schema = 'scrawl_test_' + randomUUID().replaceAll('-', '');
   await adminDatabase.pool.query(`CREATE SCHEMA "${schema}"`);
   url.searchParams.set('schema', schema);
-  const config = { ...baseConfig, databaseUrl: url.href };
+  const config = { ...baseConfig, apiDocsEnabled: true, databaseUrl: url.href };
   const database = createDatabase(config, () => {});
   const identityConfig = { origin: 'http://127.0.0.1:3000', secret: randomBytes(32).toString('hex'), secureCookies: false };
   const core = createCore(database.prisma, identityConfig);
@@ -400,6 +400,7 @@ test('P1 identity and space acceptance against migrated PostgreSQL and real HTTP
   await t.test('live OpenAPI retains P1 and includes only implemented packet routes', async () => {
     const result = await admin.send('GET', '/openapi.json');
     assert.deepEqual(Object.keys(result.data.paths).sort(), [
+      '/api/v1/search',
       '/api/v1/documents/{id}', '/api/v1/documents/{id}/archive', '/api/v1/documents/{id}/restore',
       '/api/v1/documents/{id}/export',
       '/api/v1/documents/{id}/revisions', '/api/v1/documents/{id}/revisions/{revisionId}', '/api/v1/documents/{id}/unarchive',

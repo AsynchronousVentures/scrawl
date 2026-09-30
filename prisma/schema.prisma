@@ -141,6 +141,8 @@ model DocumentRevision {
   contentEditorVersion String?
   body                 Json       @db.JsonB
   plainText            String
+  // Reviewed SQL owns this stored generated column and its GIN index.
+  searchVector         Unsupported("tsvector") @default(dbgenerated())
   authorId             String
   author               User       @relation(fields: [authorId], references: [id], onDelete: Restrict)
   createdAt            DateTime   @default(now()) @db.Timestamptz(3)

@@ -34,7 +34,8 @@
     "web:typecheck": "npm run typecheck --workspace web",
     "test:browser": "node --env-file-if-exists=.env node_modules/@playwright/test/cli.js test",
     "demo:dev": "node --import tsx scripts/demo-dev.ts",
-    "content:migrate": "node --env-file-if-exists=.env --import tsx scripts/content-upgrade.ts"
+    "content:migrate": "node --env-file-if-exists=.env --import tsx scripts/content-upgrade.ts",
+    "search:rebuild": "node --env-file-if-exists=.env --import tsx scripts/search-index.ts rebuild"
   },
   "dependencies": {
     "@blocknote/core": "0.55.0",

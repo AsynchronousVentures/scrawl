@@ -43,6 +43,7 @@ test('offline native upgrade preserves existing identity/history and requires a 
     } });
   });
   const originals = await database.prisma.documentRevision.findMany({ orderBy: { revisionNumber: 'asc' } });
+  const rawOriginals = (await database.pool.query('SELECT * FROM "DocumentRevision" ORDER BY "revisionNumber"')).rows;
   const originalDocument = await database.prisma.document.findUniqueOrThrow({ where: { id: documentId } });
   const users = await database.prisma.user.findMany();
   const backup = join(directory, 'originals.json');
@@ -66,7 +67,7 @@ test('offline native upgrade preserves existing identity/history and requires a 
   assert.equal((await stat(backup)).mode & 0o777, 0o600);
   const archive = JSON.parse(await readFile(backup, 'utf8')) as { documents: unknown[]; revisions: unknown[] };
   assert.deepEqual(archive.documents, JSON.parse(JSON.stringify([originalDocument])));
-  assert.deepEqual(archive.revisions, JSON.parse(JSON.stringify(originals)));
+  assert.deepEqual(archive.revisions, JSON.parse(JSON.stringify(rawOriginals)));
   const converted = await database.prisma.documentRevision.findMany({ orderBy: { revisionNumber: 'asc' } });
   for (const [index, revision] of converted.entries()) {
     const original = originals[index]!;

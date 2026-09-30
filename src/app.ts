@@ -10,6 +10,7 @@ import { registerSystemRoutes } from './modules/system/routes.js';
 import { registerAuthRoutes, registerCoreRoutes } from './http/core-routes.js';
 import type { Core } from './core/index.js';
 import { registerDocumentRoutes } from './http/document-routes.js';
+import { registerSearchRoutes } from './http/search-routes.js';
 import { registerFrontend } from './http/frontend.js';
 
 type BuildOptions = {
@@ -80,6 +81,7 @@ export async function buildApp({ config, checkDatabase, logging = true, core, fr
     registerAuthRoutes(app, core);
     registerCoreRoutes(app, core);
     registerDocumentRoutes(app, core);
+    registerSearchRoutes(app, core);
   }
   if (config.apiDocsEnabled) {
     app.get('/openapi.json', { schema: { hide: true } }, async () => app.swagger());

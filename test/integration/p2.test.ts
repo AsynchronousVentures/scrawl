@@ -3,6 +3,7 @@
 
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readdir } from 'node:fs/promises';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { request as httpRequest } from 'node:http';
@@ -51,7 +52,8 @@ test('P2 documents and immutable history against PostgreSQL and authenticated HT
   const migrations = await database.pool.query<{ migration_name: string }>(
     'SELECT migration_name FROM "_prisma_migrations" WHERE finished_at IS NOT NULL ORDER BY migration_name',
   );
-  assert.equal(migrations.rows.length, 3, 'Native content extends the same reviewed migration history');
+  const expectedHistory = (await readdir('prisma/migrations', { withFileTypes: true })).filter(entry => entry.isDirectory()).map(entry => entry.name).sort();
+  assert.deepEqual(migrations.rows.map(row => row.migration_name), expectedHistory, 'One reviewed migration history deploys completely');
   assert.equal(migrations.rows[0]?.migration_name, '20260930000000_identity_spaces');
   assert.equal(migrations.rows[2]?.migration_name, '20260930020000_blocknote_native');
   const address = await app.listen({ host: '127.0.0.1', port: 0 });
