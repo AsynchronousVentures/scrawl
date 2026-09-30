@@ -35,6 +35,7 @@ test('built frontend serves private/public shells and assets without changing AP
       const result = await app.inject(url);
       assert.equal(result.statusCode, 200);
       assert.match(String(result.headers['content-type']), type);
+      if (!url.startsWith('/assets/')) assert.equal(result.headers['cross-origin-opener-policy'], 'same-origin');
       assert.equal(result.headers['cache-control'], 'no-store');
       assert.equal(result.headers['x-content-type-options'], 'nosniff');
       assert.match(String(result.headers['x-request-id']), /^[0-9a-f-]{36}$/);

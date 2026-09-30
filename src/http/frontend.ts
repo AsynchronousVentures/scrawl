@@ -25,12 +25,16 @@ export async function registerFrontend(app: FastifyInstance, root: string) {
     setHeaders(reply) { reply.header('x-content-type-options', 'nosniff'); },
   });
   app.get('/', { schema: { hide: true } }, async (_request, reply) => {
-    return reply.header('x-content-type-options', 'nosniff').sendFile('index.html', root, { cacheControl: false });
+    // Native editor actions open external pages. Keep those pages from retaining
+    // an opener capable of navigating this private application tab.
+    return reply.header('cross-origin-opener-policy', 'same-origin')
+      .header('x-content-type-options', 'nosniff').sendFile('index.html', root, { cacheControl: false });
   });
   app.get('/publications/:publicId', { schema: { hide: true, params: {
     type: 'object', required: ['publicId'], additionalProperties: false,
     properties: { publicId: { type: 'string', format: 'uuid' } },
   } } }, async (_request, reply) => {
-    return reply.header('x-content-type-options', 'nosniff').sendFile('index.html', root, { cacheControl: false });
+    return reply.header('cross-origin-opener-policy', 'same-origin')
+      .header('x-content-type-options', 'nosniff').sendFile('index.html', root, { cacheControl: false });
   });
 }

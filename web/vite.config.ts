@@ -13,6 +13,7 @@ export default defineConfig({
   }] },
   server: {
     host: '127.0.0.1', port: 5173, strictPort: true, cors: false,
+    headers: { 'Cross-Origin-Opener-Policy': 'same-origin' },
     allowedHosts: ['127.0.0.1'],
     // APP_ORIGIN names this browser origin. Forward its Origin and cookies unchanged.
     proxy: {

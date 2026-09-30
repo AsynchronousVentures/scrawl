@@ -112,6 +112,7 @@ export function App() {
     history.replaceState(null, '', url);
   }
   function resetDocument() {
+    setLoadingDocument(false);
     draftSpaceId.current = null;
     newDraftBaseline.current = null;
     setBase(null); setDraft(null); dirtyRef.current = false; setContentError(null);

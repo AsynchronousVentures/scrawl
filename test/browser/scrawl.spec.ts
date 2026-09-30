@@ -3,6 +3,7 @@
 
 import { expect, test, type APIRequestContext, type BrowserContext, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
+import { createServer } from 'node:http';
 import { mkdir, readFile } from 'node:fs/promises';
 import JSZip from 'jszip';
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
@@ -1109,6 +1110,68 @@ test('loading, safe read retry and empty states are visible without replacing lo
   await expect(page.getByRole('navigation', { name: 'Documents' }).getByRole('button', { name: /Release checklist/ })).toBeVisible();
 });
 
+test('a new draft supersedes an in-flight document read without adopting its content or creating history', async ({ page, context }) => {
+  let release: () => void = () => {};
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  let fetched = 0;
+  const endpoint = `**/api/v1/documents/${seeded.documentId}`;
+  await page.route(endpoint, async route => {
+    if (route.request().method() !== 'GET') return route.continue();
+    const response = await route.fetch().catch(() => { throw new Error('The held real document read could not complete'); });
+    fetched++;
+    await gate;
+    try { await route.fulfill({ response }); }
+    catch { /* The test may have closed the page after releasing its held request. */ }
+  });
+  try {
+    await login(page);
+    await expect.poll(() => fetched).toBe(1);
+    await expect(page.getByText('Loading document…', { exact: true })).toBeVisible();
+    const original = await readDocument(context);
+    await page.getByRole('button', { name: 'New document', exact: true }).click();
+    await expect(title(page)).toHaveValue('Untitled document');
+    await title(page).fill('Complete new draft while the prior document loads');
+    await body(page).fill('The complete new body belongs to an unsaved document.');
+    await expect(page.getByText('Loading document…', { exact: true })).toHaveCount(0);
+    await expect(save(page)).toBeEnabled();
+    const staleRead = page.waitForResponse(response => response.request().method() === 'GET'
+      && new URL(response.url()).pathname === `/api/v1/documents/${seeded.documentId}`);
+    release();
+    const staleResponse = await staleRead;
+    expect(staleResponse.status()).toBe(200);
+    await staleResponse.finished();
+    // Let response decoding and React's next frame settle before checking that
+    // the old successful request cannot install a baseline over the new draft.
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
+    await expect(title(page)).toHaveValue('Complete new draft while the prior document loads');
+    await expect(body(page)).toHaveText('The complete new body belongs to an unsaved document.');
+    await expect(save(page)).toBeEnabled();
+    expect(new URL(page.url()).searchParams.get('document')).toBeNull();
+    expect(await readDocument(context)).toEqual(original);
+    expect(await demo.database.prisma.document.count({ where: { spaceId: seeded.spaceId } })).toBe(1);
+    expect(await demo.database.prisma.documentRevision.count({ where: { documentId: seeded.documentId } })).toBe(1);
+    await page.unroute(endpoint);
+
+    const created = page.waitForResponse(response => response.request().method() === 'POST'
+      && new URL(response.url()).pathname === `/api/v1/spaces/${seeded.spaceId}/documents`);
+    await save(page).click();
+    const response = await created;
+    expect(response.status()).toBe(201);
+    const document: unknown = await response.json();
+    if (!document || typeof document !== 'object' || !('id' in document) || typeof document.id !== 'string') {
+      throw new Error('Explicit Save did not create a new document');
+    }
+    const saved = await readDocument(context, document.id);
+    expect(saved.data.revision.title).toBe('Complete new draft while the prior document loads');
+    expect(saved.data.revision.plainText).toBe('The complete new body belongs to an unsaved document.');
+    expect(saved.data.currentRevisionNumber).toBe(1);
+    await expect(save(page)).toBeDisabled();
+    expect(await readDocument(context)).toEqual(original);
+    expect(await demo.database.prisma.document.count({ where: { spaceId: seeded.spaceId } })).toBe(2);
+    expect(await demo.database.prisma.documentRevision.count({ where: { documentId: seeded.documentId } })).toBe(1);
+  } finally { release(); await page.unroute(endpoint); }
+});
+
 test('mobile navigation is keyboard usable and stays within the viewport', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await login(page);
@@ -1434,6 +1497,71 @@ test('supplied link UI creates, edits, cancels and removes native links without 
     { type: 'text', text: 'Read the synthetic release guide.', styles: {} },
   ] });
   expect(browserErrors).toEqual([]);
+});
+
+test('supplied external link and file actions sever the opener and preserve the complete unsaved document', async ({ page, context }) => {
+  const external = createServer((_request, response) => {
+    response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+    response.end('<!doctype html><title>Synthetic external destination</title><h1>Synthetic external destination</h1>'
+      + '<script>if(window.opener){try{window.opener.location.href=window.location.origin+"/source-navigation-attempt"}catch{}}</script>');
+  });
+  await new Promise<void>((resolve, reject) => { external.once('error', reject); external.listen(0, '127.0.0.1', resolve); });
+  const address = external.address();
+  if (!address || typeof address !== 'object') throw new Error('No isolated external test origin');
+  // A distinct hostname keeps Scrawl's host-only session cookie off this origin.
+  const externalOrigin = `http://localhost:${address.port}`;
+  try {
+    await login(page);
+    const original = await readDocument(context), originalURL = page.url();
+    await title(page).fill('Complete unsaved title before external navigation');
+    await body(page).fill('The complete unsaved linked body must remain in this tab.');
+    await body(page).locator('p').first().selectText();
+    await formatting(page).getByRole('button', { name: 'Create link', exact: true }).click();
+    const href = page.getByPlaceholder('Edit URL', { exact: true });
+    await href.fill(`${externalOrigin}/external-link`); await href.press('Enter');
+    async function isolatedOpen(action: () => Promise<void>, pathname: string) {
+      const draftBody = await body(page).innerText();
+      const links = body(page).locator('a');
+      const draftLinks = await links.evaluateAll(elements => elements.map(element => ({
+        href: element.getAttribute('href'), text: element.textContent,
+      })));
+      expect(draftLinks.filter(link => link.href === `${externalOrigin}/external-link`).map(link => link.text).join(''))
+        .toBe('The complete unsaved linked body must remain in this tab.');
+      const [destination] = await Promise.all([context.waitForEvent('page'), action()]);
+      try {
+        await destination.waitForLoadState('domcontentloaded');
+        await expect(destination).toHaveURL(externalOrigin + pathname);
+        expect(await destination.evaluate(() => window.opener === null)).toBe(true);
+        await expect(page).toHaveURL(originalURL);
+        await expect(title(page)).toHaveValue('Complete unsaved title before external navigation');
+        await expect(body(page)).toHaveText(draftBody, { useInnerText: true });
+        expect(await links.evaluateAll(elements => elements.map(element => ({
+          href: element.getAttribute('href'), text: element.textContent,
+        })))).toEqual(draftLinks);
+        await expect(save(page)).toBeEnabled();
+        expect(await readDocument(context)).toEqual(original);
+        expect(await demo.database.prisma.documentRevision.count({ where: { documentId: seeded.documentId } })).toBe(1);
+      } finally { await destination.close(); }
+    }
+
+    // Native link actions use a collapsed cursor. Creating a link preserves
+    // the selected text, so move into it through the normal keyboard workflow.
+    await body(page).focus();
+    await page.keyboard.press('ControlOrMeta+Home');
+    await page.keyboard.press('ArrowRight');
+    const openLink = page.locator('.bn-link-toolbar').getByRole('button', { name: 'Open in new tab', exact: true });
+    await expect(openLink).toBeVisible();
+    await isolatedOpen(() => openLink.click(), '/external-link');
+    await slashBlock(page, 'file', 'File');
+    await page.getByRole('tab', { name: 'Embed', exact: true }).click();
+    await page.getByPlaceholder('Enter URL', { exact: true }).fill(`${externalOrigin}/external-file`);
+    await page.getByRole('button', { name: 'Embed file', exact: true }).click();
+    await body(page).locator('[data-content-type="file"]').click();
+    await isolatedOpen(() => formatting(page).getByRole('button', { name: 'Download file', exact: true }).click(), '/external-file');
+  } finally {
+    external.closeAllConnections();
+    await new Promise<void>((resolve, reject) => external.close(error => error ? reject(error) : resolve()));
+  }
 });
 
 test('invalid native link content stays local, blocks Save and can be undone without changing history', async ({ page, context }) => {
