@@ -1,6 +1,62 @@
 # Validation
 
-## P4, verified locally on 2026-09-30
+## P4 editor refinement, verified locally on 2026-09-30
+
+This refinement starts from completed P4 `9630659` and stops at P4 review. Node.js `v24.20.0`, npm `10.9.9`, PostgreSQL `17.11`, and Chromium were used. The approved prototype and layout remain intact. The initial P4 editor used ProseMirror directly; it now uses actual Tiptap with maintained OSS controls as requested. Earlier packet results below are historical.
+
+### Implemented behavior and migration effects
+
+Tiptap `3.31.3` supplies React lifecycle, official formatting/list/link commands, keyboard bindings, and UndoRedo. Radix Toolbar `1.1.19` supplies keyboard navigation, Radix Popover `1.1.23` supplies the link form, and Lucide React `1.49.0` supplies icons. Charcoal surfaces, sage accent, typography, central document, navigation, action hierarchy, and heading outline are preserved. There is no new design framework or simulated live search.
+
+Only the existing nine node types and four marks are enabled. Small adapters remove unsupported default attributes, retain list starts and code languages, preserve the native mark order/combinations, and use the shared validators. No StarterKit or text-direction attributes are added. Automatic links, input/paste rules, and the official ordered-list plain-text conversion plugin are disabled. Unsupported HTML/files still fail before parsing; rejected transactions retain the accepted document. The strengthened native round-trip browser test now performs a real body transaction and Undo before saving, proving that all native nodes, marks, and attributes survive Tiptap serialization.
+
+Toolbar buttons expose pressed/disabled states, names, shortcuts, and visible focus. Link editing loads the current href and keeps selection through Apply, Remove, Cancel, and Escape. Invalid URLs stay local to the form and leave the valid title/body intact. Tests found and corrected deferred editor focus dismissing keyboard-opened popovers, rapid repeated clicks bypassing the single-click opener, and an initial null editor-state snapshot hiding headings. The Vite app uses Tiptap's immediate rendering option so outlines and toolbar state work before the first interaction. Injected Tiptap styling is disabled; the existing stylesheet controls presentation.
+
+Successful Save, including first creation, updates the saved baseline without remounting the editor or clearing body undo history. Undo/Redo use Tiptap history; title editing uses native input behavior. Discard changes beside Save requires confirmation, resets the complete title/body to this tab's baseline, and clears local editor history. Keep editing cancels. Discard sends no write, creates no revision, and changes no ETag. A new draft resets to "Untitled document" and an empty paragraph, with no document created. After 412, discard keeps the original baseline/ETag and conflict/latest-server comparison. Another Save still requires deliberate reconciliation. Failure, expiry, revocation, dirty navigation, and private in-memory draft protections remain intact.
+
+No backend source, API/schema types, Prisma model/migration, content format/version, fixture commands, or core authorization/transaction behavior changed. All 398 resolved entries from `9630659` retain their versions and integrity values; the backend/auth/Prisma pins are unchanged. Existing instances use normal `npm ci`, `npm run db:migrate`, and `npm run check`; migrate deploy retains the same two migrations with no editor data transformation. The current browser bundle notices cover 71 packages. The exact-checkout source archive includes both new editor source files and excludes private/generated/artifact files.
+
+### Actual checks and review evidence
+
+| Command/check | Observed result |
+| --- | --- |
+| `npm ci` | Exit 0; frozen install and Prisma generation, zero audit advisories |
+| Baseline lock comparison with `9630659` | 398 existing resolved versions/integrities unchanged, no missing entries |
+| `npm run check` on final editor source | Exit 0; boundaries, both strict TypeScript projects, 58 tests, both builds, generated API drift check |
+| `NODE_ENV=test npm run test:db` | Exit 0; all 48 PostgreSQL tests, zero skipped, including rollback, concurrency, auth/access and guarded Demo A/reset |
+| Focused editor/native browser run after link corrections | Exit 0; 7/7, no retries |
+| Final initial-outline/mobile/native browser run | Exit 0; 3/3, no retries |
+| `SCRAWL_BROWSER_EVIDENCE=1 npm run test:browser` on final build | Exit 0; 25/25, no retries; all 19 original P4 scenarios plus six editor scenarios; Demo A's 327 assertions preserved |
+| `npm audit --omit=dev` and `npm ls --depth=0` | Exit 0; zero runtime advisories and exact installed pins |
+| Runtime bundle notice audit | 71 packages, zero missing or extra notice entries |
+| Private HTTPS collaborative preview | Actual retained session, formatting Undo/Redo and confirmed discard observed; server revision stayed unchanged, no JS-visible cookies or localStorage entries |
+
+The six added browser scenarios cover native formatting and toolbar keyboard navigation; Undo/Redo across Save and first creation; link add/edit/remove, invalid URLs, keyboard focus/cancel and repeated clicks; list toggle/start/code language/hard-break commands and literal plain-text paste; existing/new draft discard without writes/history changes; and 412 discard followed by deliberate ETag reconciliation. Every original browser scenario remains. Failed intermediate runs were corrected and rerun; the final suite is fully green.
+
+Tests use the existing guarded freshly migrated disposable fixtures and actual authenticated HTTP API. The task-owned ordinary PostgreSQL server at 5432 was separate from the retained manual demo at 5433. Browser/database suites ran sequentially. Test fixtures were removed by their harnesses; the `scrawl-editor` container/network/volume was removed afterward. The retained demo configuration, credentials, database, and loopback/private Tailscale servers remain available for review. Neither an arbitrary database nor the manual demo was reset.
+
+Fresh screenshots from the asserted running application contain only synthetic content and no passwords, cookies, or tokens. Published with `t3code-publish-evidence`; local PNGs remain ignored:
+
+- [Long document, toolbar and initial outline](https://uwvqig7mu5.ufs.sh/f/tJOw1mn9psOE86vuNCbw0lHU8rYvyih9SJ35DdcOXpW7z16C)
+- [Formatting and active toolbar states](https://uwvqig7mu5.ufs.sh/f/tJOw1mn9psOEvyXlDhetwP8gXuYBsqD65yxbLW3FApIC0kEl)
+- [Link editor](https://uwvqig7mu5.ufs.sh/f/tJOw1mn9psOExqQG2ah9J86kgDlYGmNidF1UE5zbcIpWjuv0)
+- [Discard confirmation with Keep editing](https://uwvqig7mu5.ufs.sh/f/tJOw1mn9psOExiCM7Uh9J86kgDlYGmNidF1UE5zbcIpWjuv0)
+- [Narrow-screen document and controls](https://uwvqig7mu5.ufs.sh/f/tJOw1mn9psOEW0q0m6mRvuRFP7JMAnErXw4f9SjKdoOxZya5)
+
+With ordinary test PostgreSQL available and configured in `.env`, repeat the checks sequentially:
+
+```sh
+npm ci
+npm run check
+NODE_ENV=test npm run test:db
+SCRAWL_BROWSER_EVIDENCE=1 npm run test:browser
+```
+
+The [Demo B walkthrough](docs/demo-walkthrough.md#run-demo-b) has the exact guarded setup, seed, local/development/private HTTPS launch commands and workflow. The retained review server uses `npm run demo:serve -- --origin https://agentvm.beardie-tone.ts.net:8447`; the private route is [Scrawl](https://agentvm.beardie-tone.ts.net:8447/). Credentials stay in the owner-only local fixture file described in the walkthrough. The original disconnected prototype is preserved; the small editor control prototype at `artifacts/design-p4/scrawl-editor-refinement.html` also remains a clearly marked synthetic artifact.
+
+No local blocker remains. Firefox/WebKit, native mobile browsers, screen-reader testing, hosted CI, production operation and performance/load testing remain unverified. Interactive T3 navigation/typing/DOM checks worked, but its screenshot operation failed; authored acceptance tests produced the actual application captures. The nonblocking Vite chunk warning is now about 758 kB minified / 235 kB gzip. The existing scrollbar license provenance limitation remains in the notices. No push, deployment, public exposure, persistent browser content storage, or next packet was added.
+
+## P4 initial implementation, historical results on 2026-09-30
 
 P4 is complete locally on P3 baseline `76da4c0`. Node.js `v24.20.0`, npm `10.9.9`, PostgreSQL `17.11`, and Playwright Chromium were used. No push, hosted CI, deployment, public exposure, or next packet ran. P0-P3 historical evidence follows this section.
 

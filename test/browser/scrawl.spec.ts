@@ -86,7 +86,19 @@ async function assertNoBrowserPersistence(page: Page) {
     .toEqual({ local: [], session: [] });
 }
 
-async function evidence(page: Page, name: 'editing' | 'conflict' | 'history' | 'access-loss' | 'mobile') {
+function formatting(page: Page) { return page.getByRole('toolbar', { name: 'Document formatting', exact: true }); }
+function discardChanges(page: Page) { return page.getByRole('button', { name: 'Discard changes', exact: true }); }
+
+async function confirmDiscard(page: Page) {
+  await discardChanges(page).click();
+  const dialog = page.getByRole('dialog', { name: 'Unsaved changes', exact: true });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole('button', { name: 'Discard changes', exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+}
+
+async function evidence(page: Page, name: 'editing' | 'conflict' | 'history' | 'access-loss' | 'mobile'
+  | 'editor-toolbar' | 'link-editor' | 'discard-changes') {
   if (process.env.SCRAWL_BROWSER_EVIDENCE !== '1') return;
   const password = page.getByLabel('Password', { exact: true });
   if (await password.isVisible() && await password.inputValue() !== '') {
@@ -198,6 +210,13 @@ test('editor round-trips every supported native node, mark and attribute without
   await expect(body(page).locator('h1, h2, h3, h4, h5, h6')).toHaveCount(6);
   await expect(body(page).locator('ol[start="7"]')).toHaveCount(1);
   await expect(body(page).locator('ol[start="4"]')).toHaveCount(1);
+  await body(page).locator('p').last().click();
+  await page.keyboard.insertText('Temporary native round-trip edit');
+  await expect(body(page).locator('p').last()).toHaveText('Temporary native round-trip edit');
+  await expect(save(page)).toBeEnabled();
+  await page.keyboard.press('ControlOrMeta+z');
+  await expect(body(page).locator('p').last()).toHaveText('');
+  await expect(save(page)).toBeDisabled();
   await title(page).fill('All supported content, title edited');
   await explicitSave(page);
   const after = await readDocument(context, created.id);
@@ -724,4 +743,342 @@ test('the outline follows actual document headings, scrolls and focuses sections
   const updated = await readDocument(context);
   expect(updated.data.currentRevisionNumber).toBe(2);
   expect(updated.data.revision.plainText).toContain('Updated synthetic section');
+});
+
+test('formatting commands preserve native content and undo/redo remain usable across successful saves', async ({ page, context }) => {
+  await login(page);
+  await expect(title(page)).toHaveValue('Release checklist');
+  const toolbar = formatting(page);
+  const undo = toolbar.getByRole('button', { name: 'Undo', exact: true });
+  const redo = toolbar.getByRole('button', { name: 'Redo', exact: true });
+  await expect(undo).toBeDisabled();
+  await expect(redo).toBeDisabled();
+  await body(page).fill('Native toolbar formatting');
+  await body(page).locator('p').selectText();
+  const bold = toolbar.getByRole('button', { name: 'Bold', exact: true });
+  await bold.focus();
+  await page.keyboard.press('Enter');
+  await expect(bold).toHaveAttribute('aria-pressed', 'true');
+  await bold.focus();
+  await page.keyboard.press('ArrowRight');
+  const italic = toolbar.getByRole('button', { name: 'Italic', exact: true });
+  await expect(italic).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(italic).toHaveAttribute('aria-pressed', 'true');
+  await italic.focus();
+  await page.keyboard.press('ArrowRight');
+  const code = toolbar.getByRole('button', { name: 'Inline code', exact: true });
+  await expect(code).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(code).toHaveAttribute('aria-pressed', 'true');
+  await toolbar.getByRole('combobox', { name: 'Text style', exact: true }).selectOption('heading-2');
+  await expect(body(page).getByRole('heading', { name: 'Native toolbar formatting', exact: true })).toBeVisible();
+  await explicitSave(page);
+  const saved = await readDocument(context);
+  expect(saved.data.revision.content).toEqual(validateContent({ format: 'prosemirror-json', schemaVersion: 1,
+    document: { type: 'doc', content: [{ type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: 'Native toolbar formatting',
+      marks: [{ type: 'bold' }, { type: 'italic' }, { type: 'code' }],
+    }] }] },
+  }).content);
+  await evidence(page, 'editor-toolbar');
+  const savedBody = await body(page).innerHTML();
+  await expect(undo).toBeEnabled();
+  await expect(redo).toBeDisabled();
+  await body(page).focus();
+  await page.keyboard.press('ControlOrMeta+z');
+  await expect(redo).toBeEnabled();
+  await expect(save(page)).toBeEnabled();
+  expect(await body(page).innerHTML()).not.toBe(savedBody);
+  await page.keyboard.press('ControlOrMeta+Shift+z');
+  await expect(redo).toBeDisabled();
+  await expect(save(page)).toBeDisabled();
+  expect(await body(page).innerHTML()).toBe(savedBody);
+  await undo.click();
+  await expect(save(page)).toBeEnabled();
+  await redo.click();
+  await expect(save(page)).toBeDisabled();
+  expect(await body(page).innerHTML()).toBe(savedBody);
+  expect((await readDocument(context)).data).toEqual(saved.data);
+  expect(await demo.database.prisma.documentRevision.count({ where: { documentId: seeded.documentId } })).toBe(2);
+
+  await page.getByRole('button', { name: 'New document', exact: true }).click();
+  await title(page).fill('Undo after first creation');
+  await body(page).fill('This first saved body remains in editor history.');
+  const created = page.waitForResponse(response => response.request().method() === 'POST'
+    && new URL(response.url()).pathname === `/api/v1/spaces/${seeded.spaceId}/documents`);
+  await save(page).click();
+  expect((await created).status()).toBe(201);
+  await expect(save(page)).toBeDisabled();
+  await expect(undo).toBeEnabled();
+  await undo.click();
+  await expect(body(page)).not.toHaveText('This first saved body remains in editor history.');
+  await expect(title(page)).toHaveValue('Undo after first creation');
+  await expect(save(page)).toBeEnabled();
+  await redo.click();
+  await expect(body(page)).toHaveText('This first saved body remains in editor history.');
+  await expect(save(page)).toBeDisabled();
+  expect(await demo.database.prisma.document.count({ where: { spaceId: seeded.spaceId } })).toBe(2);
+});
+
+test('list, hard-break and code-block toolbar commands persist only supported native attributes', async ({ page, context }) => {
+  await login(page);
+  await expect(title(page)).toHaveValue('Release checklist');
+  const toolbar = formatting(page);
+  await body(page).fill('');
+  await body(page).evaluate(element => {
+    const clipboard = new DataTransfer();
+    clipboard.setData('text/plain', '1. Synthetic first\n2. Synthetic second\nA. Synthetic lettered\nB. Synthetic next');
+    element.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: clipboard }));
+  });
+  await expect(body(page).locator('ol, ul')).toHaveCount(0);
+  expect(await body(page).locator('p').allTextContents()).toEqual([
+    '1. Synthetic first', '2. Synthetic second', 'A. Synthetic lettered', 'B. Synthetic next',
+  ]);
+  expect((await readDocument(context)).data.currentRevisionNumber).toBe(1);
+  await body(page).fill('First numbered item');
+  const bullets = toolbar.getByRole('button', { name: 'Bulleted list', exact: true });
+  const numbers = toolbar.getByRole('button', { name: 'Numbered list', exact: true });
+  await bullets.click();
+  await expect(bullets).toHaveAttribute('aria-pressed', 'true');
+  await expect(body(page).locator('ul > li')).toHaveCount(1);
+  await bullets.click();
+  await expect(bullets).toHaveAttribute('aria-pressed', 'false');
+  await expect(body(page).locator('ul')).toHaveCount(0);
+  await numbers.click();
+  await expect(numbers).toHaveAttribute('aria-pressed', 'true');
+  await expect(body(page).locator('ol > li')).toHaveCount(1);
+  await numbers.click();
+  await expect(numbers).toHaveAttribute('aria-pressed', 'false');
+  await expect(body(page).locator('ol')).toHaveCount(0);
+  await numbers.click();
+  await page.getByRole('spinbutton', { name: 'Numbered list start', exact: true }).fill('7');
+  await expect(body(page).locator('ol')).toHaveAttribute('start', '7');
+  await body(page).focus();
+  await page.keyboard.press('ControlOrMeta+End');
+  await page.keyboard.press('Enter');
+  await page.keyboard.insertText('Second numbered item');
+  await page.keyboard.press('Shift+Enter');
+  await page.keyboard.insertText('continued item');
+  await expect(body(page).locator('ol > li')).toHaveCount(2);
+  await expect(body(page).locator('ol > li').last().locator('br')).toHaveCount(1);
+  await explicitSave(page);
+  expect((await readDocument(context)).data.revision.content).toEqual(validateContent({ format: 'prosemirror-json', schemaVersion: 1,
+    document: { type: 'doc', content: [{ type: 'orderedList', attrs: { start: 7 }, content: [
+      { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'First numbered item' }] }] },
+      { type: 'listItem', content: [{ type: 'paragraph', content: [
+        { type: 'text', text: 'Second numbered item' }, { type: 'hardBreak' }, { type: 'text', text: 'continued item' },
+      ] }] },
+    ] }] },
+  }).content);
+
+  await body(page).fill('const synthetic = true;');
+  await toolbar.getByRole('combobox', { name: 'Text style', exact: true }).selectOption('codeBlock');
+  await page.getByRole('textbox', { name: 'Code language', exact: true }).fill('typescript');
+  await expect(body(page).locator('pre > code')).toHaveText('const synthetic = true;');
+  await explicitSave(page);
+  const codeBlock = await readDocument(context);
+  expect(codeBlock.data.currentRevisionNumber).toBe(3);
+  expect(codeBlock.data.revision.content).toEqual(validateContent({ format: 'prosemirror-json', schemaVersion: 1,
+    document: { type: 'doc', content: [{ type: 'codeBlock', attrs: { language: 'typescript' },
+      content: [{ type: 'text', text: 'const synthetic = true;' }],
+    }] },
+  }).content);
+});
+
+test('the link popover adds, edits and removes exact native links without losing selection or accepting unsafe URLs', async ({ page, context }) => {
+  await login(page);
+  await expect(title(page)).toHaveValue('Release checklist');
+  await body(page).fill('Read the synthetic release guide.');
+  await body(page).locator('p').selectText();
+  const linkButton = formatting(page).getByRole('button', { name: 'Link', exact: true });
+  await linkButton.click();
+  const dialog = page.getByRole('dialog', { name: 'Edit link', exact: true });
+  const href = dialog.getByRole('textbox', { name: 'Link URL', exact: true });
+  await expect(href).toBeFocused();
+  await href.fill('https://example.test/release-guide');
+  await href.press('Enter');
+  await expect(dialog).not.toBeVisible();
+  const anchor = body(page).getByRole('link', { name: 'Read the synthetic release guide.', exact: true });
+  await expect(anchor).toHaveAttribute('href', 'https://example.test/release-guide');
+  await expect(body(page)).toBeFocused();
+  await explicitSave(page);
+  const original = await readDocument(context);
+  const nativeLinked = (address: string) => validateContent({ format: 'prosemirror-json', schemaVersion: 1,
+    document: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Read the synthetic release guide.',
+      marks: [{ type: 'link', attrs: { href: address } }],
+    }] }] },
+  }).content;
+  expect(original.data.revision.content).toEqual(nativeLinked('https://example.test/release-guide'));
+
+  const location = page.url();
+  await title(page).fill('Link editor retains the complete local title');
+  await anchor.click();
+  await expect(dialog).toBeVisible();
+  await expect(href).toHaveValue('https://example.test/release-guide');
+  await evidence(page, 'link-editor');
+  expect(page.url()).toBe(location);
+  await href.fill('javascript:alert(1)');
+  await dialog.getByRole('button', { name: 'Apply link', exact: true }).click();
+  await expect(dialog.getByRole('alert')).toBeVisible();
+  await expect(anchor).toHaveAttribute('href', 'https://example.test/release-guide');
+  await expect(save(page)).toBeEnabled();
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  await expect(body(page)).toBeFocused();
+  await expect(title(page)).toHaveValue('Link editor retains the complete local title');
+  await expect(save(page)).toBeEnabled();
+  expect((await readDocument(context)).data).toEqual(original.data);
+
+  await linkButton.focus();
+  await page.keyboard.press('Enter');
+  await expect(dialog).toBeVisible();
+  await expect(href).toBeFocused();
+  await expect(href).toHaveValue('https://example.test/release-guide');
+  await href.fill('https://example.test/cancelled');
+  await href.press('Escape');
+  await expect(dialog).not.toBeVisible();
+  await expect(anchor).toHaveAttribute('href', 'https://example.test/release-guide');
+  await expect(body(page)).toBeFocused();
+  await linkButton.click();
+  await href.fill('mailto:synthetic@example.test');
+  await href.press('Enter');
+  await expect(anchor).toHaveAttribute('href', 'mailto:synthetic@example.test');
+  await expect(body(page)).toHaveText('Read the synthetic release guide.');
+  await explicitSave(page);
+  expect((await readDocument(context)).data.revision.content).toEqual(nativeLinked('mailto:synthetic@example.test'));
+
+  await expect(body(page)).toHaveAttribute('contenteditable', 'true');
+  await anchor.click();
+  await expect(dialog).toBeVisible();
+  await expect(href).toHaveValue('mailto:synthetic@example.test');
+  await expect(dialog.getByRole('button', { name: 'Remove link', exact: true })).toBeVisible();
+  await dialog.getByRole('button', { name: 'Remove link', exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  await expect(body(page).getByRole('link')).toHaveCount(0);
+  await expect(body(page)).toHaveText('Read the synthetic release guide.');
+  await explicitSave(page);
+  const unlinked = await readDocument(context);
+  expect(unlinked.data.currentRevisionNumber).toBe(4);
+  expect(unlinked.data.revision.content).toEqual(validateContent({ format: 'prosemirror-json', schemaVersion: 1,
+    document: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Read the synthetic release guide.' }] }] },
+  }).content);
+});
+
+test('discard requires confirmation and resets the complete title/body baseline without a write or new revision', async ({ page, context }) => {
+  await login(page);
+  await expect(title(page)).toHaveValue('Release checklist');
+  const baseline = await readDocument(context);
+  const baselineBody = await body(page).innerText();
+  const baselineHeadings = await body(page).locator('h1, h2, h3, h4, h5, h6').allTextContents();
+  const toolbar = formatting(page);
+  await expect(discardChanges(page)).toBeDisabled();
+  await title(page).fill('Unsaved title to discard');
+  await body(page).fill('The full local body is different from the baseline.');
+  await body(page).locator('p').selectText();
+  await toolbar.getByRole('button', { name: 'Bold', exact: true }).click();
+  const dirtyBody = await body(page).innerHTML();
+  let mutations = 0;
+  page.on('request', request => {
+    if (request.method() !== 'GET' && new URL(request.url()).pathname.startsWith('/api/v1/')) mutations++;
+  });
+  await discardChanges(page).focus();
+  await page.keyboard.press('Enter');
+  const dialog = page.getByRole('dialog', { name: 'Unsaved changes', exact: true });
+  await expect(dialog).toBeVisible();
+  await evidence(page, 'discard-changes');
+  await dialog.getByRole('button', { name: 'Keep editing', exact: true }).click();
+  await expect(title(page)).toHaveValue('Unsaved title to discard');
+  expect(await body(page).innerHTML()).toBe(dirtyBody);
+  await expect(save(page)).toBeEnabled();
+  await confirmDiscard(page);
+  await expect(title(page)).toHaveValue(baseline.data.revision.title);
+  await expect(body(page)).toHaveText(baselineBody, { useInnerText: true });
+  expect(await body(page).locator('h1, h2, h3, h4, h5, h6').allTextContents()).toEqual(baselineHeadings);
+  await expect(save(page)).toBeDisabled();
+  await expect(discardChanges(page)).toBeDisabled();
+  await expect(toolbar.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
+  await expect(toolbar.getByRole('button', { name: 'Redo', exact: true })).toBeDisabled();
+  expect(mutations).toBe(0);
+  expect(await readDocument(context)).toEqual(baseline);
+  expect(await demo.database.prisma.documentRevision.count({ where: { documentId: seeded.documentId } })).toBe(1);
+  await title(page).fill('Title changed after deliberate discard');
+  await explicitSave(page);
+  expect((await readDocument(context)).data.revision.content).toEqual(baseline.data.revision.content);
+});
+
+test('discarding a new document returns its initial local baseline without creating a document', async ({ page, context }) => {
+  await login(page);
+  await expect(title(page)).toHaveValue('Release checklist');
+  const original = await readDocument(context);
+  await page.getByRole('button', { name: 'New document', exact: true }).click();
+  await expect(title(page)).toHaveValue('Untitled document');
+  await title(page).fill('Never-created draft title');
+  await body(page).fill('This discarded body must never reach the API.');
+  let creations = 0;
+  page.on('request', request => {
+    if (request.method() === 'POST' && new URL(request.url()).pathname === `/api/v1/spaces/${seeded.spaceId}/documents`) creations++;
+  });
+  await confirmDiscard(page);
+  await expect(title(page)).toHaveValue('Untitled document');
+  await expect(body(page)).toHaveText('');
+  await expect(formatting(page).getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
+  await expect(formatting(page).getByRole('button', { name: 'Redo', exact: true })).toBeDisabled();
+  expect(creations).toBe(0);
+  expect(await demo.database.prisma.document.count({ where: { spaceId: seeded.spaceId } })).toBe(1);
+  expect(await readDocument(context)).toEqual(original);
+});
+
+test('discard after a stale save keeps the old baseline and requires deliberate reconciliation before saving', async ({ page, context }) => {
+  await login(page);
+  await expect(title(page)).toHaveValue('Release checklist');
+  const original = await readDocument(context);
+  const second = await context.newPage();
+  try {
+    await second.goto(url());
+    await expect(title(second)).toHaveValue(original.data.revision.title);
+    const baselineBody = await body(second).innerText();
+    await title(page).fill('Latest server title stays separate');
+    await body(page).fill('Only the first tab saved this server body.');
+    await explicitSave(page);
+    const latest = await readDocument(context);
+    await title(second).fill('Discard this conflicted local title');
+    await body(second).fill('Discard this complete conflicted local body.');
+    let attempts = 0;
+    const etags: Array<string | undefined> = [];
+    second.on('request', request => {
+      if (request.method() === 'PATCH' && new URL(request.url()).pathname === `/api/v1/documents/${seeded.documentId}`) {
+        attempts++;
+        etags.push(request.headers()['if-match']);
+      }
+    });
+    const stale = second.waitForResponse(response => response.request().method() === 'PATCH'
+      && new URL(response.url()).pathname === `/api/v1/documents/${seeded.documentId}`);
+    await save(second).click();
+    expect((await stale).status()).toBe(412);
+    await expect(second.getByRole('heading', { name: 'Save conflict', exact: true })).toBeVisible();
+    await confirmDiscard(second);
+    await expect(title(second)).toHaveValue(original.data.revision.title);
+    await expect(body(second)).toHaveText(baselineBody, { useInnerText: true });
+    await expect(second.getByRole('heading', { name: 'Save conflict', exact: true })).toBeVisible();
+    await expect(second.getByText(latest.data.revision.title, { exact: true }).last()).toBeVisible();
+    await expect(save(second)).toBeDisabled();
+    await expect(formatting(second).getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
+    await expect(formatting(second).getByRole('button', { name: 'Redo', exact: true })).toBeDisabled();
+    expect(attempts).toBe(1);
+    expect(etags).toEqual([original.etag]);
+    expect(await readDocument(context)).toEqual(latest);
+    expect(await demo.database.prisma.documentRevision.count({ where: { documentId: seeded.documentId } })).toBe(2);
+    await title(second).fill('Deliberately reconciled after discard');
+    await expect(save(second)).toBeDisabled();
+    await second.getByRole('button', { name: 'Use my changes', exact: true }).click();
+    await expect(save(second)).toBeEnabled();
+    expect(attempts).toBe(1);
+    await explicitSave(second);
+    expect(attempts).toBe(2);
+    expect(etags).toEqual([original.etag, latest.etag]);
+    const reconciled = await readDocument(context);
+    expect(reconciled.data.currentRevisionNumber).toBe(3);
+    expect(reconciled.data.revision.content).toEqual(original.data.revision.content);
+    expect(reconciled.data.revision.title).toBe('Deliberately reconciled after discard');
+  } finally { await second.close(); }
 });

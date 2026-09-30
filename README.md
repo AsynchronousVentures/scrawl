@@ -25,7 +25,7 @@ P2 adds restricted headless content validation, document create/read/update, imm
 
 P3 adds a repeatable real HTTP Demo A runner, explicit disposable fixture setup/reset, and authorized native single-document JSON export. Follow [the walkthrough](docs/demo-walkthrough.md#run-demo-a) to run it and inspect a local export.
 
-P4 adds a React/Vite private document interface with the restricted ProseMirror editor, explicit saves, conflict comparison, revision history, lifecycle actions, and native export. The approved charcoal/sage prototype remains separate from the connected application. The live UI has no simulated search or fixture controls.
+P4 adds a React/Vite private document interface with a restricted Tiptap editor, explicit saves, confirmed local draft discard, conflict comparison, revision history, lifecycle actions, and native export. The approved charcoal/sage prototype remains separate from the connected application. The live UI has no simulated search or fixture controls.
 
 **Publishing, search, attachments, bulk export/import, SSO, and API keys are not implemented.** Use synthetic documentation during this pre-release demo and keep it private.
 

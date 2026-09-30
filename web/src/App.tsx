@@ -75,6 +75,9 @@ export function App() {
   const draftSpaceId = useRef<string | null>(null);
   const dirty = Boolean(draft && (!base || draft.title !== base.document.revision.title
     || JSON.stringify(draft.content) !== JSON.stringify(base.document.revision.content)));
+  const discardBaseline = base ? draftFrom(base) : emptyDraft();
+  const hasDraftChanges = Boolean(draft && (draft.title !== discardBaseline.title
+    || JSON.stringify(draft.content) !== JSON.stringify(discardBaseline.content)));
   const dirtyRef = useRef(dirty); dirtyRef.current = dirty;
   const mayEdit = Boolean(user && !accessIssue && space?.access === 'editor' && !base?.document.archivedAt);
 
@@ -91,9 +94,10 @@ export function App() {
     setConflict(null); setSaveError(''); setNotice(''); setHistoryOpen(false);
     setRevisions([]); setRevision(null); historyGeneration.current++;
   }
-  function adopt(loaded: LoadedDocument) {
+  function adopt(loaded: LoadedDocument, preserveEditor = false) {
     draftSpaceId.current = loaded.document.spaceId;
-    setBase(loaded); setDraft(draftFrom(loaded)); setEditorKey(key => key + 1);
+    setBase(loaded); setDraft(draftFrom(loaded));
+    if (!preserveEditor) setEditorKey(key => key + 1);
     dirtyRef.current = false; setContentError(null); setSaveError(''); setConflict(null);
     rememberSelection(loaded.document.spaceId, loaded.document.id);
   }
@@ -113,6 +117,17 @@ export function App() {
     if (busy) return;
     setMobileOpen(false);
     if (dirtyRef.current) setPending({ action }); else action();
+  }
+  function resetDraftToBaseline() {
+    setDraft(base ? draftFrom(base) : emptyDraft());
+    setEditorKey(key => key + 1);
+    setContentError(null); setSaveError('');
+    dirtyRef.current = !base;
+    // A local reset cannot adopt the latest ETag or resolve a stale-save conflict.
+  }
+  function discardChanges() {
+    if (!mayEdit || busy || (!hasDraftChanges && !contentError)) return;
+    setPending({ action: () => setNotice('Unsaved changes discarded. Nothing was saved.') });
   }
 
   async function loadDocument(id: string, ticket = generation.current, expectedSpaceId?: string) {
@@ -222,13 +237,13 @@ export function App() {
       if (ticket === generation.current && !unavailable(error)) setConflict({ latest: null, error: failureMessage(error), loading: false });
     }
   }
-  async function mutate(operation: () => Promise<LoadedDocument>, label = 'Saving…') {
+  async function mutate(operation: () => Promise<LoadedDocument>, label = 'Saving…', preserveEditor = false) {
     const ticket = generation.current;
     setBusyLabel(label); setBusy(true); setSaveError(''); setNotice('');
     try {
       const loaded = await operation();
       if (ticket !== generation.current) return;
-      adopt(loaded); setHistoryOpen(false); setRevision(null);
+      adopt(loaded, preserveEditor); setHistoryOpen(false); setRevision(null);
       if (space) void listDocuments(space);
     } catch (error) {
       if (ticket !== generation.current) return;
@@ -242,7 +257,7 @@ export function App() {
     let checked: Draft;
     try { checked = { title: draft.title, content: validateContent(draft.content).content }; }
     catch { setSaveError('The content cannot be saved. Check the supported format and size limits.'); return; }
-    void mutate(() => base ? api.save(base.document.id, base.etag, checked) : api.create(space.id, checked));
+    void mutate(() => base ? api.save(base.document.id, base.etag, checked) : api.create(space.id, checked), 'Saving…', true);
   }
   function newDocument() {
     guarded(() => {
@@ -331,7 +346,7 @@ export function App() {
           <main className="main">
             {draft && <div className="documentbar"><span className={dirty || accessIssue || saveError ? 'dirty' : ''} role="status">{status}</span>
               {base && !accessIssue && <><button disabled={busy} onClick={() => { if (historyOpen) setHistoryOpen(false); else void openHistory(); }}>History</button><details className="doc-menu"><summary aria-label="Document actions">⋯</summary><div className="menu-items"><button disabled={busy} onClick={event => { event.currentTarget.closest('details')?.removeAttribute('open'); void exportDocument(); }}>Export JSON</button>{space?.access === 'editor' && !conflict && <button disabled={busy} onClick={event => { event.currentTarget.closest('details')?.removeAttribute('open'); guarded(() => { void mutate(() => api.archive(base.document.id,base.etag,Boolean(base.document.archivedAt)),base.document.archivedAt ? 'Unarchiving…' : 'Archiving…'); }); }}>{base.document.archivedAt ? 'Unarchive' : 'Archive'}</button>}</div></details></>}
-              {mayEdit && <button className="primary" disabled={busy || !dirty || Boolean(conflict) || Boolean(contentError)} onClick={save}>Save</button>}
+              {mayEdit && <div className="save-actions"><button disabled={busy || (!hasDraftChanges && !contentError)} onClick={discardChanges}>Discard changes</button><button className="primary" disabled={busy || !dirty || Boolean(conflict) || Boolean(contentError)} onClick={save}>Save</button></div>}
             </div>}
             {accessIssue && <div className="notice" role="alert"><strong>{saveError || (accessIssue === 'session' ? 'Your session expired.' : 'Access to this document is unavailable.')}</strong><p>{dirty ? 'Your complete unsaved title and body are retained in this tab. Nothing was saved. Server actions are unavailable. Copy your draft before closing or reloading.' : 'Sign in or ask an administrator to verify your access.'}</p>
               {dirty && draft && <button onClick={() => { void navigator.clipboard.writeText(draft.title+'\n\n'+validateContent(draft.content).plainText).then(() => setNotice('Local draft text copied. Nothing was saved.')).catch(() => setNotice('Copy is unavailable. Select and copy the retained title and body.')); }}>Copy local draft text</button>}
@@ -343,7 +358,7 @@ export function App() {
                 <p className="meta">{accessIssue ? 'Retained local draft · not a saved server document' : `${space?.name ?? ''} · ${base?.document.archivedAt ? 'archived' : space?.access === 'reader' ? 'reader access' : 'editor access'}`}</p>
                 <label className="sr" htmlFor="title">Document title</label><input ref={titleInput} id="title" className="title" aria-label="Document title" value={draft.title} readOnly={!mayEdit} disabled={busy} onChange={event => { setDraft(previous => previous ? { ...previous,title:event.target.value } : previous); setSaveError(''); setNotice(''); }} />
               </>} />
-              {conflict && <aside className="side-panel conflict" aria-label="Save conflict"><h2>Save conflict</h2><p>Your complete local title and body are unchanged. Compare the latest server version, then choose how to reconcile. No write will be retried automatically.</p>
+              {conflict && <aside className="side-panel conflict" aria-label="Save conflict"><h2>Save conflict</h2><p>Compare your local title and body with the latest server version, then choose how to reconcile. No write will be retried automatically.</p>
                 {conflict.loading && <p role="status">Loading latest server version…</p>}
                 {conflict.error && <div role="alert"><p>{conflict.error}</p><button onClick={() => { if(base)void readConflict(base.document.id); }}>Retry</button></div>}
                 {conflict.latest && <><small>Latest server version · revision {conflict.latest.document.currentRevisionNumber}</small><Editor key={conflict.latest.etag} initialContent={conflict.latest.document.revision.content} label="Latest server content" editable={false} onChange={() => {}} header={<h3>{conflict.latest.document.revision.title}</h3>} />
@@ -361,7 +376,7 @@ export function App() {
           </main>
         </div>}
       </>}
-    <Dialog.Root open={Boolean(pending)} onOpenChange={open => { if(!open)setPending(null); }}><Dialog.Portal><Dialog.Overlay className="dialog-overlay" /><Dialog.Content className="dialog" onCloseAutoFocus={event => { event.preventDefault();titleInput.current?.focus(); }}><Dialog.Title>Unsaved changes</Dialog.Title><Dialog.Description>Your title and body have not been saved. Continuing will discard your local changes.</Dialog.Description><div className="actions"><Dialog.Close className="primary">Keep editing</Dialog.Close><button onClick={() => { const action=pending?.action;setPending(null);if(base){setDraft(draftFrom(base));setEditorKey(key=>key+1);}dirtyRef.current=false;action?.(); }}>Discard changes</button></div></Dialog.Content></Dialog.Portal></Dialog.Root>
+    <Dialog.Root open={Boolean(pending)} onOpenChange={open => { if(!open)setPending(null); }}><Dialog.Portal><Dialog.Overlay className="dialog-overlay" /><Dialog.Content className="dialog" onCloseAutoFocus={event => { event.preventDefault();titleInput.current?.focus(); }}><Dialog.Title>Unsaved changes</Dialog.Title><Dialog.Description>Your title and body have not been saved. Continuing will discard your local changes.</Dialog.Description><div className="actions"><Dialog.Close className="primary">Keep editing</Dialog.Close><button onClick={() => { const action=pending?.action;setPending(null);resetDraftToBaseline();action?.(); }}>Discard changes</button></div></Dialog.Content></Dialog.Portal></Dialog.Root>
     <footer className="footer">Scrawl · <a href="/assets/LICENSE.txt" target="_blank" rel="noopener noreferrer">AGPL-3.0-only</a> · <a href="/assets/THIRD_PARTY_NOTICES.txt" target="_blank" rel="noopener noreferrer">Third-party notices</a> · <a href="/assets/scrawl-source.tar.gz" download>Source for this build</a></footer>
   </>;
 }

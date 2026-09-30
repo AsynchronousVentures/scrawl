@@ -157,7 +157,7 @@ Open that exact HTTPS origin from a device on the tailnet. This explicit server-
 ### Connected workflows
 
 1. Log in as editor, select the handbook, read the checklist, and follow an "On this page" heading link. Edit a heading and see the outline follow the actual content. On narrow screens use Navigation to open the space/document drawer; the outline collapses above the document.
-2. Create a document with New document, edit its title/body, and press Save. Reload to verify persisted content. Save stays disabled while unchanged or invalid. There is no autosave.
+2. Create a document with New document, edit its title/body, and press Save. Reload to verify persisted content. The Tiptap toolbar supports the existing text styles, bold, italic, inline code, lists, and links. Undo/Redo use editor history and remain available after Save; keyboard shortcuts are Ctrl/Cmd+Z and Ctrl/Cmd+Shift+Z. Title input uses native browser editing. Save stays disabled while unchanged or invalid. There is no autosave.
 3. Open History, select an earlier revision, and restore it. Restore appends a new revision. Unsaved changes require explicit discard; Keep editing returns to the complete local draft.
 4. Open Document actions to archive, unarchive, or Export JSON. Show archived includes archived documents in the list. Archive/unarchive preserves history and advances only the lifecycle lock version. Archived content is read-only.
 5. Inspect the downloaded `scrawl-document-<id>.json` in a text editor, or run `cat /path/to/download.json`. It contains the current saved native snapshot and minimal provenance, not unsaved edits or authentication/session records. Export remains permission-checked and is not a full backup/import system.
@@ -166,6 +166,10 @@ Open that exact HTTPS origin from a device on the tailnet. This explicit server-
 8. Log in as reader: read, history, and authorized export are available; mutations are denied by the API as well as absent from the controls. Log in as outsider: no private titles, content, history, or versions appear. The live app has no search UI or simulated results; fixture search remains only in the approved disconnected prototype.
 
 Private drafts live only in memory. No localStorage, IndexedDB, service worker, persisted query cache, or background refresh stores/replaces private content. Concurrent changes are discovered on explicit operations, not a collaboration channel.
+
+To edit a link, select text and choose Link, or click an existing link while editing. The URL popover loads the current address, accepts only the server's supported absolute http/https/mailto URLs, and offers Apply link, Remove link, and Cancel. Escape cancels and returns focus to the editor. Invalid addresses leave the existing document intact. The application adds no automatic link or Markdown conversion.
+
+Discard changes beside Save opens the same confirmation as dirty navigation. Keep editing preserves the complete draft. Confirming resets both title and body to this tab's baseline and clears local editor undo history, without an API write, new revision, or ETag change. A new document returns to "Untitled document" with an empty paragraph and remains uncreated until Save. After a 412, discard restores the old local baseline while retaining the latest-server comparison and conflict. Choose Use my changes or Use server version deliberately before another save; discard never silently adopts a newer ETag.
 
 ### Browser acceptance commands
 
@@ -178,9 +182,9 @@ NODE_ENV=test npm run test:db
 npm run test:browser
 ```
 
-The browser suite has no automatic retries. Authentication pacing follows the unchanged pinned library's rate limits. Failure screenshots, traces, and videos are disabled to avoid credential artifacts; the application clears its password field at submit. Manually captured review screenshots contain only synthetic document content. Browser tests cover real sessions, protected writes, persisted editor round trips, unsupported paste, history/restore, lifecycle/export, reader/outsider policy, two-tab reconciliation, dirty navigation, failed saves, session expiry, actual membership revocation, loading/error/empty states, keyboard operation, and the heading outline. They also execute Demo A against the same running API. P2 rollback/concurrency coverage remains in `test:db`.
+The browser suite has no automatic retries. Authentication pacing follows the unchanged pinned library's rate limits. Failure screenshots, traces, and videos are disabled to avoid credential artifacts; the application clears its password field at submit. Manually captured review screenshots contain only synthetic document content. Browser tests cover real sessions, protected writes, persisted editor round trips, toolbar/link commands, undo/redo across saves, confirmed local discard, unsupported paste, history/restore, lifecycle/export, reader/outsider policy, two-tab reconciliation, dirty navigation, failed saves, session expiry, actual membership revocation, loading/error/empty states, keyboard operation, and the heading outline. They also execute Demo A against the same running API. P2 rollback/concurrency coverage remains in `test:db`.
 
-Observed results and [actual-application screenshots](../VALIDATION.md#exact-commands-screenshots-and-remaining-limits) are recorded in validation. P4 stops for review; publishing and real search remain unimplemented.
+Observed results and [current editor screenshots](../VALIDATION.md#actual-checks-and-review-evidence) are recorded in validation. P4 stops for review; publishing and real search remain unimplemented.
 
 ## Demo C — selective public publishing
 

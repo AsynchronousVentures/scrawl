@@ -2,123 +2,19 @@
 // Copyright (C) 2026 Asynchronous Ventures and contributors
 
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
-import { Schema, type MarkSpec, type NodeSpec, type Node as NativeNode } from 'prosemirror-model';
-import { EditorState, type Command } from 'prosemirror-state';
-import { Decoration, DecorationSet, EditorView } from 'prosemirror-view';
-import { baseKeymap, newlineInCode, setBlockType, toggleMark } from 'prosemirror-commands';
-import { history, undo, redo } from 'prosemirror-history';
-import { keymap } from 'prosemirror-keymap';
-import { liftListItem, sinkListItem, splitListItemKeepMarks, wrapInList } from 'prosemirror-schema-list';
-import { CONTENT_LIMITS, contentSchema, validateContent, type ContentEnvelope } from '@scrawl/content';
+import { Extension, type Editor as TiptapEditor } from '@tiptap/core';
+import { EditorContent, useEditor, useEditorState } from '@tiptap/react';
+import { Plugin } from '@tiptap/pm/state';
+import { Decoration, DecorationSet, type EditorView } from '@tiptap/pm/view';
+import * as Toolbar from '@radix-ui/react-toolbar';
+import * as Popover from '@radix-ui/react-popover';
+import { Bold, Italic, Code, Link, List, ListOrdered, Undo2, Redo2, Unlink, X } from 'lucide-react';
+import { CONTENT_LIMITS, validateContent, type ContentEnvelope } from '@scrawl/content';
+import { restrictedExtensions } from './editor/extensions.js';
+import { supportedHTML, validLink } from './editor/clipboard.js';
 import 'prosemirror-view/style/prosemirror.css';
 
-// DOM representations belong to the editor. Grammar, attributes, validation,
-// and mark ordering come from the same public content contract as the server.
-const nodeDOM: Record<string, Pick<NodeSpec, 'toDOM' | 'parseDOM'>> = {
-  paragraph: { toDOM: () => ['p', 0], parseDOM: [{ tag: 'p' }] },
-  heading: {
-    toDOM: node => [`h${String(node.attrs.level)}`, 0],
-    parseDOM: [1, 2, 3, 4, 5, 6].map(level => ({ tag: `h${level}`, attrs: { level } })),
-  },
-  bulletList: { toDOM: () => ['ul', 0], parseDOM: [{ tag: 'ul' }] },
-  orderedList: {
-    toDOM: node => ['ol', { start: String(node.attrs.start) }, 0],
-    parseDOM: [{ tag: 'ol', getAttrs: element => ({ start: Number(element.getAttribute('start') ?? 1) }) }],
-  },
-  listItem: { toDOM: () => ['li', 0], parseDOM: [{ tag: 'li' }] },
-  codeBlock: {
-    toDOM: node => ['pre', ['code', node.attrs.language === null ? {} : { 'data-language': String(node.attrs.language) }, 0]],
-    parseDOM: [{
-      tag: 'pre', preserveWhitespace: 'full', contentElement: 'code',
-      getAttrs: element => ({ language: element.querySelector('code')?.getAttribute('data-language') ?? null }),
-    }],
-  },
-  hardBreak: { toDOM: () => ['br'], parseDOM: [{ tag: 'br' }] },
-};
-const markDOM: Record<string, Pick<MarkSpec, 'toDOM' | 'parseDOM'>> = {
-  bold: { toDOM: () => ['strong', 0], parseDOM: [{ tag: 'strong' }, { tag: 'b' }] },
-  italic: { toDOM: () => ['em', 0], parseDOM: [{ tag: 'em' }, { tag: 'i' }] },
-  code: { toDOM: () => ['code', 0], parseDOM: [{ tag: 'code' }] },
-  link: {
-    toDOM: mark => ['a', { href: String(mark.attrs.href), target: '_blank', rel: 'noopener noreferrer' }, 0],
-    parseDOM: [{ tag: 'a[href]', getAttrs: element => ({ href: element.getAttribute('href') }) }],
-  },
-};
-let nodes = contentSchema.spec.nodes;
-let marks = contentSchema.spec.marks;
-nodes.forEach((name, spec) => { nodes = nodes.update(name, { ...spec, ...nodeDOM[name] }); });
-marks.forEach((name, spec) => { marks = marks.update(name, { ...spec, ...markDOM[name] }); });
-const editorSchema = new Schema({ nodes, marks });
-
 type Heading = { id: string; text: string; level: number };
-type Selection = { block: string; bold: boolean; italic: boolean; code: boolean; list: string | null; language: string; start: number };
-const emptySelection: Selection = { block: 'paragraph', bold: false, italic: false, code: false, list: null, language: '', start: 1 };
-
-function validLink(href: string): boolean {
-  try {
-    validateContent({
-      format: 'prosemirror-json', schemaVersion: 1,
-      document: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'link', marks: [{ type: 'link', attrs: { href } }] }] }] },
-    });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** Check raw clipboard markup before the native parser can discard anything. */
-function supportedHTML(html: string): boolean {
-  const allowed = new Set(['P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'UL', 'OL', 'LI', 'PRE', 'CODE', 'BR', 'STRONG', 'B', 'EM', 'I', 'A']);
-  const parsed = document.createElement('template');
-  parsed.innerHTML = html;
-  for (const element of parsed.content.querySelectorAll('*')) {
-    if (!allowed.has(element.tagName)) return false;
-    for (const attribute of element.attributes) {
-      const name = attribute.name;
-      // ProseMirror supplies slice context for native copy/paste. It does not
-      // become an attribute in persisted JSON.
-      if (name === 'data-pm-slice' && supportedSlice(attribute.value)) continue;
-      if (element.tagName === 'A' && name === 'href') continue;
-      if (element.tagName === 'A' && name === 'target' && attribute.value === '_blank') continue;
-      if (element.tagName === 'A' && name === 'rel' && attribute.value === 'noopener noreferrer') continue;
-      if (element.tagName === 'OL' && name === 'start' && /^[1-9][0-9]*$/.test(attribute.value)) continue;
-      if (element.tagName === 'CODE' && name === 'data-language' && /^[A-Za-z0-9_+.-]{1,64}$/.test(attribute.value)) continue;
-      return false;
-    }
-    if (element.tagName === 'A' && !validLink(element.getAttribute('href') ?? '')) return false;
-    if (element.tagName === 'PRE') {
-      if (element.children.length !== 1 || element.firstElementChild?.tagName !== 'CODE'
-        || element.firstElementChild.children.length || [...element.childNodes].some(child => child.nodeType === Node.TEXT_NODE && child.textContent?.trim())) return false;
-    }
-    if (element.tagName === 'CODE' && element.hasAttribute('data-language') && element.parentElement?.tagName !== 'PRE') return false;
-  }
-  return true;
-}
-
-function supportedSlice(value: string): boolean {
-  const match = /^(\d+) (\d+) (\[.*\])$/.exec(value);
-  if (!match || value.length > CONTENT_LIMITS.maxDepth * 160
-    || Number(match[1]) > CONTENT_LIMITS.maxDepth || Number(match[2]) > CONTENT_LIMITS.maxDepth) return false;
-  try {
-    const context: unknown = JSON.parse(match[3]!);
-    if (!Array.isArray(context) || context.length % 2 || context.length > CONTENT_LIMITS.maxDepth * 2) return false;
-    for (let index = 0; index < context.length; index += 2) {
-      const name: unknown = context[index], attrs: unknown = context[index + 1];
-      if (typeof name !== 'string' || !['doc', 'paragraph', 'heading', 'bulletList', 'orderedList', 'listItem', 'codeBlock'].includes(name)) return false;
-      if (attrs === null) continue;
-      if (typeof attrs !== 'object' || Array.isArray(attrs)) return false;
-      const supplied = attrs as Record<string, unknown>;
-      const definitions = contentSchema.spec.nodes.get(name)?.attrs ?? {};
-      if (Object.keys(supplied).some(key => !Object.hasOwn(definitions, key))) return false;
-      for (const [key, definition] of Object.entries(definitions)) {
-        if (typeof definition.validate === 'function') definition.validate(key in supplied ? supplied[key] : definition.default);
-      }
-    }
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 export function Editor({ initialContent, editable, onChange, onValidationChange, header, label = 'Document body' }: {
   initialContent: ContentEnvelope;
@@ -129,142 +25,151 @@ export function Editor({ initialContent, editable, onChange, onValidationChange,
   label?: string;
 }) {
   const identifier = `editor-${useId().replace(/[^a-zA-Z0-9_-]/g, '-')}`;
-  const mount = useRef<HTMLDivElement>(null);
-  const view = useRef<EditorView | null>(null);
-  const initial = useRef(initialContent);
+  // Saved baseline updates do not replace local content or Tiptap undo history.
+  // The parent remounts only for an intentional replacement or discard.
+  const [initial] = useState(() => validateContent(initialContent).content);
   const callbacks = useRef({ onChange, onValidationChange });
   const mayEdit = useRef(editable);
+  const editorRef = useRef<TiptapEditor | null>(null);
+  const plainPaste = useRef(false);
   const linkInput = useRef<HTMLInputElement>(null);
+  const linkSelection = useRef<{ from: number; to: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [selection, setSelection] = useState(emptySelection);
-  const [headings, setHeadings] = useState<Heading[]>([]);
   const [activeHeading, setActiveHeading] = useState<string | null>(null);
   const [outlineOpen, setOutlineOpen] = useState(true);
   const [linkOpen, setLinkOpen] = useState(false);
   const [linkValue, setLinkValue] = useState('');
+  const [linkError, setLinkError] = useState<string | null>(null);
+  const [editingLink, setEditingLink] = useState(false);
   callbacks.current = { onChange, onValidationChange };
   mayEdit.current = editable;
 
-  useEffect(() => {
-    if (!mount.current) return;
-    function validation(message: string | null) {
-      setError(message);
-      callbacks.current.onValidationChange?.(message);
-    }
-    function updatePresentation(current: EditorView) {
-      const nextHeadings: Heading[] = [];
-      current.state.doc.descendants((node, position) => {
-        if (node.type.name !== 'heading') return;
-        const id = `${identifier}-heading-${position}`;
-        nextHeadings.push({ id, text: node.textContent || 'Untitled section', level: Number(node.attrs.level) });
-      });
-      setHeadings(nextHeadings);
-      const { $from, from, to, empty } = current.state.selection;
-      const applied = current.state.storedMarks ?? $from.marks();
-      const active = (name: string) => {
-        const mark = editorSchema.marks[name]!;
-        return empty ? applied.some(item => item.type === mark) : current.state.doc.rangeHasMark(from, to, mark);
-      };
+  function validation(message: string | null) {
+    setError(message);
+    callbacks.current.onValidationChange?.(message);
+  }
+
+  function redrawAcceptedState() {
+    // Browser input can change contenteditable DOM before its transaction.
+    queueMicrotask(() => {
+      const current = editorRef.current;
+      if (current && !current.isDestroyed) current.view.updateState(current.state);
+    });
+  }
+
+  const [extensions] = useState(() => [
+    ...restrictedExtensions,
+    Extension.create({
+      name: 'scrawlContentGuard',
+      addProseMirrorPlugins() {
+        return [new Plugin({
+          filterTransaction(transaction) {
+            if (!transaction.docChanged) return true;
+            if (!mayEdit.current) { redrawAcceptedState(); return false; }
+            try {
+              validateContent({ format: 'prosemirror-json', schemaVersion: 1, document: transaction.doc.toJSON() });
+              return true;
+            } catch {
+              validation('This edit was rejected because the content is unsupported or exceeds its size, depth, or node limit. Your previous document is retained.');
+              redrawAcceptedState();
+              return false;
+            }
+          },
+        })];
+      },
+    }),
+  ]);
+
+  const editor = useEditor({
+    extensions,
+    content: initial.document,
+    editable,
+    // This Vite app renders only in the browser. Creating the editor immediately
+    // gives useEditorState a real initial snapshot, before any edit or focus.
+    immediatelyRender: true,
+    injectCSS: false,
+    shouldRerenderOnTransaction: false,
+    enableContentCheck: true,
+    enableInputRules: false,
+    enablePasteRules: false,
+    enableCoreExtensions: { textDirection: false },
+    editorProps: {
+      attributes: {
+        role: 'textbox', 'aria-label': label, 'aria-multiline': 'true',
+        'aria-readonly': String(!editable), 'aria-describedby': `${identifier}-error`, tabindex: '0',
+      },
+      decorations(state) {
+        const headings: Decoration[] = [];
+        state.doc.descendants((node, position) => {
+          if (node.type.name === 'heading') headings.push(Decoration.node(position, position + node.nodeSize, {
+            id: `${identifier}-heading-${position}`, tabindex: '-1',
+          }));
+        });
+        return DecorationSet.create(state.doc, headings);
+      },
+      handleKeyDown: (_view, event) => {
+        plainPaste.current = (event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'v';
+        return false;
+      },
+      handleDOMEvents: {
+        paste: (view, event) => {
+          const plain = plainPaste.current;
+          plainPaste.current = false;
+          if (rejectClipboard(event.clipboardData, event, plain)) return true;
+          if (plain && event.clipboardData) {
+            event.preventDefault();
+            view.pasteText(event.clipboardData.getData('text/plain'), event);
+            return true;
+          }
+          return false;
+        },
+        drop: (_view, event) => rejectClipboard(event.dataTransfer, event),
+      },
+      // ProseMirror classifies rapid repeated clicks independently of clicks in
+      // the toolbar/popover. Existing links remain editable for each click kind.
+      handleClick: editClickedLink,
+      handleDoubleClick: editClickedLink,
+      handleTripleClick: editClickedLink,
+    },
+    onUpdate({ editor: current }) {
+      const content = validateContent({ format: 'prosemirror-json', schemaVersion: 1, document: current.getJSON() }).content;
+      validation(null);
+      callbacks.current.onChange(content);
+    },
+  });
+  editorRef.current = editor;
+
+  const selection = useEditorState({
+    editor,
+    selector: ({ editor: current }) => {
+      if (!current) return null;
+      const parent = current.state.selection.$from.parent;
       let list: string | null = null, start = 1;
-      for (let depth = $from.depth; depth > 0; depth--) {
-        const ancestor = $from.node(depth);
+      for (let depth = current.state.selection.$from.depth; depth > 0; depth--) {
+        const ancestor = current.state.selection.$from.node(depth);
         if (ancestor.type.name === 'bulletList' || ancestor.type.name === 'orderedList') {
           list = ancestor.type.name; start = Number(ancestor.attrs.start ?? 1); break;
         }
       }
-      setSelection({
-        block: $from.parent.type.name === 'heading' ? `heading-${String($from.parent.attrs.level)}` : $from.parent.type.name,
-        bold: active('bold'), italic: active('italic'), code: active('code'), list,
-        language: typeof $from.parent.attrs.language === 'string' ? $from.parent.attrs.language : '', start,
+      const headings: Heading[] = [];
+      current.state.doc.descendants((node, position) => {
+        if (node.type.name === 'heading') headings.push({ id: `${identifier}-heading-${position}`, text: node.textContent || 'Untitled section', level: Number(node.attrs.level) });
       });
-    }
-    let native: NativeNode;
-    try {
-      native = editorSchema.nodeFromJSON(validateContent(initial.current).content.document);
-      native.check();
-    } catch {
-      validation('This content is unsupported. The editor has not changed or discarded it.');
-      return;
-    }
-    let plainPaste = false;
-    function clipboard(event: ClipboardEvent | DragEvent): boolean {
-      const transfer = event instanceof ClipboardEvent ? event.clipboardData : event.dataTransfer;
-      if (!transfer) return false;
-      const html = transfer.getData('text/html');
-      const text = transfer.getData('text/plain');
-      const plain = plainPaste && event instanceof ClipboardEvent;
-      plainPaste = false;
-      if (transfer.files.length || new TextEncoder().encode(plain ? text : html || text).byteLength > CONTENT_LIMITS.maxBytes
-        || (!plain && html && !supportedHTML(html))) {
-        event.preventDefault();
-        validation('Paste was rejected. Unsupported formatting, files, links, or oversized content cannot be inserted. Use plain-text paste for text only.');
-        return true;
-      }
-      return false;
-    }
-    const current = new EditorView(mount.current, {
-      state: EditorState.create({
-        doc: native,
-        plugins: [
-          history(),
-          keymap({
-            'Mod-z': undo, 'Mod-Shift-z': redo, 'Mod-y': redo,
-            'Mod-b': toggleMark(editorSchema.marks.bold!), 'Mod-i': toggleMark(editorSchema.marks.italic!),
-            'Mod-`': toggleMark(editorSchema.marks.code!),
-            Enter: splitListItemKeepMarks(editorSchema.nodes.listItem!),
-            'Mod-[': liftListItem(editorSchema.nodes.listItem!), 'Mod-]': sinkListItem(editorSchema.nodes.listItem!),
-            'Shift-Enter': (state, dispatch) => {
-              if (state.selection.$from.parent.type.name === 'codeBlock') return newlineInCode(state, dispatch);
-              dispatch?.(state.tr.replaceSelectionWith(editorSchema.nodes.hardBreak!.create()).scrollIntoView());
-              return true;
-            },
-          }),
-          keymap(baseKeymap),
-        ],
-      }),
-      editable: () => mayEdit.current,
-      attributes: { role: 'textbox', 'aria-label': label, 'aria-multiline': 'true', 'aria-readonly': String(!mayEdit.current), 'aria-describedby': `${identifier}-error`, tabindex: '0' },
-      decorations(state) {
-        const decorated: Decoration[] = [];
-        state.doc.descendants((node, position) => {
-          if (node.type.name === 'heading') decorated.push(Decoration.node(position, position + node.nodeSize, {
-            id: `${identifier}-heading-${position}`, tabindex: '-1',
-          }));
-        });
-        return DecorationSet.create(state.doc, decorated);
-      },
-      handleDOMEvents: { paste: (_current, event) => clipboard(event), drop: (_current, event) => clipboard(event) },
-      handleKeyDown: (_current, event) => { plainPaste = (event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'v'; return false; },
-      dispatchTransaction(transaction) {
-        if (transaction.docChanged && !mayEdit.current) { current.updateState(current.state); return; }
-        const next = current.state.apply(transaction);
-        let content: ContentEnvelope | undefined;
-        if (transaction.docChanged) {
-          try {
-            content = validateContent({ format: 'prosemirror-json', schemaVersion: 1, document: next.doc.toJSON() }).content;
-          } catch {
-            current.updateState(current.state);
-            validation('This edit was rejected because the content is unsupported or exceeds its size, depth, or node limit. Your previous document is retained.');
-            return;
-          }
-        }
-        current.updateState(next);
-        updatePresentation(current);
-        if (content) { validation(null); callbacks.current.onChange(content); }
-      },
-    });
-    view.current = current;
-    updatePresentation(current);
-    return () => { view.current = null; current.destroy(); };
-    // Snapshot replacement is deliberate: the parent supplies a new React key.
-    // Changes to initialContent never replace local edits in an existing view.
-  }, [identifier]);
+      return {
+        block: parent.type.name === 'heading' ? `heading-${String(parent.attrs.level)}` : parent.type.name,
+        bold: current.isActive('bold'), italic: current.isActive('italic'), code: current.isActive('code'),
+        link: current.isActive('link'), list, start,
+        language: typeof parent.attrs.language === 'string' ? parent.attrs.language : '',
+        undo: current.can().undo(), redo: current.can().redo(), headings,
+      };
+    },
+  });
+  const headings = selection?.headings ?? [];
 
   useEffect(() => {
-    view.current?.setProps({ editable: () => editable, attributes: { role: 'textbox', 'aria-label': label, 'aria-multiline': 'true', 'aria-readonly': String(!editable), 'aria-describedby': `${identifier}-error`, tabindex: '0' } });
+    if (editor && editor.isEditable !== editable) editor.setEditable(editable, false);
     if (!editable) setLinkOpen(false);
-  }, [editable, identifier, label]);
-  useEffect(() => { if (linkOpen) linkInput.current?.focus(); }, [linkOpen]);
+  }, [editor, editable]);
   useEffect(() => {
     const narrow = matchMedia('(max-width: 980px)');
     const resize = () => setOutlineOpen(!narrow.matches);
@@ -281,82 +186,115 @@ export function Editor({ initialContent, editable, onChange, onValidationChange,
     return () => window.removeEventListener('scroll', update, true);
   }, [headings]);
 
-  function command(operation: Command) {
-    const current = view.current;
-    if (!current || !editable) return;
-    operation(current.state, current.dispatch, current);
-    current.focus();
+  function rejectClipboard(transfer: DataTransfer | null, event: ClipboardEvent | DragEvent, plain = false) {
+    if (!transfer) return false;
+    const html = transfer.getData('text/html'), text = transfer.getData('text/plain');
+    if (transfer.files.length || new TextEncoder().encode(plain ? text : html || text).byteLength > CONTENT_LIMITS.maxBytes
+      || (!plain && html && !supportedHTML(html))) {
+      event.preventDefault();
+      validation('Paste was rejected. Unsupported formatting, files, links, or oversized content cannot be inserted. Use plain-text paste for text only.');
+      return true;
+    }
+    return false;
   }
+
   function block(value: string) {
-    if (value.startsWith('heading-')) command(setBlockType(editorSchema.nodes.heading!, { level: Number(value.slice(8)) }));
-    else if (value === 'codeBlock') command(setBlockType(editorSchema.nodes.codeBlock!, { language: null }));
-    else command(setBlockType(editorSchema.nodes.paragraph!));
+    if (!editor || !editable) return;
+    if (/^heading-[1-6]$/.test(value)) {
+      const level = Number(value.slice(8));
+      if (level === 1 || level === 2 || level === 3 || level === 4 || level === 5 || level === 6) editor.chain().focus().setHeading({ level }).run();
+    } else if (value === 'codeBlock') editor.chain().focus().setCodeBlock().run();
+    else editor.chain().focus().setParagraph().run();
   }
-  function changeListStart(value: string) {
-    const start = Number(value), current = view.current;
-    if (!current || !Number.isInteger(start) || start < 1 || start > 2_147_483_647) return;
-    for (let depth = current.state.selection.$from.depth; depth > 0; depth--) {
-      if (current.state.selection.$from.node(depth).type.name === 'orderedList') {
-        current.dispatch(current.state.tr.setNodeMarkup(current.state.selection.$from.before(depth), undefined, { start }));
-        return;
-      }
-    }
+
+  function openLink() {
+    const current = editorRef.current;
+    if (!current || !mayEdit.current) return;
+    // Radix owns focus while this form is open. Tiptap's deferred focus() would
+    // steal focus after keyboard activation and dismiss the popover immediately.
+    current.commands.extendMarkRange('link');
+    const { from, to } = current.state.selection;
+    linkSelection.current = { from, to };
+    const href: unknown = current.getAttributes('link').href;
+    setEditingLink(current.isActive('link'));
+    setLinkValue(typeof href === 'string' ? href : '');
+    setLinkError(null);
+    setLinkOpen(true);
   }
-  function changeLanguage(value: string) {
-    const current = view.current;
-    if (!current || !editable) return;
-    setBlockType(editorSchema.nodes.codeBlock!, { language: value || null })(current.state, current.dispatch, current);
+
+  function editClickedLink(view: EditorView, position: number, event: MouseEvent) {
+    const anchor = event.target instanceof Element ? event.target.closest('a[href]') : null;
+    if (!mayEdit.current || !anchor || !view.dom.contains(anchor)) return false;
+    event.preventDefault();
+    editorRef.current?.commands.setTextSelection(position);
+    openLink();
+    return true;
   }
+
   function applyLink(remove = false) {
-    const current = view.current;
-    if (!current || !editable) return;
+    if (!editor || !editable || !linkSelection.current) return;
     if (!remove && !validLink(linkValue)) {
-      const message = 'Enter an absolute HTTP, HTTPS, or mailto URL without spaces, credentials, or control characters.';
-      setError(message); callbacks.current.onValidationChange?.(message); return;
+      setLinkError('Use an absolute HTTP, HTTPS, or mailto URL without spaces, credentials, or control characters.');
+      linkInput.current?.focus();
+      return;
     }
-    const { from, to, empty } = current.state.selection;
-    let transaction = current.state.tr;
-    const type = editorSchema.marks.link!;
-    if (remove) transaction = empty ? transaction.removeStoredMark(type) : transaction.removeMark(from, to, type);
-    else {
-      const mark = type.create({ href: linkValue });
-      transaction = empty ? transaction.addStoredMark(mark) : transaction.addMark(from, to, mark);
-    }
-    current.dispatch(transaction); setLinkOpen(false); current.focus();
-    if (empty) { setError(null); callbacks.current.onValidationChange?.(null); }
+    const chain = editor.chain().focus().setTextSelection(linkSelection.current).extendMarkRange('link');
+    if (remove) chain.unsetLink().run();
+    else chain.setLink({ href: linkValue }).run();
+    setLinkOpen(false);
   }
+
+  const codeBlock = selection?.block === 'codeBlock';
 
   return <div className="editor-layout">
     <div className="editor-content">
       {header}
       {editable && <>
-        <div className="editor-toolbar" role="group" aria-label="Document formatting">
-          <select aria-label="Text style" value={selection.block} onChange={event => block(event.target.value)}>
+        <Toolbar.Root className="editor-toolbar" aria-label="Document formatting" loop>
+          <select aria-label="Text style" value={selection?.block ?? 'paragraph'} onChange={event => block(event.target.value)} disabled={!editor}>
             <option value="paragraph">Paragraph</option>
             {[1, 2, 3, 4, 5, 6].map(level => <option key={level} value={`heading-${level}`}>Heading {level}</option>)}
             <option value="codeBlock">Code block</option>
           </select>
-          <button type="button" aria-label="Bold" aria-pressed={selection.bold} disabled={selection.block === 'codeBlock'} onMouseDown={event => event.preventDefault()} onClick={() => command(toggleMark(editorSchema.marks.bold!))}><b>B</b></button>
-          <button type="button" aria-label="Italic" aria-pressed={selection.italic} disabled={selection.block === 'codeBlock'} onMouseDown={event => event.preventDefault()} onClick={() => command(toggleMark(editorSchema.marks.italic!))}><i>I</i></button>
-          <button type="button" aria-label="Inline code" aria-pressed={selection.code} disabled={selection.block === 'codeBlock'} onMouseDown={event => event.preventDefault()} onClick={() => command(toggleMark(editorSchema.marks.code!))}>Code</button>
-          <button type="button" disabled={selection.block === 'codeBlock'} aria-expanded={linkOpen} aria-controls={`${identifier}-link`} onMouseDown={event => event.preventDefault()} onClick={() => { setLinkValue(''); setLinkOpen(!linkOpen); }}>Link</button>
-          <button type="button" aria-label="Bulleted list" aria-pressed={selection.list === 'bulletList'} onMouseDown={event => event.preventDefault()} onClick={() => command(wrapInList(editorSchema.nodes.bulletList!))}>Bullets</button>
-          <button type="button" aria-label="Numbered list" aria-pressed={selection.list === 'orderedList'} onMouseDown={event => event.preventDefault()} onClick={() => command(wrapInList(editorSchema.nodes.orderedList!, { start: 1 }))}>Numbers</button>
-          {selection.list && <button type="button" onMouseDown={event => event.preventDefault()} onClick={() => command(liftListItem(editorSchema.nodes.listItem!))}>Remove list</button>}
-          <button type="button" onMouseDown={event => event.preventDefault()} onClick={() => command(undo)}>Undo</button>
-          <button type="button" onMouseDown={event => event.preventDefault()} onClick={() => command(redo)}>Redo</button>
-        </div>
-        {selection.block === 'codeBlock' && <label className="editor-note">Code language <input aria-label="Code language" value={selection.language} maxLength={64} onChange={event => changeLanguage(event.target.value)} /></label>}
-        {selection.list === 'orderedList' && <label className="editor-note">List starts at <input aria-label="Numbered list start" type="number" min="1" max="2147483647" value={selection.start} onChange={event => changeListStart(event.target.value)} /></label>}
-        {linkOpen && <div id={`${identifier}-link`} className="editor-link-editor" role="group" aria-label="Edit link">
-          <label htmlFor={`${identifier}-url`}>Link URL</label>
-          <input id={`${identifier}-url`} ref={linkInput} value={linkValue} onChange={event => setLinkValue(event.target.value)} maxLength={CONTENT_LIMITS.maxHrefLength} placeholder="https://example.test" onKeyDown={event => { if (event.key === 'Escape') { setLinkOpen(false); view.current?.focus(); } if (event.key === 'Enter') { event.preventDefault(); applyLink(); } }} />
-          <button type="button" onClick={() => applyLink()}>Apply link</button><button type="button" onClick={() => applyLink(true)}>Remove link</button><button type="button" onClick={() => { setLinkOpen(false); view.current?.focus(); }}>Cancel</button>
-        </div>}
-        <p className="editor-note">Save explicitly. Unsupported formatting is rejected. Shift+Enter inserts a line break.</p>
+          <Toolbar.Separator className="editor-toolbar-separator" />
+          <Toolbar.Button aria-label="Bold" title="Bold (Ctrl/Cmd+B)" aria-pressed={selection?.bold ?? false} disabled={!editor || codeBlock} onMouseDown={event => event.preventDefault()} onClick={() => editor?.chain().focus().toggleBold().run()}><Bold size={17} aria-hidden="true" /></Toolbar.Button>
+          <Toolbar.Button aria-label="Italic" title="Italic (Ctrl/Cmd+I)" aria-pressed={selection?.italic ?? false} disabled={!editor || codeBlock} onMouseDown={event => event.preventDefault()} onClick={() => editor?.chain().focus().toggleItalic().run()}><Italic size={17} aria-hidden="true" /></Toolbar.Button>
+          <Toolbar.Button aria-label="Inline code" title="Inline code (Ctrl/Cmd+E)" aria-pressed={selection?.code ?? false} disabled={!editor || codeBlock} onMouseDown={event => event.preventDefault()} onClick={() => editor?.chain().focus().toggleCode().run()}><Code size={17} aria-hidden="true" /></Toolbar.Button>
+          <Popover.Root open={linkOpen} onOpenChange={open => open ? openLink() : setLinkOpen(false)}>
+            <Toolbar.Button asChild>
+              <Popover.Trigger aria-label="Link" title="Add or edit link" aria-pressed={selection?.link ?? false} disabled={!editor || codeBlock} onMouseDown={event => event.preventDefault()}><Link size={17} aria-hidden="true" /></Popover.Trigger>
+            </Toolbar.Button>
+            <Popover.Portal>
+              <Popover.Content className="editor-link-editor" aria-label="Edit link" align="start" sideOffset={8} collisionPadding={12}
+                onOpenAutoFocus={event => { event.preventDefault(); linkInput.current?.focus(); }}
+                onCloseAutoFocus={event => { event.preventDefault(); if (editor && !editor.isDestroyed && linkSelection.current) editor.chain().focus().setTextSelection(linkSelection.current).run(); }}>
+                <form onSubmit={event => { event.preventDefault(); applyLink(); }}>
+                  <div className="editor-link-heading"><h2>{editingLink ? 'Edit link' : 'Add link'}</h2><Popover.Close type="button" aria-label="Close link editor" className="icon-button"><X size={16} aria-hidden="true" /></Popover.Close></div>
+                  <label htmlFor={`${identifier}-url`}>Link URL</label>
+                  <input id={`${identifier}-url`} ref={linkInput} value={linkValue} onChange={event => { setLinkValue(event.target.value); setLinkError(null); }} maxLength={CONTENT_LIMITS.maxHrefLength} placeholder="https://example.test" autoComplete="off" spellCheck={false} aria-invalid={Boolean(linkError)} aria-describedby={`${identifier}-link-help${linkError ? ` ${identifier}-link-error` : ''}`} />
+                  <p id={`${identifier}-link-help`} className="editor-link-help">{linkSelection.current?.from === linkSelection.current?.to ? 'Select document text to add a link.' : 'HTTP, HTTPS, or mailto. Applies to selected text.'}</p>
+                  {linkError && <p id={`${identifier}-link-error`} className="editor-link-error" role="alert">{linkError}</p>}
+                  <div className="editor-link-actions">
+                    {editingLink && <button type="button" className="editor-remove-link" onClick={() => applyLink(true)}><Unlink size={15} aria-hidden="true" />Remove link</button>}
+                    <Popover.Close type="button">Cancel</Popover.Close>
+                    <button type="submit" className="primary" disabled={!linkSelection.current || linkSelection.current.from === linkSelection.current.to}>Apply link</button>
+                  </div>
+                </form>
+              </Popover.Content>
+            </Popover.Portal>
+          </Popover.Root>
+          <Toolbar.Separator className="editor-toolbar-separator" />
+          <Toolbar.Button aria-label="Bulleted list" title="Bulleted list" aria-pressed={selection?.list === 'bulletList'} disabled={!editor} onMouseDown={event => event.preventDefault()} onClick={() => editor?.chain().focus().toggleBulletList().run()}><List size={17} aria-hidden="true" /></Toolbar.Button>
+          <Toolbar.Button aria-label="Numbered list" title="Numbered list" aria-pressed={selection?.list === 'orderedList'} disabled={!editor} onMouseDown={event => event.preventDefault()} onClick={() => editor?.chain().focus().toggleOrderedList().run()}><ListOrdered size={17} aria-hidden="true" /></Toolbar.Button>
+          <Toolbar.Separator className="editor-toolbar-separator" />
+          <Toolbar.Button aria-label="Undo" title="Undo (Ctrl/Cmd+Z)" disabled={!selection?.undo} onMouseDown={event => event.preventDefault()} onClick={() => editor?.chain().focus().undo().run()}><Undo2 size={17} aria-hidden="true" /></Toolbar.Button>
+          <Toolbar.Button aria-label="Redo" title="Redo (Ctrl/Cmd+Shift+Z)" disabled={!selection?.redo} onMouseDown={event => event.preventDefault()} onClick={() => editor?.chain().focus().redo().run()}><Redo2 size={17} aria-hidden="true" /></Toolbar.Button>
+        </Toolbar.Root>
+        {codeBlock && <label className="editor-note">Code language <input aria-label="Code language" value={selection?.language ?? ''} maxLength={64} onChange={event => editor?.commands.updateAttributes('codeBlock', { language: event.target.value || null })} /></label>}
+        {selection?.list === 'orderedList' && <label className="editor-note">List starts at <input aria-label="Numbered list start" type="number" min="1" max="2147483647" value={selection.start} onChange={event => { const start = Number(event.target.value); if (Number.isInteger(start) && start >= 1 && start <= 2_147_483_647) editor?.commands.updateAttributes('orderedList', { start }); }} /></label>}
       </>}
       <p id={`${identifier}-error`} className="editor-error" role="alert" hidden={!error}>{error}</p>
-      <div className="editor-mount" ref={mount} />
+      <EditorContent className="editor-mount" editor={editor} />
     </div>
     <details className="editor-outline" open={outlineOpen} onToggle={event => setOutlineOpen(event.currentTarget.open)}>
       <summary>On this page</summary>
