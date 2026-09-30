@@ -1,6 +1,6 @@
 # Architecture — a real core with connected capabilities
 
-**Status:** intended boundaries; only system/foundation source exists now.
+**Status:** platform and P1 identity/space access are implemented; document/capability boundaries remain planned.
 
 ## One application, explicit composition
 
@@ -80,7 +80,7 @@ Persist revision snapshots and derive plain text deterministically. HTML is a re
 
 One backend process and PostgreSQL. Add a private file volume in P7. No Redis, queue, vector database, dynamic module loading or microservices. Fastify's built-in plugin registration is sufficient for composing first-party route groups. [S12]
 
-Prisma and Better Auth are not installed in the starting scaffold. Evaluate a version-matched supported pair, record the versions, commit one migration history, and replace the readiness pool coherently rather than keeping redundant database clients accidentally. Better Auth's guide generates schema and delegates migration to Prisma. [S5]
+P1 uses Better Auth 1.7.6 and Prisma 7.10.0, with one pg pool shared by Prisma and readiness. Better Auth's generated auth model layout feeds the reviewed Prisma migration history; no second migration engine is used. Core identity resolves real sessions and rechecks current sessions/roles after transaction locks. Core spaces owns visibility queries and membership transactions. HTTP adapters only validate, translate, and serialize explicit DTOs. [S5]
 
 A small exporter does not need an asynchronous job. Large import/export workloads may justify durable jobs later; do not add them before measuring the synchronous limits. Events that must survive crashes require durable delivery when introduced, never a correctness-critical in-memory emitter.
 

@@ -1,14 +1,16 @@
 # Initial schema brief — relational invariants before ORM syntax
 
-This is an implementation brief, **not a generated or validated Prisma schema**. P1 chooses the exact adapter/client major. P2 translates these invariants into that version's schema plus reviewed SQL migrations where necessary.
+P1 identity/access is implemented in [schema.prisma](../prisma/schema.prisma) with Prisma 7.10.0 and one reviewed migration history. The remaining sections are implementation briefs for later packets, not implemented models. P2 translates its invariants into the selected version's schema plus reviewed SQL migrations where necessary.
 
 ## P1: identity and access
 
-Use the authentication library's user, session, account and verification records. Keep its stable user ID; do not build another competing identity registry. Instance role is server-controlled (`administrator` or `member`); account creation/update input cannot self-assign administrator. The precise field/table placement follows the proven adapter setup.
+Use the authentication library's user, session, account and verification records. Keep its stable user ID; do not build another competing identity registry. Instance role is server-controlled (`administrator` or `member`); account creation/update input cannot self-assign administrator. P1 stores `role` on the auth-owned User with a `member` default and a database check. Better Auth's admin schema marks role and ban fields as server-only input. Host commands alone create accounts; auth-owned tables retain the library-generated field layout.
 
 `Space`: immutable ID, display name, creator ID, timestamps, integer lock version.
 
 `SpaceMembership`: space ID, user ID, role (`reader` or `editor`), timestamps. Unique `(spaceId, userId)`. Membership edits and space creation require an administrator in the demos. Administrators have access to every space; this is not a design in which private content is hidden from the instance operator.
+
+P1 uses PostgreSQL UUIDs for Space IDs, UTC timestamps, a positive `lockVersion` starting at 1, and a composite membership primary key with a reader/editor role check. Every successful grant/change/revoke advances the space version, including repeated same-role grants or revocation of an already-absent membership.
 
 Use text-compatible foreign keys for auth user IDs rather than assuming the library emits UUIDs. Product-owned IDs may use UUIDs represented as strings externally. User deletion is out of the demo scope; deactivation/revocation must not cascade-delete document history.
 

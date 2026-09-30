@@ -8,7 +8,7 @@
 
 **Revision:** 3, 2026-09-29
 
-**Status:** implementation plan; only foundation source is present
+**Status:** P1 identity/access implemented and verified locally; subsequent packets remain planned
 
 ## 1. What we are building
 
@@ -51,7 +51,7 @@ Fastify route schemas own validation and HTTP serialization; generate OpenAPI fr
 
 Use Better Auth as the first authentication candidate. Its official integration guides cover Fastify and Prisma, but the real combination must be tested. Its current Prisma guide uses version 7, while current Prisma documentation also describes version 8 with different APIs. Start by evaluating a supported, security-maintained Prisma 7 / Better Auth combination matching that guide; do not silently mix majors. If that baseline is not suitable, stop and record a supported alternative rather than hand-writing an authentication adapter. Pin exact verified versions and use matching docs. [S5][S6][S7]
 
-The current package has only Fastify, Swagger generation, and `pg`; ORM/auth dependencies are added in P1. One migration history owns the entire schema. Auth model generation feeds reviewed Prisma migrations rather than a second migration engine. [S5]
+P1 retains Fastify, Swagger generation, and `pg`, and pins Better Auth 1.7.6 with Prisma/client/adapter-pg 7.10.0. Compatibility and targeted transitive advisory fixes are recorded in [VALIDATION.md](../VALIDATION.md). One migration history owns the entire schema. Auth model generation feeds reviewed Prisma migrations rather than a second migration engine. [S5]
 
 Use a restricted Tiptap/ProseMirror-compatible JSON body, validated on the server and versioned independently of the API. Existing libraries supply the editor and schema primitives; custom code defines product rules. JSON persistence is not a promise of future collaborative editing support. [S8]
 

@@ -22,7 +22,7 @@ These are proposed engineering choices the agent may refine through a short deci
 | --- | --- |
 | Runtime | Node.js 24; one TypeScript backend, npm initially |
 | HTTP | Fastify, route schemas, generated OpenAPI, REST `/api/v1` |
-| ORM/auth | Test a supported Prisma/Better Auth pair against PostgreSQL before adding domain code |
+| ORM/auth | Better Auth 1.7.6 / Prisma 7.10.0 verified against PostgreSQL in P1; exact pins and transitive overrides recorded in VALIDATION.md |
 | First sign-in | Local library-managed account/session; closed registration; host CLI provisions users |
 | OIDC | Optional integration after the local document loop; not a Demo A prerequisite |
 | Permission model | Space reader/editor; instance administrator has all-space access |

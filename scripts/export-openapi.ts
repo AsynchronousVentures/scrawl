@@ -4,9 +4,15 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { buildApp } from '../src/app.js';
 import { readConfig } from '../src/config.js';
+import { randomBytes } from 'node:crypto';
+import { createDatabase } from '../src/db/client.js';
+import { createCore } from '../src/core/index.js';
 
+const config = readConfig({ NODE_ENV: 'test', DATABASE_URL: 'postgresql://unused@localhost/unused' });
+const database = createDatabase(config, () => {});
 const app = await buildApp({
-  config: readConfig({ NODE_ENV: 'test', DATABASE_URL: 'postgresql://unused@localhost/unused' }),
+  config,
+  core: createCore(database.prisma, { origin: 'http://127.0.0.1:3000', secret: randomBytes(32).toString('hex'), secureCookies: false }),
   checkDatabase: async () => { throw new Error('OpenAPI generation must not access the database'); },
   logging: false,
 });
@@ -16,4 +22,5 @@ try {
   await writeFile('artifacts/openapi.json', JSON.stringify(app.swagger(), null, 2) + '\n');
 } finally {
   await app.close();
+  await database.close();
 }

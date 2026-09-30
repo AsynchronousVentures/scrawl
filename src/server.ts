@@ -1,17 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Asynchronous Ventures and contributors
 
-import { readConfig } from './config.js';
+import { readConfig, readIdentityConfig } from './config.js';
 import { createDatabase } from './db/client.js';
 import { buildApp } from './app.js';
+import { createCore } from './core/index.js';
 
 async function main(): Promise<void> {
   // Only this composition root reads the environment.
   const config = readConfig(process.env);
+  const identityConfig = readIdentityConfig(process.env, config);
   const database = createDatabase(config, () => {
     console.error('An idle database connection failed');
   });
-  const app = await buildApp({ config, checkDatabase: () => database.ping() });
+  const core = createCore(database.prisma, identityConfig);
+  const app = await buildApp({ config, core, checkDatabase: () => database.ping() });
   app.addHook('onClose', async () => database.close());
 
   let stopping = false;
@@ -38,8 +41,7 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((error: unknown) => {
-  // Configuration errors are already sanitized by readConfig.
-  console.error(error instanceof Error ? error.message : 'API startup failed');
+main().catch(() => {
+  console.error('API startup failed; check configuration and database');
   process.exitCode = 1;
 });

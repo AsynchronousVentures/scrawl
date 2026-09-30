@@ -36,5 +36,6 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
+      - run: npm run db:migrate
       - run: npm run test:db
       - run: npm run openapi:export

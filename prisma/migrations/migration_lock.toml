@@ -1,0 +1,2 @@
+# Prisma owns the only migration history, including auth-owned records.
+provider = "postgresql"

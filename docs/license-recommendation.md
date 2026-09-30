@@ -31,7 +31,7 @@ Before a network demo or release:
 
 ## Dependencies and contributions
 
-Preserve dependency licenses and notices; this project cannot relicense third-party work merely by including it. Prefer compatible OSS modules and document any uncertain licenses before integration. P0 reviewed the resolved dependency license metadata and direct-package notices; see [VALIDATION.md](../VALIDATION.md). Review again when dependencies change.
+Preserve dependency licenses and notices; this project cannot relicense third-party work merely by including it. Prefer compatible OSS modules and document any uncertain licenses before integration. P0 and P1 reviewed the resolved dependency license metadata and package notices; see [VALIDATION.md](../VALIDATION.md). Review again when dependencies change.
 
 Contributions are accepted under the project license as described in CONTRIBUTING.md; no additional CLA, copyright assignment or signoff service is added here. Do not impose a new relicensing policy without an explicit decision.
 

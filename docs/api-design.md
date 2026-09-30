@@ -1,6 +1,6 @@
-# Proposed API — not implemented
+# Implemented P1 API and remaining proposals
 
-The scaffold is configured to generate OpenAPI for `/health/live` and `/health/ready` only. The following is a design proposal for subsequent milestones, not an executable contract or a promise these endpoints exist.
+Live/generated OpenAPI contains health routes and the P1 identity/space operations below. Document, revision, publishing, search, and file routes remain proposals and are absent from OpenAPI. Auth routes retain library request semantics under their separate namespace.
 
 ## Authentication and principal
 
@@ -8,7 +8,13 @@ Use the selected library's session endpoints under `/api/auth/*`. Product endpoi
 
 One deployment is one knowledge base, private by default with separately approved public projections. Do not accept arbitrary organization IDs to simulate multi-tenancy. Use server-resolved actor IDs and deny-by-default product access. Use local library-managed credentials/sessions, closed registration and explicit administrator provisioning/recovery for Demo A. Optional OIDC linking and richer onboarding are later assigned work, not prerequisites to the local demo.
 
-## Initial resource surface
+P1 mounts only `POST /api/auth/sign-in/email`, `GET /api/auth/get-session`, and `POST /api/auth/sign-out`. HTTP registration, profile/role changes, provisioning, recovery, and impersonation are absent. Auth success JSON allowlists user fields and session expiry, excluding raw session tokens. Auth errors preserve native codes with generic status messages; credentials are conveyed through library-managed HttpOnly cookies. This is a deliberate response restriction to meet the P1 requirement that JSON DTOs contain no credentials.
+
+`GET /api/v1/me` returns `{id, name, email, role}`. Space responses contain `{id, name, createdBy, createdAt, updatedAt, lockVersion}`. Space creation returns 201 with Location and ETag; read and membership mutations return ETag. PUT/DELETE membership returns the updated space DTO. A missing If-Match is 428; a stale single strong tag is 412; weak, wildcard, or multiple-tag syntax is 400. Check access before reporting these resource/precondition failures.
+
+Space listing returns `{items, nextCursor}`, filters visibility in the query, and accepts `limit` (1-100, default 50) and a UUID `cursor`. Ordering is by immutable ID. Instances with no accessible spaces return an empty list, with no hidden totals. Authenticated unauthorized resource requests return the same 404 as missing resources. Anonymous product requests are denied. Cookie-based product writes require the exact configured Origin.
+
+## Resource surface
 
 | Method and path | Behavior |
 | --- | --- |

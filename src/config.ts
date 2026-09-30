@@ -13,6 +13,34 @@ export type AppConfig = Readonly<{
   databasePoolMax: number;
 }>;
 
+export type IdentityConfig = Readonly<{
+  origin: string;
+  secret: string;
+  secureCookies: boolean;
+}>;
+
+/** Identity settings are required by the server/operator, not offline foundation tests. */
+export function readIdentityConfig(env: Environment, config: AppConfig): IdentityConfig {
+  const secret = env.AUTH_SECRET;
+  if (!secret || secret.length < 32 || /\s/.test(secret)) {
+    throw new Error('AUTH_SECRET must contain at least 32 characters without whitespace');
+  }
+  const production = config.nodeEnv === 'production';
+  const rawOrigin = env.APP_ORIGIN ?? (production ? '' : `http://127.0.0.1:${config.port}`);
+  let origin: string;
+  try {
+    const url = new URL(rawOrigin);
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password
+      || url.pathname !== '/' || url.search || url.hash || (production && url.protocol !== 'https:')) {
+      throw new Error('invalid');
+    }
+    origin = url.origin;
+  } catch {
+    throw new Error('APP_ORIGIN must be an HTTP origin, using HTTPS in production');
+  }
+  return Object.freeze({ origin, secret, secureCookies: production || origin.startsWith('https:') });
+}
+
 function integer(name: string, raw: string | undefined, fallback: number, min: number, max: number): number {
   const value = raw ?? String(fallback);
   if (!/^\d+$/.test(value)) throw new Error(`${name} must be an integer`);

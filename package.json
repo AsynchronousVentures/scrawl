@@ -15,18 +15,35 @@
     "test": "node --import tsx --test test/*.test.ts",
     "test:db": "node --env-file-if-exists=.env --import tsx --test test/integration/*.test.ts",
     "openapi:export": "node --import tsx scripts/export-openapi.ts",
-    "check": "npm run typecheck && npm test && npm run build"
+    "check": "npm run check:boundaries && npm run typecheck && npm test && npm run build",
+    "db:generate": "node --env-file-if-exists=.env node_modules/prisma/build/index.js generate",
+    "db:migrate": "node --env-file-if-exists=.env node_modules/prisma/build/index.js migrate deploy",
+    "operator": "node --env-file-if-exists=.env --import tsx scripts/operator.ts",
+    "postinstall": "npm run db:generate",
+    "check:boundaries": "node --import tsx scripts/check-boundaries.ts"
   },
   "dependencies": {
-    "fastify": "5.12.5",
     "@fastify/swagger": "9.9.0",
+    "@prisma/adapter-pg": "7.10.0",
+    "@prisma/client": "7.10.0",
+    "better-auth": "1.7.6",
+    "fastify": "5.12.5",
     "pg": "8.23.0"
   },
   "devDependencies": {
     "@types/node": "24.19.0",
     "@types/pg": "8.23.1",
+    "prisma": "7.10.0",
     "tsx": "4.23.15",
     "typescript": "5.9.3"
   },
-  "license": "AGPL-3.0-only"
+  "license": "AGPL-3.0-only",
+  "overrides": {
+    "@prisma/config": {
+      "deepmerge-ts": "8.0.2"
+    },
+    "prisma": {
+      "mysql2": "3.24.5"
+    }
+  }
 }

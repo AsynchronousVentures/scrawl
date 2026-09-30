@@ -7,15 +7,18 @@ import swagger from '@fastify/swagger';
 import type { AppConfig } from './config.js';
 import { registerProblemHandlers } from './http/problems.js';
 import { registerSystemRoutes } from './modules/system/routes.js';
+import { registerAuthRoutes, registerCoreRoutes } from './http/core-routes.js';
+import type { Core } from './core/index.js';
 
 type BuildOptions = {
   config: AppConfig;
   checkDatabase: () => Promise<void>;
   logging?: boolean;
+  core?: Core;
 };
 
 /** Builds the HTTP application without opening a port or connecting a database. */
-export async function buildApp({ config, checkDatabase, logging = true }: BuildOptions) {
+export async function buildApp({ config, checkDatabase, logging = true, core }: BuildOptions) {
   const app = Fastify({
     logger: logging ? {
       level: config.logLevel,
@@ -49,16 +52,23 @@ export async function buildApp({ config, checkDatabase, logging = true }: BuildO
       info: {
         title: 'Scrawl API',
         version: '0.0.0',
-        description: 'Foundation scaffold. Only system endpoints are implemented.',
+        description: 'System health, local identity, and authorized space access.',
       },
-      tags: [{ name: 'System', description: 'Operational health' }],
+      tags: [
+        { name: 'System', description: 'Operational health' },
+        { name: 'Identity', description: 'Current authenticated user' },
+        { name: 'Spaces', description: 'Authorized spaces and administrator membership changes' },
+      ],
     },
   });
   await registerSystemRoutes(app, checkDatabase);
+  if (core) {
+    registerAuthRoutes(app, core);
+    registerCoreRoutes(app, core);
+  }
   if (config.apiDocsEnabled) {
     app.get('/openapi.json', { schema: { hide: true } }, async () => app.swagger());
   }
 
-  // Identity and policy are introduced in P1.
   return app;
 }
