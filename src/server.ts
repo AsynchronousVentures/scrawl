@@ -32,30 +32,45 @@ async function main(): Promise<void> {
     await collaboration?.close(); await owner?.close(); await database.close();
     throw new Error('API composition failed');
   });
+  let shutdownPhase: 'collaboration' | 'http' | 'ownership' | 'database' | 'complete' = 'http';
   if (collaboration && owner) {
     collaboration.attach(app.server);
     // WebSocket shutdown must precede HTTP server closing, which otherwise waits on upgrades.
-    app.addHook('preClose', async () => collaboration.close(app.server));
+    app.addHook('preClose', async () => {
+      shutdownPhase = 'collaboration';
+      await collaboration.close(app.server);
+      shutdownPhase = 'http';
+    });
   }
-  app.addHook('onClose', async () => { await owner?.close(); await database.close(); });
+  app.addHook('onClose', async () => {
+    shutdownPhase = 'ownership'; await owner?.close();
+    shutdownPhase = 'database'; await database.close();
+    shutdownPhase = 'complete';
+  });
 
   let stopping = false;
   const shutdown = async (): Promise<void> => {
     if (stopping) return;
     stopping = true;
-    const timeout = setTimeout(() => process.exit(1), 10_000);
+    const timeout = setTimeout(() => {
+      console.error(`Graceful shutdown timed out during ${shutdownPhase}`);
+      process.exit(1);
+    }, 10_000);
     timeout.unref();
     try {
       await app.close();
       clearTimeout(timeout);
     } catch {
-      app.log.error('Graceful shutdown failed');
+      console.error(`Graceful shutdown failed during ${shutdownPhase}`);
       process.exitCode = 1;
     }
   };
   process.once('SIGTERM', () => { void shutdown(); });
   process.once('SIGINT', () => { void shutdown(); });
-  void owner?.lost.then(() => { process.exitCode = 1; void shutdown(); });
+  void owner?.lost.then(() => {
+    console.error('Collaboration ownership lost');
+    process.exitCode = 1; void shutdown();
+  });
   try {
     await app.listen({ host: config.host, port: config.port });
   } catch {

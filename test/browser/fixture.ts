@@ -47,9 +47,17 @@ export async function createBrowserDemo(options: { collaboration?: boolean } = {
       }, 12_000);
       child.once('close', () => { clearTimeout(deadline); done(); });
     });
+    const outputStart = output.length;
     child.kill('SIGTERM');
     await stopped;
-    if (child.exitCode !== 0) throw new Error(`Browser demo server failed to stop gracefully (exit ${child.exitCode}, signal ${child.signalCode})`);
+    if (child.exitCode !== 0) {
+      // Only recognize our fixed shutdown signals, never expose child output.
+      const stoppedOutput = output.slice(outputStart);
+      const signals = ['Collaboration ownership lost', ...['collaboration', 'http', 'ownership', 'database', 'complete'].flatMap(phase =>
+        ['timed out', 'failed'].map(reason => `Graceful shutdown ${reason} during ${phase}`))];
+      const signal = signals.find(value => stoppedOutput.includes(value));
+      throw new Error(`Browser demo server failed to stop gracefully (exit ${child.exitCode}, signal ${child.signalCode})${signal ? `: ${signal}` : ''}`);
+    }
   }
 
   async function close() {
