@@ -12,6 +12,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import sharp from 'sharp';
 import { ServerBlockNoteEditor } from '@blocknote/server-util';
+import { DefaultThreadStoreAuth } from '@blocknote/core/comments';
+import { YjsThreadStore } from '@blocknote/core/yjs';
 import * as Y from 'yjs';
 import { readConfig } from '../../src/config.js';
 import { createDatabase } from '../../src/db/client.js';
@@ -137,6 +139,86 @@ test('private native live storage uses PostgreSQL and genuine authenticated sess
     for (const headers of [reader, outsider]) {
       await problem(core.documents.live.update(headers, id, room.epoch, room.state), 404);
       await problem(checkpoint(headers), 404);
+    }
+  });
+  const commentDocument = await create();
+  let commentRoom = await core.documents.live.enroll(editor, commentDocument.id, documentEtag(commentDocument));
+  let threadId: string, commentId: string;
+  const commentBody = demoContent(['Private review, excluded from saved surfaces']).document;
+  const commentSnapshot = () => core.documents.live.read(reader, commentDocument.id);
+  function storedThread(state: Uint8Array) {
+    const doc = new Y.Doc({ gc: false });
+    doc.getXmlFragment('document'); doc.getMap('metadata'); doc.getMap('threads'); Y.applyUpdate(doc, state);
+    try { return new YjsThreadStore(editorUser.id, doc.getMap('threads'), new DefaultThreadStoreAuth(editorUser.id, 'editor')).getThread(threadId); }
+    finally { doc.destroy(); }
+  }
+  await t.test('official comment mutations derive authors, recheck permission and leave saved surfaces unchanged', async () => {
+    for (const headers of [reader, outsider]) await problem(core.documents.live.comment(headers, commentDocument.id, commentRoom.epoch,
+      { type: 'create', body: commentBody }, connections), 404);
+    await problem(core.documents.live.comment(editor, commentDocument.id, commentRoom.epoch,
+      { type: 'create', body: commentBody, userId: peerUser.id }), 400);
+    assert.deepEqual((await commentSnapshot()).state, commentRoom.state);
+    const created = await core.documents.live.comment(editor, commentDocument.id, commentRoom.epoch,
+      { type: 'create', body: commentBody }, connections);
+    assert(created.result?.type === 'thread'); threadId = created.result.id; commentId = created.result.comments[0]!.id;
+    await problem(core.documents.live.comment(editor, id, room.epoch, { type: 'reply', threadId, body: commentBody }), 404);
+    assert.equal(created.result.comments[0]!.userId, editorUser.id);
+    assert.deepEqual(created.recipients.map(item => item.connectionId).sort(), ['administrator', 'another-reader', 'editor', 'peer', 'reader']);
+    assert.equal(created.recipients.find(item => item.connectionId === 'reader')?.canWrite, false);
+    commentRoom = await commentSnapshot(); assert.equal(commentRoom.sequence, '1');
+    assert.deepEqual(readLiveState(commentRoom.state).content, commentDocument.revision.content);
+    const saved = await core.documents.read(editor, commentDocument.id);
+    assert.deepEqual(saved.revision, commentDocument.revision);
+    assert.equal(saved.lockVersion, commentDocument.lockVersion + 1);
+    assert(!JSON.stringify(await core.documents.exportNative(reader, commentDocument.id)).includes('Private review'));
+    assert.equal((await core.search.find(reader, { query: 'Private review' })).items.length, 0);
+    const noop = await core.documents.live.checkpoint(editor, commentDocument.id,
+      { epoch: commentRoom.epoch, sequence: commentRoom.sequence }, commentRoom.documentEtag);
+    assert.equal(noop.revision.id, commentDocument.revision.id);
+  });
+  await t.test('concurrent replies retain both authors and only the comment author can edit', async () => {
+    const before = await commentSnapshot();
+    await problem(core.documents.live.comment(peer, commentDocument.id, commentRoom.epoch,
+      { type: 'edit', threadId, commentId, body: commentBody }), 403);
+    assert.deepEqual((await commentSnapshot()).state, before.state);
+    await Promise.all([editor, peer].map(headers => core.documents.live.comment(headers, commentDocument.id, commentRoom.epoch,
+      { type: 'reply', threadId, body: commentBody })));
+    commentRoom = await commentSnapshot(); assert.equal(BigInt(commentRoom.sequence), BigInt(before.sequence) + 2n);
+    const thread = storedThread(commentRoom.state);
+    assert.equal(thread.comments.length, 3); assert(thread.comments.some(comment => comment.userId === peerUser.id));
+    await core.documents.live.comment(editor, commentDocument.id, commentRoom.epoch,
+      { type: 'edit', threadId, commentId, body: demoContent(["The author's revised private comment"]).document });
+    commentRoom = await commentSnapshot();
+    assert.match(JSON.stringify(storedThread(commentRoom.state).comments[0]!.body), /revised private comment/);
+    assert.equal(await database.prisma.documentRevision.count({ where: { documentId: commentDocument.id } }), 1);
+  });
+  await t.test('a forced comment database failure rolls back state, sequence and history', async () => {
+    const before = await commentSnapshot();
+    await database.pool.query(`CREATE FUNCTION fail_comment_write() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+      RAISE EXCEPTION 'Synthetic comment write failure'; END $$;
+      CREATE TRIGGER comment_failure BEFORE UPDATE ON "DocumentLive" FOR EACH ROW
+      WHEN (NEW."documentId"='${commentDocument.id}'::uuid) EXECUTE FUNCTION fail_comment_write()`);
+    try {
+      await assert.rejects(core.documents.live.comment(editor, commentDocument.id, commentRoom.epoch,
+        { type: 'reply', threadId, body: demoContent(['Never committed comment']).document }));
+      assert.deepEqual(await commentSnapshot(), before);
+      assert.equal(await database.prisma.documentRevision.count({ where: { documentId: commentDocument.id } }), 1);
+    } finally { await database.pool.query('DROP TRIGGER comment_failure ON "DocumentLive"; DROP FUNCTION fail_comment_write()'); }
+  });
+  await t.test('a comment waiting on the space lock rechecks a revoked existing session grant', async () => {
+    const before = await commentSnapshot(), gate = await database.pool.connect();
+    try {
+      await gate.query('BEGIN'); await gate.query('SELECT "id" FROM "Space" WHERE "id"=$1 FOR UPDATE', [space.id]);
+      const pending = core.documents.live.comment(editor, commentDocument.id, commentRoom.epoch,
+        { type: 'reply', threadId, body: commentBody });
+      await waitForLock('Space');
+      await gate.query('DELETE FROM "SpaceMembership" WHERE "spaceId"=$1 AND "userId"=$2', [space.id, editorUser.id]);
+      await gate.query('COMMIT'); await problem(pending, 404);
+      assert.deepEqual(await commentSnapshot(), before);
+    } finally {
+      await gate.query('ROLLBACK'); gate.release();
+      const latest = await core.spaces.read(admin, space.id);
+      space = await core.spaces.changeMembership(admin, { spaceId: space.id, userId: editorUser.id, role: 'editor', expectedEtag: spaceEtag(latest) });
     }
   });
   await t.test('concurrent updates merge, duplicate delivery is idempotent, saved surfaces remain unchanged', async () => {

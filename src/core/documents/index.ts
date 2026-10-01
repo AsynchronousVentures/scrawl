@@ -9,7 +9,7 @@ import { attachmentReferences, type Attachments } from '../attachments/index.js'
 import { HttpProblem } from '../../http/problems.js';
 import { ContentValidationError, validateContent } from './content.js';
 import { availableSlug, slugify, validSlug } from '../slugs.js';
-import { createLiveState, readLiveState, prepareLiveUpdate, LiveContentError, LIVE_SCHEMA_VERSION } from '../live/content.js';
+import { createLiveState, readLiveState, prepareLiveUpdate, prepareLiveComment, LiveContentError, LIVE_SCHEMA_VERSION } from '../live/content.js';
 
 type Head = Document & { head: DocumentRevision; space: { slug: string } };
 type RevisionMetadata = Pick<DocumentRevision, 'id' | 'documentId' | 'revisionNumber' | 'title' | 'authorId' | 'createdAt' | 'changeNote'>;
@@ -220,6 +220,18 @@ export function createDocuments(prisma: PrismaClient, identity: Identity, spaces
         const saved = await tx.documentLive.update({ where: { documentId_epoch: { documentId: id, epoch: room.epoch } },
           data: { state: new Uint8Array(prepared.state), sequence: { increment: 1 } } });
         return { ...roomSnapshot(document, saved), recipients };
+      }, connections);
+    },
+    comment(headers: Headers, id: string, epoch: unknown, input: unknown, connections: readonly LiveConnection[] = []) {
+      return liveOperation(headers, id, 'write', async (tx, document, actor, recipients) => {
+        const room = await currentRoom(tx, document);
+        livePrecondition(room, { epoch }, false);
+        const prepared = await prepareLiveComment(room.state, actor.id, input);
+        await attachments.validateReferences(tx, id, prepared.content.document);
+        if (room.sequence === 9_223_372_036_854_775_807n) throw new HttpProblem(409, 'LIVE_SEQUENCE_EXHAUSTED');
+        const saved = await tx.documentLive.update({ where: { documentId_epoch: { documentId: id, epoch: room.epoch } },
+          data: { state: new Uint8Array(prepared.state), sequence: { increment: 1 } } });
+        return { ...roomSnapshot(document, saved), recipients, result: prepared.result };
       }, connections);
     },
     checkpoint(headers: Headers, id: string, input: unknown, expectedEtag?: string) {

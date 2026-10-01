@@ -178,6 +178,8 @@ test('unknown live nodes, attributes, marks, dangling comments and unsafe links 
     doc => { const group = doc.getXmlFragment('document').get(0); assert(group instanceof Y.XmlElement); group.setAttribute('unknown', 'ignored'); },
     doc => bodyText(doc).format(0, 3, { unsupported: {} }),
     doc => bodyText(doc).format(0, 3, { comment: { threadId: 'missing', orphan: false } }),
+    doc => bodyText(doc).format(0, 3, { 'comment--invalid': { threadId: 'missing', orphan: false } }),
+    doc => bodyText(doc).format(0, 3, { 'bold--AAAAAAAA': {} }),
     doc => bodyText(doc).format(0, 3, { link: { href: 'javascript:alert(1)' } }),
     doc => bodyText(doc).format(0, 3, { link: { href: 'https://example.test', target: '_self' } }),
   ];

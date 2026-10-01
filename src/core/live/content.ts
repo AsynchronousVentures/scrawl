@@ -7,6 +7,7 @@ import { ServerBlockNoteEditor } from '@blocknote/server-util';
 import { yXmlFragmentToProseMirrorRootNode } from 'y-prosemirror';
 import type { Node } from 'prosemirror-model';
 import * as Y from 'yjs';
+import { applyComment, CommentError } from './comments.js';
 import {
   CONTENT_FORMAT, CONTENT_SCHEMA_VERSION, CONTENT_EDITOR_VERSION, CONTENT_LIMITS,
   ContentValidationError, contentSchema, validateContent, type NativeBlockSchema,
@@ -16,7 +17,7 @@ export const LIVE_SCHEMA_VERSION = 1 as const;
 export const LIVE_LIMITS = { maxUpdateBytes: 1024 * 1024, maxStateBytes: 8 * 1024 * 1024 } as const;
 
 export class LiveContentError extends Error {
-  constructor(readonly status: 400 | 403 | 413, readonly code: string) {
+  constructor(readonly status: 400 | 403 | 404 | 409 | 413, readonly code: string) {
     super(code); this.name = 'LiveContentError';
   }
 }
@@ -29,12 +30,13 @@ function editor() {
 }
 
 function invalid(): never { throw new LiveContentError(400, 'INVALID_LIVE_CONTENT'); }
+function failed(error: unknown): never {
+  if (error instanceof LiveContentError) throw error;
+  if (error instanceof ContentValidationError || error instanceof CommentError) throw new LiveContentError(error.status, error.code);
+  return invalid();
+}
 function checked<T>(operation: () => T): T {
-  try { return operation(); } catch (error) {
-    if (error instanceof LiveContentError) throw error;
-    if (error instanceof ContentValidationError) throw new LiveContentError(error.status, error.code);
-    return invalid();
-  }
+  try { return operation(); } catch (error) { return failed(error); }
 }
 
 function documentFrom(state: Uint8Array) {
@@ -118,12 +120,19 @@ function project(document: Y.Doc) {
       for (const value of parts) {
         const part = attributes(value, ['insert', 'attributes']);
         if (typeof part.insert !== 'string') return invalid();
-        const formats = part.attributes === undefined ? {} : attributes(part.attributes, Object.keys(schema.marks));
+        const allowed = Object.keys(schema.marks);
+        // y-prosemirror encodes overlapping native marks with an eight-character
+        // hash suffix. Only the official overlapping comment mark uses this seam.
+        if (part.attributes && typeof part.attributes === 'object') {
+          allowed.push(...Object.keys(part.attributes).filter(name => /^comment--[a-zA-Z0-9+/=]{8}$/.test(name)));
+        }
+        const formats = part.attributes === undefined ? {} : attributes(part.attributes, allowed);
         for (const [name, value] of Object.entries(formats)) {
-          const mark = schema.marks[name];
+          const markName = /^comment--[a-zA-Z0-9+/=]{8}$/.test(name) ? 'comment' : name;
+          const mark = schema.marks[markName];
           if (!mark) return invalid();
           const attrs = attributes(value, Object.keys(mark.spec.attrs ?? {}));
-          if (name === 'comment' && (typeof attrs.threadId !== 'string' || !document.getMap('threads').has(attrs.threadId)
+          if (markName === 'comment' && (typeof attrs.threadId !== 'string' || !document.getMap('threads').has(attrs.threadId)
             || attrs.orphan !== undefined && typeof attrs.orphan !== 'boolean')) return invalid();
         }
       }
@@ -189,4 +198,18 @@ export function prepareLiveUpdate(state: Uint8Array, update: Uint8Array) {
       return { state: encoded, ...projected };
     } finally { document.destroy(); }
   });
+}
+
+/** Trusted comment commands use the supplied store on a clone, never on a broadcasting room. */
+export async function prepareLiveComment(state: Uint8Array, actorId: string, input: unknown) {
+  const document = checked(() => documentFrom(state));
+  try {
+    const before = project(document);
+    const result = await applyComment(document, editor().editor.pmSchema, actorId, input);
+    const projected = project(document), encoded = Y.encodeStateAsUpdate(document);
+    if (JSON.stringify(before) !== JSON.stringify(projected)) return invalid();
+    if (encoded.byteLength > LIVE_LIMITS.maxStateBytes) throw new LiveContentError(413, 'LIVE_STATE_TOO_LARGE');
+    return { state: encoded, result, ...projected };
+  } catch (error) { return failed(error); }
+  finally { document.destroy(); }
 }

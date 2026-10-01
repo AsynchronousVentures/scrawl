@@ -95,6 +95,8 @@ Core operations own the transaction, taking space share locks before document lo
 
 Explicit checkpoints require document ETag, epoch and observed sequence. Canonical no-ops append nothing; changed content uses the existing immutable revision/attachment transaction. Restore requires a clean native checkpoint, appends a new revision, advances the document lock once and atomically selects a fresh epoch. Archive preserves room state and history while refusing live operations. No transport or live editor is enabled yet. Connected-recipient authorization and isolated process ownership are implemented and tested. An isolated transport now verifies ownership loss, current recipient receipts and commit-before-broadcast with actual authenticated sockets. Application startup, lifecycle integration, comments and peer-safe browser undo remain activation requirements in [ADR 0003](adr/0003-collaboration-checkpoints.md).
 
+Private comment commands use the supplied Yjs thread store on a validated clone under the same write transaction. Author IDs and timestamps are server-derived, other-author edits fail, and current readers cannot write. Native relative anchors are resolved against this document/epoch; stale or foreign identities fail. Comment bodies use the supplied paragraph composer schema with separate bounded resources. Comment state and anchors remain live-only, leaving immutable revisions, search, export and publication content unchanged. Delivery and HTTP/client adapters are not enabled.
+
 ## Add only with the feature
 
 A document hierarchy adds a same-space parent reference, cycle protection and explicit archive-with-children policy. Reject archive of a page with active children initially; no silent recursive hide/move. Cross-space moves are deferred.
