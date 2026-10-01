@@ -4,6 +4,11 @@
 import { expect, test, type Page, type BrowserContext, type WebSocketRoute } from '@playwright/test';
 import { createBrowserDemo, type BrowserDemo } from './fixture.js';
 import type { DemoBResult } from '../../scripts/demo-b.js';
+import { readFile } from 'node:fs/promises';
+import JSZip from 'jszip';
+import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
+import { validateContent } from '../../src/shared/content.js';
+import type { operations } from '../../web/src/api/schema.js';
 
 let demo: BrowserDemo, seeded: DemoBResult;
 test.beforeAll(async () => { demo = await createBrowserDemo({ collaboration: true }); });
@@ -28,7 +33,7 @@ async function enroll(page: Page) {
 async function latest(context: BrowserContext) {
   const response = await context.request.get(`${demo.origin}/api/v1/documents/${seeded.documentId}`);
   expect(response.status()).toBe(200);
-  return response.json() as Promise<{ currentRevisionNumber: number; revision: { title: string; plainText: string } }>;
+  return response.json() as Promise<operations['readDocument']['responses'][200]['content']['application/json']>;
 }
 async function slashBlock(page: Page, query: string, label: string) {
   await body(page).focus(); await page.keyboard.press('ControlOrMeta+End'); await page.keyboard.press('Enter');
@@ -656,4 +661,97 @@ test('an unsent native reply stays read-only through a real role downgrade and r
     expect(await demo.database.prisma.documentRevision.count({ where: { documentId: seeded.documentId } })).toBe(1);
     expect(runtimeErrors).toEqual([]); expect(await page.evaluate(() => localStorage.length + sessionStorage.length)).toBe(0);
   } finally { await administrator.close(); }
+});
+
+test('live-only title, body and comments stay out of native/PDF/DOCX snapshots, saved search and selected public history', async ({ page, context, browser }) => {
+  const runtimeErrors: string[] = []; page.on('pageerror', error => runtimeErrors.push(error.message));
+  await login(page); await expect(title(page)).toBeVisible();
+  await title(page).fill('Checkpointed native export snapshot');
+  await body(page).fill('Saved body available in current exports.');
+  await save(page).click(); await expect(page.getByRole('status').filter({ hasText: 'Saved · revision 2' })).toBeVisible();
+  const saved = await latest(context); expect(saved.currentRevisionNumber).toBe(2); await enroll(page);
+  const administrator = await browser.newContext(), anonymous = await browser.newContext();
+  try {
+    const adminPage = await administrator.newPage(); await login(adminPage, 'administrator');
+    await expect(body(adminPage)).toBeEditable(); await adminPage.getByRole('button', { name: 'History', exact: true }).click();
+    const history = adminPage.getByRole('complementary', { name: 'Revision history', exact: true });
+    await history.getByRole('button', { name: /^Revision 1\b/ }).click();
+    await history.getByRole('button', { name: 'Publish revision 1', exact: true }).click();
+    const published = adminPage.waitForResponse(response => response.request().method() === 'POST'
+      && new URL(response.url()).pathname === `/api/v1/documents/${seeded.documentId}/publication`);
+    await adminPage.getByRole('dialog', { name: 'Publish revision 1?', exact: true }).getByRole('button', { name: 'Publish revision 1', exact: true }).click();
+    expect((await published).status()).toBe(200);
+    const link = adminPage.getByRole('link', { name: 'View public document', exact: true }); await expect(link).toBeVisible();
+    const path = await link.getAttribute('href'); if (!path) throw new Error('No selected-revision publication link');
+    await page.bringToFront();
+    await title(page).fill('LiveOnlyExportBoundary title');
+    await body(page).fill('LiveOnlyExportBoundary body, not checkpointed.');
+    await expect(body(adminPage)).toContainText('LiveOnlyExportBoundary body');
+    await body(page).getByText('LiveOnlyExportBoundary body, not checkpointed.', { exact: true }).click({ clickCount: 3 });
+    await page.getByRole('button', { name: 'Add comment', exact: true }).click();
+    await page.locator('.bn-comment-editor [contenteditable="true"]').fill('LiveOnlyExportBoundary private comment.');
+    const anchored = page.waitForResponse(response => response.request().method() === 'POST'
+      && new URL(response.url()).pathname.endsWith('/addToDocument'));
+    await page.locator('.bn-thread').getByRole('button', { name: 'Save', exact: true }).click(); expect((await anchored).status()).toBe(200);
+    const native = await context.request.get(`${demo.origin}/api/v1/documents/${seeded.documentId}/export`);
+    expect(native.status()).toBe(200);
+    const exported = await native.json() as operations['exportNativeDocument']['responses'][200]['content']['application/json'];
+    expect(exported.revision.revisionNumber).toBe(2); expect(exported.revision.title).toBe(saved.revision.title);
+    expect(validateContent(exported.content).content).toEqual(saved.revision.content);
+    expect(JSON.stringify(exported)).not.toContain('LiveOnlyExportBoundary');
+    expect(JSON.stringify(exported)).not.toMatch(/"(?:threads|password|token|session|account|email|cookie)"\s*:/i);
+    async function downloadText(format: 'pdf' | 'docx', selected = false) {
+      const download = page.waitForEvent('download');
+      if (selected) {
+        const revisions = page.getByRole('complementary', { name: 'Revision history', exact: true });
+        await revisions.getByRole('button', { name: `Export ${format.toUpperCase()}`, exact: true }).click();
+      } else {
+        await page.getByLabel('Document actions', { exact: true }).click();
+        await page.getByRole('button', { name: `Export ${format.toUpperCase()}`, exact: true }).click();
+      }
+      const file = await (await download).path(); if (!file) throw new Error('No rendered snapshot download');
+      const bytes = await readFile(file);
+      if (format === 'docx') {
+        const document = (await JSZip.loadAsync(bytes)).file('word/document.xml');
+        if (!document) throw new Error('DOCX has no document body'); return document.async('text');
+      }
+      const loading = getDocument({ data: new Uint8Array(bytes), useSystemFonts: false });
+      try {
+        const document = await loading.promise; const pages: string[] = [];
+        for (let number = 1; number <= document.numPages; number++) {
+          const content = await (await document.getPage(number)).getTextContent();
+          pages.push(content.items.map(item => 'str' in item ? item.str : '').join(' '));
+        }
+        // PDF text items split wrapped lines and can each retain a space.
+        return pages.join('\n').replace(/\s+/g, ' ').trim();
+      } finally { await loading.destroy(); }
+    }
+    for (const format of ['pdf', 'docx'] as const) {
+      const text = await downloadText(format); expect(text).toContain(saved.revision.title);
+      expect(text).toContain('Saved body available in current exports.'); expect(text).not.toContain('LiveOnlyExportBoundary');
+    }
+    await page.getByRole('button', { name: 'History', exact: true }).click();
+    await page.getByRole('button', { name: /^Revision 1\b/ }).click();
+    for (const format of ['pdf', 'docx'] as const) {
+      const text = await downloadText(format, true); expect(text).toContain('Run tests before deploying.');
+      expect(text).not.toContain(saved.revision.title); expect(text).not.toContain('LiveOnlyExportBoundary');
+    }
+    const publicPage = await anonymous.newPage(); const privateRequests: string[] = [];
+    publicPage.on('request', request => { if (/\/api\/(?:v1|auth)\//.test(new URL(request.url()).pathname)) privateRequests.push('private API'); });
+    await publicPage.goto(demo.origin + path);
+    await expect(publicPage.getByRole('heading', { name: 'Release checklist', exact: true })).toBeVisible();
+    await expect(publicPage.getByRole('textbox', { name: 'Published document content', exact: true })).toContainText('Run tests before deploying.');
+    await expect(publicPage.locator('body')).not.toContainText('LiveOnlyExportBoundary');
+    await expect(publicPage.locator('body')).not.toContainText(saved.revision.title); expect(privateRequests).toEqual([]);
+    await title(page).focus(); await page.keyboard.press('ControlOrMeta+k');
+    const search = page.getByRole('dialog', { name: 'Search documents', exact: true });
+    await search.getByRole('combobox', { name: 'Search accessible documents', exact: true }).fill('LiveOnlyExportBoundary');
+    await expect(search.getByRole('heading', { name: 'No matching documents', exact: true })).toBeVisible();
+    await expect(search.getByRole('option')).toHaveCount(0); await search.getByRole('button', { name: 'Close', exact: true }).click();
+    await expect(title(page)).toHaveValue('LiveOnlyExportBoundary title');
+    await expect(body(page)).toContainText('LiveOnlyExportBoundary body');
+    expect((await latest(context)).currentRevisionNumber).toBe(2);
+    expect(await demo.database.prisma.documentRevision.count({ where: { documentId: seeded.documentId } })).toBe(2);
+    expect(runtimeErrors).toEqual([]); expect(await page.evaluate(() => localStorage.length + sessionStorage.length)).toBe(0);
+  } finally { await administrator.close(); await anonymous.close(); }
 });

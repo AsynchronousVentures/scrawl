@@ -1,5 +1,20 @@
 # Validation
 
+## Live-only export, search and publication isolation
+
+A new real-browser case saves revision 2, enrolls it, explicitly publishes revision 1 through an administrator session, then makes live-only title/body edits and adds a private native comment. Native JSON is parsed through the existing validator and equals revision 2 exactly. Actual PDF/DOCX downloads include saved revision 2; selected history downloads include revision 1. PDF text is inspected across every page with layout whitespace normalized. None includes the live-only marker or comment. An anonymous page renders revision 1, makes no private/auth API requests, and excludes both revision 2 and the live-only changes. Real search returns no live-only result. The local editor retains its content and history remains exactly two revisions.
+
+Observed results without retries or skips:
+
+- The focused isolation case passed: `artifacts/live-export-isolation-pdf-text.log`.
+- Complete `npm run check` passed 91 cases, strict types, boundaries, builds and generated API drift: `artifacts/live-export-isolation-check.log`.
+- All 18 live-editing browser cases passed together: `artifacts/live-export-isolation-live-suite.log`. The preceding complete application run passed 64/64; the newly added case brings the total to 65, but a complete local 65-case run is not claimed here.
+- Both complete hosted matrices passed on `cf00d9f`, including PostgreSQL 17 and 18: [PR](https://github.com/AsynchronousVentures/scrawl/actions/runs/36868462037), [push](https://github.com/AsynchronousVentures/scrawl/actions/runs/36868457409).
+
+Intermediate test setup/selection/PDF-whitespace attempts failed and are retained in `artifacts/live-export-isolation-*.log`. They are not passes. The final test uses actual supplied controls and downloads, without a server bypass or weakened exclusion assertion. This proves title/body/comment isolation for these fixtures; it does not claim new live-only attachment binary inspection or browser-crash recovery.
+
+No application behavior, migration or dependency changed. Previous complete 136/136 PostgreSQL suites on each supported version still apply. Fresh retained-preview administrator/reader/outsider/anonymous checks passed after `cf00d9f` without data changes: `artifacts/demo18/verification-comment-authority.log`. All 147 source archive members matched that checkpoint and its served hash matched locally. The retained flag remains off. Next finish native nested-block peer undo, comment reaction failures, hard restart/multi-account recovery, authenticated presence and two-operation create/anchor recovery.
+
 ## Comment-only drafts through session and permission loss
 
 A real expired-session response used to unmount the workspace when title/body was clean but a comment composer was dirty. Recovery now retains every kind of local work, including comment-only drafts and separate reconnect drafts. Same-account sign-in verifies access without replacing the composer. Loss of authority leaves unsent text read-only with an explicit warning; regaining authority never submits it automatically.
