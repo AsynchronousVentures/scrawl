@@ -128,7 +128,7 @@ test('native participant cursors show authenticated names, stay private and disa
 
 test('supplied comment composer persists private threads; readers can view but not write and outsiders remain isolated', async ({ page, browser, context }) => {
   await login(page); await expect(title(page)).toBeVisible(); await enroll(page);
-  await body(page).focus(); await page.keyboard.press('ControlOrMeta+Home'); await page.keyboard.press('Shift+End');
+  await body(page).press('ControlOrMeta+Home'); await body(page).press('Shift+End');
   await page.getByRole('button', { name: 'Add comment', exact: true }).click();
   const composer = page.locator('.bn-comment-editor [contenteditable="true"]');
   await expect(composer).toBeVisible(); await composer.fill('Check the synthetic recovery procedure.');
@@ -289,7 +289,7 @@ test('a failed native comment submission keeps its composer text, reports failur
   const statuses: number[] = []; page.on('response', response => { if (new URL(response.url()).pathname.includes('/threads') && response.request().method() === 'POST') statuses.push(response.status()); });
   const runtimeErrors: string[] = []; page.on('pageerror', error => runtimeErrors.push(error.message));
   await login(page); await expect(title(page)).toBeVisible(); await enroll(page);
-  await body(page).focus(); await page.keyboard.press('ControlOrMeta+Home'); await page.keyboard.press('Shift+End');
+  await body(page).press('ControlOrMeta+Home'); await body(page).press('Shift+End');
   await page.getByRole('button', { name: 'Add comment', exact: true }).click();
   const composer = page.locator('.bn-comment-editor [contenteditable="true"]');
   await composer.fill('Complete retained comment draft.');
@@ -354,7 +354,7 @@ test('unsent native comment text blocks navigation and reload; in-flight submiss
   await expect(title(page)).toHaveValue('Comment navigation target');
   await page.getByRole('link', { name: original.revision.title, exact: true }).click();
   await expect(title(page)).toHaveValue(original.revision.title); await enroll(page);
-  await body(page).focus(); await page.keyboard.press('ControlOrMeta+Home'); await page.keyboard.press('Shift+End');
+  await body(page).press('ControlOrMeta+Home'); await body(page).press('Shift+End');
   await page.getByRole('button', { name: 'Add comment', exact: true }).click();
   const composer = page.locator('.bn-comment-editor .bn-editor');
   await composer.fill('Complete unsent native comment draft.');
@@ -446,7 +446,7 @@ test('separate authenticated users merge concurrent native title/body edits and 
 
 test('restart preserves live content and comments; a disabled runtime shows only the saved revision and never offers solo writes', async ({ page, context }) => {
   await login(page); await expect(title(page)).toBeVisible(); const original = await latest(context); await enroll(page);
-  await body(page).focus(); await page.keyboard.press('ControlOrMeta+Home'); await page.keyboard.press('Shift+End');
+  await body(page).press('ControlOrMeta+Home'); await body(page).press('Shift+End');
   await page.getByRole('button', { name: 'Add comment', exact: true }).click();
   await page.locator('.bn-comment-editor [contenteditable="true"]').fill('Durable private comment across process restart.');
   await page.locator('.bn-thread').getByRole('button', { name: 'Save', exact: true }).click();
@@ -504,7 +504,7 @@ test('restart preserves live content and comments; a disabled runtime shows only
 test('failed native comment deletion reports failure without changing the thread or revision; deliberate retry deletes it', async ({ page, context }) => {
   const runtimeErrors: string[] = []; page.on('pageerror', error => runtimeErrors.push(error.message));
   await login(page); await expect(title(page)).toBeVisible(); await enroll(page);
-  await body(page).focus(); await page.keyboard.press('ControlOrMeta+Home'); await page.keyboard.press('Shift+End');
+  await body(page).press('ControlOrMeta+Home'); await body(page).press('Shift+End');
   await page.getByRole('button', { name: 'Add comment', exact: true }).click();
   await page.locator('.bn-comment-editor [contenteditable="true"]').fill('Synthetic native comment retained after failed deletion.');
   const anchored = page.waitForResponse(response => response.request().method() === 'POST'
@@ -539,7 +539,7 @@ test('failed native comment deletion reports failure without changing the thread
 test('native comment actions are discoverable by keyboard and failed resolution preserves the thread until deliberate retry', async ({ page, context }) => {
   const runtimeErrors: string[] = []; page.on('pageerror', error => runtimeErrors.push(error.message));
   await login(page); await expect(title(page)).toBeVisible(); await enroll(page);
-  await body(page).focus(); await page.keyboard.press('ControlOrMeta+Home'); await page.keyboard.press('Shift+End');
+  await body(page).press('ControlOrMeta+Home'); await body(page).press('Shift+End');
   await page.getByRole('button', { name: 'Add comment', exact: true }).click();
   await page.locator('.bn-comment-editor [contenteditable="true"]').fill('Synthetic native thread awaiting resolution.');
   await page.locator('.bn-thread').getByRole('button', { name: 'Save', exact: true }).click();
@@ -566,7 +566,7 @@ test('native comment actions are discoverable by keyboard and failed resolution 
 test('native reply and own-comment editing retain complete text after failures and persist only on deliberate submission', async ({ page, context }) => {
   const runtimeErrors: string[] = []; page.on('pageerror', error => runtimeErrors.push(error.message));
   await login(page); await expect(title(page)).toBeVisible(); await enroll(page);
-  await body(page).focus(); await page.keyboard.press('ControlOrMeta+Home'); await page.keyboard.press('Shift+End');
+  await body(page).press('ControlOrMeta+Home'); await body(page).press('Shift+End');
   await page.getByRole('button', { name: 'Add comment', exact: true }).click();
   await page.locator('.bn-comment-editor [contenteditable="true"]').fill('Synthetic parent thread for native replies.');
   await page.locator('.bn-thread').getByRole('button', { name: 'Save', exact: true }).click();
@@ -618,7 +618,7 @@ test('native reply and own-comment editing retain complete text after failures a
 test('a comment-only draft survives real session expiry and deliberate same-account sign-in without saving or exposing server actions', async ({ page, context }) => {
   const runtimeErrors: string[] = []; page.on('pageerror', error => runtimeErrors.push(error.message));
   await login(page); await expect(title(page)).toBeVisible(); const original = await latest(context); await enroll(page);
-  await body(page).focus(); await page.keyboard.press('ControlOrMeta+Home'); await page.keyboard.press('Shift+End');
+  await body(page).press('ControlOrMeta+Home'); await body(page).press('Shift+End');
   await page.getByRole('button', { name: 'Add comment', exact: true }).click();
   await page.locator('.bn-comment-editor [contenteditable="true"]').fill('Saved parent for a private session-loss reply.');
   await page.locator('.bn-thread').getByRole('button', { name: 'Save', exact: true }).click();
@@ -662,7 +662,7 @@ test('a comment-only draft survives real session expiry and deliberate same-acco
 test('an unsent native reply stays read-only through a real role downgrade and remains retained after membership revocation', async ({ page, context, browser }) => {
   const runtimeErrors: string[] = []; page.on('pageerror', error => runtimeErrors.push(error.message));
   await login(page); await expect(title(page)).toBeVisible(); await enroll(page);
-  await body(page).focus(); await page.keyboard.press('ControlOrMeta+Home'); await page.keyboard.press('Shift+End');
+  await body(page).press('ControlOrMeta+Home'); await body(page).press('Shift+End');
   await page.getByRole('button', { name: 'Add comment', exact: true }).click();
   await page.locator('.bn-comment-editor [contenteditable="true"]').fill('Saved thread for synthetic permission changes.');
   await page.locator('.bn-thread').getByRole('button', { name: 'Save', exact: true }).click();
@@ -979,7 +979,7 @@ test('native reaction failures stay visible, preserve accepted threads and requi
   await expect(title(page)).toHaveValue('Reaction navigation target');
   await page.getByRole('link', { name: original.revision.title, exact: true }).click();
   await expect(title(page)).toHaveValue(original.revision.title); await enroll(page);
-  await body(page).focus(); await page.keyboard.press('ControlOrMeta+Home'); await page.keyboard.press('Shift+End');
+  await body(page).press('ControlOrMeta+Home'); await body(page).press('Shift+End');
   await page.getByRole('button', { name: 'Add comment', exact: true }).click();
   await page.locator('.bn-comment-editor [contenteditable="true"]').fill('Synthetic thread for native reaction recovery.');
   const anchored = page.waitForResponse(response => response.request().method() === 'POST'
@@ -1052,7 +1052,7 @@ test('abrupt process death preserves acknowledged native content and comments ac
   const administrator = await browser.newContext();
   try {
     const peer = await administrator.newPage(); await login(peer, 'administrator'); await expect(body(peer)).toBeEditable();
-    await body(page).focus(); await page.keyboard.press('ControlOrMeta+Home'); await page.keyboard.press('Shift+End');
+    await body(page).press('ControlOrMeta+Home'); await body(page).press('Shift+End');
     await page.getByRole('button', { name: 'Add comment', exact: true }).click();
     await page.locator('.bn-comment-editor [contenteditable="true"]').fill('Acknowledged private comment survives abrupt process death.');
     const anchored = page.waitForResponse(response => response.request().method() === 'POST'
@@ -1102,7 +1102,7 @@ test('operator account recovery revokes every live session while preserving an u
     await login(page); await expect(title(page)).toBeVisible(); await enroll(page);
     const otherSession = await secondary.newPage(); await login(otherSession); await expect(body(otherSession)).toBeEditable();
     const peer = await administrator.newPage(); await login(peer, 'administrator'); await expect(body(peer)).toBeEditable();
-    await body(page).focus(); await page.keyboard.press('ControlOrMeta+Home'); await page.keyboard.press('Shift+End');
+    await body(page).press('ControlOrMeta+Home'); await body(page).press('Shift+End');
     await page.getByRole('button', { name: 'Add comment', exact: true }).click();
     await page.locator('.bn-comment-editor [contenteditable="true"]').fill('Saved thread before operator account recovery.');
     const anchored = page.waitForResponse(response => response.request().method() === 'POST'

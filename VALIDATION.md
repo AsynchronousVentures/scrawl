@@ -1,5 +1,22 @@
 # Validation
 
+## Native browser input and document-tab verification
+
+The slow-renderer reproduction distinguished the browser's native tab from Playwright's page tracking. With the previous headless shell, Chromium reported an attached tab at the expected document URL and its DOM contained the expected title input, while Playwright sometimes reported an empty URL or omitted the page. Ctrl-click reached the correct enabled anchor without prevention. Opener isolation remains unchanged.
+
+The browser project now uses the pinned full Chromium channel's [documented headless mode](https://playwright.dev/docs/browsers#chromium-new-headless-mode). Comment setup sends Home and Shift+End through the actual editor locator, following [Playwright's keyboard guidance](https://playwright.dev/docs/api/class-keyboard#keyboard-press), instead of separating a focus call from global keyboard input. These are test/browser configuration changes, not replacements for the supplied editor UI. Assertions, timeouts, zero retries, authorization and persistence checks remain intact.
+
+- Six focused real-HTTP/session/PostgreSQL workflows passed at 4x renderer CPU slowdown: three native document-tab/draft workflows and three acknowledged-content/comment process-death recovery workflows. Log: `artifacts/native-locator-chromium-stress.log`.
+- Changing only the browser mode back to the old headless shell made both repeated tab workflows fail with the same existing assertions. Log: `artifacts/native-tab-shell-control.log`. Temporary CPU throttling and diagnostics were removed from the final tests.
+- `npm run check` passed all 91 cases, strict types, boundaries, builds and generated API verification. Log: `artifacts/native-browser-complete-check.log`.
+- The complete real-API/session/PostgreSQL browser regression passed 71/71 in 9.5 minutes, zero retries/skips, including Demo A, process-death recovery, graceful restart, permission loss, native rich editing and binary export/publication isolation. Log: `artifacts/native-browser-full-regression.log`.
+
+The held-Shift/DOM-selection experiment failed two of three crash setups and was not adopted (`artifacts/native-full-chromium-probe.log`). Earlier normal-speed passes did not establish foreground focus as the cause. The tests now include the child's exit/signal codes when fixture shutdown fails, without exposing process output or secrets.
+
+Both single-target hosted runs on preceding `91c4fe4` passed check, migration and database steps, then failed browser acceptance. The [PR run](https://github.com/AsynchronousVentures/scrawl/actions/runs/36888771882) failed initial Add comment selection in reaction setup; the [push run](https://github.com/AsynchronousVentures/scrawl/actions/runs/36888762109) failed graceful fixture shutdown during restart. Logs: `artifacts/image-hook-hosted-pr-failed.log`, `artifacts/image-hook-hosted-push-failed.log`. Shutdown and new hosted verification remain unresolved gates.
+
+No application code, migration, dependency, retained data or public-access change is required. Development and CI remain PostgreSQL 18 only. Collaboration stays disabled in the retained preview. Its service is active and liveness/readiness passed; the development database reports PostgreSQL 18.6. No fresh retained-browser session is claimed for this test-only follow-up.
+
 ## Native uploads after permission loading and snapshot binary isolation
 
 A real browser regression held the authenticated collaboration-availability response until the document mounted read-only, then granted its normal editable state. Image opened only Embed, with no Upload tab. The supplied editor hook creates the native editor once, so the conditional upload callback was permanently absent. The adapter now exists from mount and consults current authority when invoked, without recreating the editor or its undo stack. Native Upload remains gated by current document permissions and the server enforces every upload.

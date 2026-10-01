@@ -49,7 +49,7 @@ export async function createBrowserDemo(options: { collaboration?: boolean } = {
     });
     child.kill('SIGTERM');
     await stopped;
-    if (child.exitCode !== 0) throw new Error('Browser demo server failed to stop gracefully');
+    if (child.exitCode !== 0) throw new Error(`Browser demo server failed to stop gracefully (exit ${child.exitCode}, signal ${child.signalCode})`);
   }
 
   async function close() {

@@ -20,5 +20,6 @@ export default defineConfig({
     video: 'off',
     serviceWorkers: 'block',
   },
-  projects: [{ name: 'chromium', use: { browserName: 'chromium' } }],
+  // Exercise native tab opening with full Chromium instead of headless shell.
+  projects: [{ name: 'chromium', use: { browserName: 'chromium', channel: 'chromium' } }],
 });
