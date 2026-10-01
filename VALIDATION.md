@@ -1,5 +1,9 @@
 # Validation
 
+## Single database target
+
+The maintainer stopped database-version development. CI now runs the same complete checks, migration deployment, database tests and browser workflows once against PostgreSQL 18, matching the existing demo. The 17/18 strategy matrix is removed; no assertions or test commands were removed. YAML parsing and assertions for the single target and every required regression command passed. Historical multi-version results below are retained as observed evidence, not an ongoing compatibility promise. No database, volume, migration or dependency was changed. Hosted execution of the revised workflow is not yet verified.
+
 ## Native reaction readiness and accessible restrictions
 
 Reaction badges now expose their existing disabled state to assistive technology, including reader mode and pending commands. The browser regression waits for the complete native add command before keyboard removal, since its accepted Yjs badge can arrive before the HTTP response body is consumed. It also verifies that an authenticated reader cannot activate a reaction or access Add reaction.

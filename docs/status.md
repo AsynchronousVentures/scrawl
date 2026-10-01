@@ -4,6 +4,8 @@
 
 The maintainer expanded this session to a cohesive BlockNote demo. Work is on `integration/blocknote-demo`, not merged or released. The original remote `main` contains completed P4 `445bae2`. [The integration backlog](integration-backlog.md) tracks five issues and dependencies.
 
+Database-version development and the 17/18 CI matrix have stopped at the maintainer's direction. CI now uses the existing demo's PostgreSQL 18 target once. Retained databases, content, history and migration files are unchanged. Multi-version results below record past verification only; ongoing work focuses on application features and usability.
+
 | Area | Implemented | Verified |
 | --- | --- | --- |
 | Native BlockNote/private workflow | Standard blocks/styles, official shadcn UI/server utilities, explicit save/native undo/discard, nested heading outline, history/restore, conflicts, mobile drawer | Complete check passed 91 unit/config/HTTP/CLI tests; all 66 browser workflows passed in a clean full run, zero retries/skips |
