@@ -216,10 +216,11 @@ export function createDocuments(prisma: PrismaClient, identity: Identity, spaces
         roomSnapshot(document, await currentRoom(tx, document), canWrite));
     },
     authorizeConnections(headers: Headers, id: string, epoch: unknown, connections: readonly LiveConnection[]) {
-      return liveOperation(headers, id, 'read', async (tx, document, _actor, recipients) => {
+      return liveOperation(headers, id, 'read', async (tx, document, actor, recipients) => {
         const room = await currentRoom(tx, document);
         livePrecondition(room, { epoch }, false);
-        return { epoch: room.epoch, sequence: room.sequence.toString(), documentEtag: documentEtag(document), recipients };
+        return { epoch: room.epoch, sequence: room.sequence.toString(), documentEtag: documentEtag(document), recipients,
+          user: { id: actor.id, name: actor.name } };
       }, connections);
     },
     update(headers: Headers, id: string, epoch: unknown, update: Uint8Array, connections: readonly LiveConnection[] = []) {

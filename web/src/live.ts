@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Asynchronous Ventures and contributors
 
 import * as Y from 'yjs';
+import { Awareness } from 'y-protocols/awareness';
 import { HocuspocusProvider, HocuspocusProviderWebsocket } from '@hocuspocus/provider';
 import { createExtension, createUserStore } from '@blocknote/core';
 import { CommentsExtension, DefaultThreadStoreAuth } from '@blocknote/core/comments';
@@ -20,6 +21,7 @@ export type LiveState = {
 export class LiveSession {
   readonly document = new Y.Doc({ gc: false });
   readonly fragment = this.document.getXmlFragment('document');
+  readonly awareness = new Awareness(this.document);
   readonly provider: HocuspocusProvider;
   readonly websocket: HocuspocusProviderWebsocket;
   readonly titleOrigin = Symbol('local-title');
@@ -41,7 +43,7 @@ export class LiveSession {
       onClose: () => { this.websocket.disconnect(); if (!this.disposed) { this.phase = 'closed'; this.emit(); } },
     });
     this.provider = new HocuspocusProvider({ websocketProvider: this.websocket,
-      name: `${id}:${metadata.epoch}`, document: this.document, awareness: null,
+      name: `${id}:${metadata.epoch}`, document: this.document, awareness: this.awareness,
       onSynced: ({ state }) => { if (state && this.phase !== 'closed') { this.phase = 'connected'; this.initialized = true; } this.emit(); },
       onUnsyncedChanges: () => this.emit(),
       onStateless: ({ payload }) => {

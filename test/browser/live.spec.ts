@@ -79,6 +79,52 @@ test('native two-tab title/body convergence, peer-safe undo, explicit checkpoint
   } finally { second.on('dialog', dialog => dialog.accept()); await second.close(); }
 });
 
+test('native participant cursors show authenticated names, stay private and disappear after access revocation', async ({ page, context, browser }) => {
+  const administrator = await browser.newContext(), reader = await browser.newContext(), outsider = await browser.newContext();
+  const runtimeErrors: string[] = []; page.on('pageerror', error => runtimeErrors.push(error.message));
+  for (const account of [administrator, reader, outsider]) account.on('page', tab => tab.on('pageerror', error => runtimeErrors.push(error.message)));
+  try {
+    await login(page); await expect(title(page)).toBeVisible(); await enroll(page);
+    const peer = await administrator.newPage(); await login(peer, 'administrator'); await expect(body(peer)).toBeEditable();
+    const readerPage = await reader.newPage(); await login(readerPage, 'reader'); await expect(body(readerPage)).not.toBeEditable();
+    const editor = await demo.database.prisma.user.findUniqueOrThrow({ where: { id: demo.accountId('editor') }, select: { name: true } });
+    await page.bringToFront();
+    const paragraph = body(page).locator('.bn-inline-content').filter({ hasText: 'Run tests before deploying.' }).first();
+    await paragraph.click({ clickCount: 3 });
+    for (const tab of [peer, readerPage]) {
+      const cursor = tab.locator('.bn-collaboration-cursor__label');
+      await expect(cursor).toHaveText(editor.name);
+      await expect(tab.locator('.ProseMirror-yjs-selection')).not.toHaveCount(0);
+    }
+    // Native activity labels appear when an existing peer cursor moves.
+    await page.keyboard.press('Shift+ArrowLeft');
+    for (const tab of [peer, readerPage]) {
+      await expect(tab.locator('.bn-collaboration-cursor__base')).toHaveAttribute('data-active', '');
+      await expect(tab.locator('.bn-collaboration-cursor__label')).toBeVisible();
+    }
+    if (process.env.SCRAWL_BROWSER_EVIDENCE === '1') {
+      await peer.screenshot({ path: 'artifacts/live-presence.png', animations: 'disabled', mask: [peer.locator('.account span')] });
+    }
+    const accepted = await demo.database.prisma.documentLive.findFirstOrThrow({ where: { documentId: seeded.documentId } });
+    await page.keyboard.press('ArrowRight');
+    await expect(peer.locator('.ProseMirror-yjs-selection')).toHaveCount(0);
+    expect(await demo.database.prisma.documentLive.findFirstOrThrow({ where: { documentId: seeded.documentId } })).toEqual(accepted);
+    expect((await latest(context)).currentRevisionNumber).toBe(1);
+
+    const outsiderPage = await outsider.newPage(); await login(outsiderPage, 'outsider');
+    await expect(outsiderPage.getByText('Access to this document is unavailable.', { exact: true })).toBeVisible();
+    await expect(outsiderPage.locator('.bn-collaboration-cursor__label')).toHaveCount(0);
+    await expect(body(outsiderPage)).toHaveCount(0);
+    const space = await administrator.request.get(`${demo.origin}/api/v1/spaces/${seeded.spaceId}`); expect(space.status()).toBe(200);
+    const revoked = await administrator.request.delete(`${demo.origin}/api/v1/spaces/${seeded.spaceId}/members/${demo.accountId('editor')}`,
+      { headers: { Origin: demo.origin, 'If-Match': space.headers().etag! } }); expect(revoked.status()).toBe(200);
+    await expect(body(page)).not.toBeEditable();
+    for (const tab of [peer, readerPage]) await expect(tab.locator('.bn-collaboration-cursor__label')).toHaveCount(0);
+    expect(runtimeErrors).toEqual([]);
+    for (const tab of [page, peer, readerPage, outsiderPage]) expect(await tab.evaluate(() => localStorage.length + sessionStorage.length)).toBe(0);
+  } finally { await administrator.close(); await reader.close(); await outsider.close(); }
+});
+
 test('supplied comment composer persists private threads; readers can view but not write and outsiders remain isolated', async ({ page, browser, context }) => {
   await login(page); await expect(title(page)).toBeVisible(); await enroll(page);
   await body(page).focus(); await page.keyboard.press('ControlOrMeta+Home'); await page.keyboard.press('Shift+End');
@@ -181,7 +227,8 @@ test('native rich-block and title undo/redo preserve another tab\'s heading, tab
     await second.goto(page.url()); await expect(body(second)).toBeEditable();
     await body(page).fill('Shared native integration');
     await slashBlock(page, 'h2', 'Heading 2'); await page.keyboard.insertText('Local heading');
-    const peerHeading = body(second).getByRole('heading', { name: 'Local heading', exact: true });
+    // Supplied peer cursor labels contribute to the heading's accessible name.
+    const peerHeading = body(second).getByRole('heading').filter({ hasText: 'Local heading' });
     await peerHeading.click(); await second.keyboard.press('End'); await second.keyboard.insertText(' peer heading');
     await expect(body(page)).toContainText('peer heading');
     await slashBlock(page, 'table', 'Table');
@@ -764,7 +811,7 @@ test('nested native list undo/redo preserves another account\'s child and checkp
     await body(page).fill('Native nested list checkpoint');
     await slashBlock(page, 'bullet', 'Bullet List'); await page.keyboard.insertText('Local parent');
     await page.keyboard.press('Enter'); await page.keyboard.press('Tab'); await page.keyboard.insertText('Local child');
-    const peerChild = body(peer).getByText('Local child', { exact: true });
+    const peerChild = body(peer).locator('.bn-inline-content').filter({ hasText: 'Local child' });
     await expect(peerChild).toBeVisible(); await peerChild.click(); await peer.keyboard.press('End'); await peer.keyboard.insertText(' with administrator contribution');
     for (const tab of [page, peer]) await expect(body(tab)).toContainText('Local child with administrator contribution');
     await page.getByRole('button', { name: 'Undo my changes', exact: true }).click();

@@ -14,6 +14,7 @@ import type { Principal } from '../../core/identity/index.js';
 import { LIVE_LIMITS } from '../../core/live/content.js';
 import { HttpProblem } from '../../http/problems.js';
 import { documentEtag } from '../../core/documents/index.js';
+import { privatePresence, PRESENCE_LIMITS } from './presence.js';
 
 type Owner = { assertHeld(): void; lost: Promise<void> };
 type Context = {
@@ -22,6 +23,7 @@ type Context = {
   address?: string; room?: { id: string; epoch: string };
   pendingBytes: number; pendingMessages: number; authenticated: boolean;
   release?: () => void; joinRelease?: () => void;
+  presenceId?: number; presenceUser?: { id: string; name: string };
 };
 const uuid = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 const roomPattern = new RegExp(`^(${uuid}):(${uuid})$`);
@@ -101,6 +103,7 @@ export function createCollaboration(core: Core, owner: Owner, origin: string) {
     const receipt = await core.documents.live.authorizeConnections(context.headers, context.room.id, context.room.epoch, audience(document));
     owner.assertHeld(); prune(document, receipt.recipients);
     if (!context.allowed) throw unavailable();
+    context.presenceUser = receipt.user;
     return receipt;
   }
   function finish(context: Context, bytes: number) {
@@ -194,11 +197,30 @@ export function createCollaboration(core: Core, owner: Owner, origin: string) {
         fail(context); throw unavailable();
       }
     },
-    async beforeHandleAwareness({ context, states }) {
+    async beforeHandleAwareness({ context, states, document, socketId }) {
       if (!context?.connection) throw unavailable();
-      // Presence is temporarily disabled until authenticated cursor ownership is
-      // integrated; arbitrary client identities cannot enter a private room.
-      states.clear();
+      const connection = context.connection;
+      try {
+        // The pinned hook's scratch Awareness starts with its own empty state.
+        // Empty states advertise nothing and must not acquire a socket identity.
+        for (const [clientId, state] of states) if (Object.keys(state).length === 0) states.delete(clientId);
+        if (states.size > PRESENCE_LIMITS.maxClients || !connection.allowed || !connection.presenceUser) throw unavailable();
+        const owned = [...states.keys()].filter(clientId => !document.getConnections().some(peer => peer.socketId !== socketId
+          && document.getClients(peer).has(clientId)));
+        if (owned.length > 1) throw unavailable();
+        // Native QueryAwareness replies can relay known peers. Ignore those
+        // copies; only each peer's own authenticated connection may update it.
+        for (const clientId of states.keys()) if (!owned.includes(clientId)) states.delete(clientId);
+        for (const [clientId, state] of states) {
+          if (!Number.isSafeInteger(clientId) || clientId < 0 || clientId === document.clientID
+            || connection.presenceId !== undefined && connection.presenceId !== clientId) throw unavailable();
+          // Bind the ID before applying it. An authorized client may advertise its
+          // own cursor, never replace another connection or provide its identity.
+          const presence = privatePresence(state, document, connection.presenceUser);
+          connection.presenceId = clientId;
+          states.set(clientId, presence);
+        }
+      } catch { fail(connection); throw unavailable(); }
     },
     async onStateless({ connection }) { connection.close(unavailable()); },
     async onTokenSync({ context: { connection: context } }) { fail(context); throw unavailable(); },
@@ -221,6 +243,7 @@ export function createCollaboration(core: Core, owner: Owner, origin: string) {
       try {
         if (!binary || !Buffer.isBuffer(data) || stopped || !context.allowed) throw unavailable();
         const decoder = createDecoder(data), address = readVarString(decoder), type = readVarUint(decoder);
+        if (type === MessageType.Awareness && data.byteLength > PRESENCE_LIMITS.maxClients * PRESENCE_LIMITS.maxStateBytes + 256) throw unavailable();
         if (!addressPattern.test(address) || context.address && address !== context.address
           || ![MessageType.Auth, MessageType.Sync, MessageType.SyncReply, MessageType.Awareness, MessageType.QueryAwareness, MessageType.CLOSE].includes(type)) throw unavailable();
         context.address = address;

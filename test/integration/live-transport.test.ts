@@ -9,9 +9,11 @@ import { request } from 'node:http';
 import { setTimeout as delay } from 'node:timers/promises';
 import { WebSocket } from 'ws';
 import { HocuspocusProvider, HocuspocusProviderWebsocket } from '@hocuspocus/provider';
+import { MessageType } from '@hocuspocus/server';
 import { RESTYjsThreadStore } from '@blocknote/core/yjs';
 import { DefaultThreadStoreAuth } from '@blocknote/core/comments';
 import { createDecoder, readVarString, readVarUint } from 'lib0/decoding';
+import { createEncoder, writeVarString, writeVarUint, writeVarUint8Array, toUint8Array } from 'lib0/encoding';
 import * as Y from 'yjs';
 import { readConfig } from '../../src/config.js';
 import { createDatabase } from '../../src/db/client.js';
@@ -99,7 +101,7 @@ test('prepared same-origin live transport commits before actual socket delivery 
       AND activity.query LIKE '%DocumentLive%' AND activity.pid<>pg_backend_pid()) AS waiting`,
   [`"${schema}"."DocumentLive"`])).rows[0]!.waiting;
 
-  async function connect(headers: Headers, documentName = name()) {
+  async function connect(headers: Headers, documentName = name(), presence = false) {
     const document = new Y.Doc({ gc: false }), frames: number[] = [], metadata: LiveMetadata[] = [];
     document.getXmlFragment('document'); document.getMap('metadata'); document.getMap('threads');
     let socket: WebSocket | undefined, socketCount = 0;
@@ -125,7 +127,8 @@ test('prepared same-origin live transport commits before actual socket delivery 
       // later event listener cannot cancel a retry that is already scheduled.
       onClose: () => websocket.disconnect(),
     });
-    const provider = new HocuspocusProvider({ websocketProvider: websocket, name: documentName, document, awareness: null });
+    const provider = new HocuspocusProvider({ websocketProvider: websocket, name: documentName, document,
+      ...(presence ? {} : { awareness: null }) });
     provider.attach();
     const client = { provider, websocket, document, frames, metadata, get socket() { return socket; }, get socketCount() { return socketCount; } }; clients.push(client);
     await websocket.connect();
@@ -484,6 +487,75 @@ test('prepared same-origin live transport commits before actual socket delivery 
     assert.deepEqual(Y.encodeStateVector(fresh.document), Y.encodeStateVector(observer.document));
     assert.equal(readLiveState(Y.encodeStateAsUpdate(fresh.document)).title, readLiveState(room.state).title);
     observer = fresh;
+  });
+  await t.test('native presence uses server identities, owns one client ID and never changes stored content', async () => {
+    let presenceSpace = await core.spaces.create(admin, 'Private presence fixture');
+    for (const [user, role] of [[editorUser, 'editor'], [peerUser, 'editor'], [readerUser, 'reader']] as const) {
+      presenceSpace = await core.spaces.changeMembership(admin, { spaceId: presenceSpace.id, userId: user.id, role,
+        expectedEtag: spaceEtag(presenceSpace) });
+    }
+    const document = await core.documents.create(editor, presenceSpace.id,
+      { title: 'Private presence', content: demoContent(['Authorized native cursor text']) });
+    const enrolled = await core.documents.live.enroll(editor, document.id, documentEtag(document));
+    const address = `${document.id}:${enrolled.epoch}`;
+    const writer = await connect(editor, address, true), viewer = await connect(reader, address, true);
+    await until(() => writer.provider.isSynced && viewer.provider.isSynced, 'Separate real sessions synchronize before presence');
+    assert(writer.provider.awareness && viewer.provider.awareness);
+    const editorName = (await core.identity.me(editor)).name;
+    const before = await database.prisma.documentLive.findFirstOrThrow({ where: { documentId: document.id } });
+    const text = nativeText(writer.document, 'Authorized native cursor text');
+    const cursor = { anchor: Y.relativePositionToJSON(Y.createRelativePositionFromTypeIndex(text, 0)),
+      head: Y.relativePositionToJSON(Y.createRelativePositionFromTypeIndex(text, 10)) };
+    writer.provider.awareness.setLocalState({ user: { id: administrator.id, name: 'Forged administrator',
+      color: 'url(https://example.test/forged)', email: 'private@example.test' }, cursor, privateDraft: 'DO NOT SHARE' });
+    await until(() => Boolean(viewer.provider.awareness?.getStates().get(writer.document.clientID)?.cursor),
+      'Reader receives the authorized native cursor');
+    // The native helper returns ID instances; the actual protocol uses JSON.
+    const expectedPresence: unknown = JSON.parse(JSON.stringify({ user: { id: editorUser.id, name: editorName, color: '#91ad95' }, cursor }));
+    assert.deepEqual(viewer.provider.awareness.getStates().get(writer.document.clientID), expectedPresence);
+    assert.deepEqual(await database.prisma.documentLive.findFirstOrThrow({ where: { documentId: document.id } }), before);
+    assert.equal(await database.prisma.documentRevision.count({ where: { documentId: document.id } }), 1);
+    const outsiderClient = await connect(outsider, address, true);
+    await until(() => outsiderClient.socket?.readyState === WebSocket.CLOSED, 'Outsider cannot join a presence room');
+    assert.equal(outsiderClient.document.getXmlFragment('document').length, 0);
+    assert.deepEqual([...outsiderClient.provider.awareness!.getStates().keys()], [outsiderClient.document.clientID]);
+
+    function awarenessFrame(states: readonly [number, unknown][]) {
+      const update = createEncoder(); writeVarUint(update, states.length);
+      for (const [clientId, state] of states) {
+        writeVarUint(update, clientId); writeVarUint(update, 1000); writeVarString(update, JSON.stringify(state));
+      }
+      const frame = createEncoder(); writeVarString(frame, address); writeVarUint(frame, 1);
+      writeVarUint8Array(frame, toUint8Array(update)); return toUint8Array(frame);
+    }
+    // Native queries may relay peers. Even forged copies on bound or first-use
+    // connections are ignored; only the owner's connection can change them.
+    for (const presence of [true, false]) {
+      const attacker = await connect(peer, address, presence); await until(() => attacker.provider.isSynced, 'Attacker authenticates normally');
+      const frames = attacker.frames.filter(type => type === MessageType.Sync).length;
+      attacker.socket!.send(awarenessFrame([[writer.document.clientID, { user: { name: 'Impersonated' }, cursor }]]));
+      attacker.provider.forceSync();
+      await until(() => attacker.frames.filter(type => type === MessageType.Sync).length > frames, 'Subsequent native synchronization proves the preceding forged relay was handled');
+      assert.equal(attacker.socket!.readyState, WebSocket.OPEN);
+      assert.deepEqual(viewer.provider.awareness.getStates().get(writer.document.clientID), expectedPresence);
+    }
+    const privateTitlePosition = Y.relativePositionToJSON(Y.createRelativePositionFromTypeIndex(title(writer.document), 0));
+    for (const states of [
+      [[100, { user: {} }], [101, { user: {} }]],
+      [[100, { cursor: { anchor: { tname: 'metadata' }, head: { tname: 'metadata' } } }]],
+      [[100, { cursor: { anchor: privateTitlePosition, head: privateTitlePosition } }]],
+      [[100, { privateDraft: 'x'.repeat(4096) }]],
+    ] as [number, unknown][][]) {
+      const attacker = await connect(peer, address); await until(() => attacker.provider.isSynced, 'Malformed presence sender connects');
+      attacker.socket!.send(awarenessFrame(states));
+      await until(() => attacker.socket?.readyState === WebSocket.CLOSED, 'Malformed/oversized presence is rejected');
+      assert.equal(viewer.provider.awareness.getStates().get(writer.document.clientID)?.user.name, editorName);
+    }
+    presenceSpace = await core.spaces.changeMembership(admin, { spaceId: presenceSpace.id, userId: editorUser.id, role: null,
+      expectedEtag: spaceEtag(presenceSpace) });
+    await until(() => writer.socket?.readyState === WebSocket.CLOSED, 'Existing presence session closes after revocation');
+    await until(() => !viewer.provider.awareness?.getStates().has(writer.document.clientID), 'Revoked presence disappears from remaining readers');
+    assert.deepEqual(await database.prisma.documentLive.findFirstOrThrow({ where: { documentId: document.id } }), before);
   });
   await t.test('passive session expiry and a current role downgrade stop writes through existing sockets', async () => {
     const expiringHeaders = await login(editorUser.email, '127.0.0.36');

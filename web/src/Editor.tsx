@@ -78,7 +78,7 @@ export function Editor({ initialContent, editable, onChange, onValidationChange,
     resolveFileUrl: async url => callbacks.current.resolveFileUrl?.(url) ?? url,
   } satisfies Partial<BlockNoteEditorOptions<NativeBlockSchema, DefaultInlineContentSchema, DefaultStyleSchema>>;
   const editor = useCreateBlockNote(live ? withCollaboration({ ...options, extensions,
-    collaboration: { fragment: live.fragment, user: { name: live.user.name, color: '#91ad95' } },
+    collaboration: { fragment: live.fragment, provider: { awareness: live.awareness }, user: { name: live.user.name, color: '#91ad95' } },
   }) : options);
   const headings = useEditorState({
     editor,

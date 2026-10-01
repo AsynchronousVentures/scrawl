@@ -27,6 +27,8 @@ The maintainer has requested continuing autonomous development toward a cohesive
 
 Reaction badges now communicate reader/pending restrictions accessibly. The complete check passes 91 cases and three independent focused browser repetitions pass. Hosted comment selection and graceful shutdown failures remain unresolved; collaboration stays disabled in the retained demo.
 
+Authenticated native cursor/selection presence is implemented behind that same flag, with server identity and per-connection client-ID ownership. Complete checks pass 91 cases and the full database regression passes 137/137 on the single existing target. The real browser presence case passes for editor/reader visibility, outsider denial, revocation and unchanged saved/live content. Broader browser verification remains recorded in validation; no migration or existing locked package version changed.
+
 ## Completed P4 checkpoint
 
 Recorded 2026-09-30 after the P4 editor refinement on completed P4 baseline `9630659`. See [VALIDATION.md](../VALIDATION.md) for observed results, exact commands, migration effects, screenshots, and limits.
