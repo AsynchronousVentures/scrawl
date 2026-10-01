@@ -312,10 +312,11 @@ export function App() {
       const created = await api.createSpace(spaceName.trim());
       if (ticket !== generation.current) return;
       setSpaces(previous => previous.some(item => item.id === created.id) ? previous : [...previous, created]);
-      setSpacePrompt(false); setSpaceNotice(`Created space "${created.name}".`);
+      setSpaceNotice(`Created space "${created.name}".`);
       // Creating a space is not document navigation. Keep the draft, editor
       // undo stack, save error and comparison ETag intact in an open workspace.
       if (!space && !draftRef.current) await selectSpace(created);
+      setSpacePrompt(false);
     } catch (error) {
       if (ticket === generation.current && !unavailable(error)) setSpaceCreateError(error instanceof ApiError && error.status === 400
         ? 'Enter a space name between 1 and 200 characters.'

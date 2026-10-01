@@ -29,8 +29,22 @@ test('an administrator creates the first space and document in a genuinely empty
   const dialog = page.getByRole('dialog', { name: 'New space', exact: true });
   await expect(dialog.getByLabel('Space name')).toBeFocused();
   await dialog.getByLabel('Space name').fill('First handbook');
-  await dialog.getByLabel('Space name').press('Enter');
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  await page.route('**/api/v1/spaces/*/documents**', async route => {
+    if (route.request().method() === 'GET') await held;
+    await route.continue();
+  });
+  try {
+    const listing = page.waitForRequest(request => request.method() === 'GET' && new URL(request.url()).pathname.endsWith('/documents'));
+    await dialog.getByLabel('Space name').press('Enter'); await listing;
+    // Closing before the first-space read completes tries to restore focus
+    // to a still-disabled trigger and strands keyboard users on the body.
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole('button', { name: 'Create space', exact: true })).toBeDisabled();
+  } finally { release(); }
   await expect(dialog).toBeHidden();
+  await expect(trigger).toBeFocused();
   await expect(page).toHaveURL(`${demo.origin}/spaces/first-handbook`);
   await expect(page.getByRole('heading', { name: 'No documents yet' })).toBeVisible();
   expect(await demo.database.prisma.space.count()).toBe(1);
