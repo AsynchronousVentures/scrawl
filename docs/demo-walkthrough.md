@@ -83,7 +83,7 @@ systemctl --user show scrawl-integration-demo.service --property=ActiveState,Sub
 curl --fail --silent http://127.0.0.1:3100/health/ready
 ```
 
-If the transient unit is no longer loaded after a machine restart, recreate it:
+If the transient unit was collected after an explicit stop or a machine restart, recreate it:
 
 ```sh
 systemd-run --user --unit=scrawl-integration-demo \
@@ -232,3 +232,9 @@ The fresh all-role retained verifier subsequently passed, including anonymous pu
 The existing retained preview was restarted with the accepted-request-aware HTTP drain fix. Its current page, JavaScript/CSS assets and readiness endpoint return 200 through the unchanged Funnel. Ctrl/Cmd+S uses the real Save control, including its pending/conflict guards; native comment composers use their own Save control. Fresh administrator, reader, outsider and anonymous selected-publication/image verification passed (`artifacts/demo18/verification-login-phases.log`). The first post-restart verification failed before recording an authentication response; its cause is unverified and is not erased by the subsequent pass. The verifier records only fixed login stages/statuses and never retries sign-in automatically. No migration, fixture reset, account recovery or retained collaboration activation occurred.
 
 The expanded full browser regression now passes 88/88 in 12.0 minutes, zero retries/skips: `NODE_ENV=test npm run test:browser`. The masked retained-preview verifier also passes all three authenticated roles and anonymous publishing. [Actual running workspace](https://uwvqig7mu5.ufs.sh/f/tJOw1mn9psOERzfJMpVm6dK4kbZyuGeYvnWgwipA7PsjC3a5). Retained collaboration remains disabled; inspect current hosted checks and the recorded native caret/navigation failures before changing that flag. Proposed same-space organization is tracked in issue #7; it is not a live feature.
+
+## Organization API checkpoint
+
+The retained preview now runs migration nine and the authorized organization API from `06a3f0f`. All eight content/grant/live/file/publication record digests match before and after migration, excluding only the added nullable parent field; existing documents remain roots. Fresh administrator, reader, outsider and anonymous publication/image checks pass (`verification-hierarchy-core-preview.log`). The normal private workflow and approved layout are unchanged. No nested navigation, breadcrumbs or move controls are displayed yet; those are the next connected implementation in issue #7. Child creation and moves are currently headless API capabilities, with current ETags and no access inheritance or publication cascade. Native export remains one content snapshot, not a hierarchy backup.
+
+New branch installations require `npm run db:generate` and `npm run db:migrate` before starting the backend. The existing preview has already applied that migration. Restart or recreate the transient service using the earlier commands; `systemctl start` cannot restart a unit that systemd collected after stopping it. Do not reset retained fixtures or change Funnel configuration for this update.

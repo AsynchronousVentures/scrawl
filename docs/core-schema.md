@@ -101,11 +101,13 @@ Explicit checkpoints require document ETag, epoch and observed sequence. Canonic
 
 Private comment commands use the supplied Yjs thread store on a validated clone under the same write transaction. Author IDs and timestamps are server-derived, other-author edits fail, and current readers cannot write. Native relative anchors are resolved against this document/epoch; stale or foreign identities fail. Comment bodies use the supplied paragraph composer schema with separate bounded resources. Comment state and anchors remain live-only, leaving immutable revisions, search, export and publication content unchanged. Prepared transport serializes comment delivery with inbound edits and joining, applying only accepted state to current authorized recipients. HTTP/client adapters and startup are available behind the explicit feature setting; the retained preview does not enable it.
 
-## Add only with the feature
+## Same-space organization core
 
 The hierarchy core adds a nullable same-space parent reference, enforced by a composite foreign key, plus core cycle/depth protection under the exclusive space lock. Migration nine leaves existing documents at the root without rewriting content/history/versions. Child creation accepts `parentDocumentId`; `POST /api/v1/documents/:id/move` requires the current document ETag and a parent ID or null for the root. A structural change increments lockVersion, preserves content revision numbers, slugs, live bytes and publication approval; an unchanged parent is a no-op. Maximum hierarchy depth is 32, including the entire moved subtree.
 
 Archive rejects a parent with active children; an archived parent cannot receive new/active children. Unarchive requires an active parent, or an explicit move to an active parent/root first. No recursive hide/move, cross-space move, per-document permission override or publication cascade is added. The connected navigation is not yet implemented. See [ADR 0004](adr/0004-document-organization.md).
+
+## Add only with the feature
 
 Whole-instance backup and document export remain distinct. Future content import must remap IDs, preserve attribution as safe metadata, assign a destination space, and never escalate membership or restore public grants implicitly. No import or full backup system is implemented.
 
