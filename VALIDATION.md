@@ -23,6 +23,8 @@ Remaining activation gates are authenticated presence, separate-account concurre
 
 Prior hosted checkpoint `6d8d19f` passed both complete 17/18 matrices. The PR matrices for `1bae82a` and `61f4f13` passed; their push matrices each failed one existing browser interaction (external-link toolbar or in-flight-save navigation). Both interactions pass in the complete current local run. The intermittent cause remains unverified, with no assertion weakened. New hosted results remain unverified until recorded.
 
+The persistent synthetic preview was rebuilt/restarted on `b3fd3f6` with collaboration still disabled. Observed readiness returned 200; fresh administrator, reader, outsider and anonymous-publication browser verification passed. Log: `artifacts/demo18/verification-live-ui-final.log`. Its six actual running screenshots were refreshed with no revisions or fixture reset. All 147 regular source archive members matched the checkout byte-for-byte and the served hash matched locally. Existing Funnel 10000 and private T3 access were unchanged.
+
 ## Prepared authenticated collaboration HTTP integration, prior checkpoint
 
 Optional implemented routes now expose enrollment/metadata, explicit checkpoints, epoch-changing restore, document-scoped author names and the pinned BlockNote REST comment contract. The running application does not mount this capability yet. Core transactions continue to check access and session lifetime; checkpoint/restore include current recipient receipts. A single document mutex serializes socket acceptance, joins, comments, enrollment and lifecycle changes across old/new epochs. Restore and archive close old connections only after commit. Unknown lifecycle failure invalidates every cached epoch for that document.
