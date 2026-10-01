@@ -26,7 +26,7 @@ async function main() {
   const failures: string[] = [];
   try {
     for (const role of ['administrator', 'reader', 'outsider'] as const) {
-      stage = `${role} fresh-session login`;
+      stage = `${role} login page load`;
       const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
       const page = await context.newPage();
       page.on('pageerror', () => failures.push('Browser execution failed'));
@@ -95,9 +95,9 @@ async function main() {
             await accessDialog.getByRole('button', { name: 'Done', exact: true }).click();
             await expect(page.getByRole('button', { name: 'Space access', exact: true })).toBeFocused();
             await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
-            await page.screenshot({ path: `${evidenceDirectory}/workspace.png` });
+            await page.screenshot({ path: `${evidenceDirectory}/workspace.png`, mask: [page.locator('.account')], maskColor: '#1b1e20' });
             await image.scrollIntoViewIfNeeded();
-            await page.screenshot({ path: `${evidenceDirectory}/private-image.png` });
+            await page.screenshot({ path: `${evidenceDirectory}/private-image.png`, mask: [page.locator('.account')], maskColor: '#1b1e20' });
             await page.evaluate(() => window.scrollTo(0, 0));
           }
           stage = `${role} indexed search`;
@@ -105,7 +105,7 @@ async function main() {
           const search = page.getByRole('dialog', { name: 'Search documents', exact: true });
           await search.getByRole('combobox').fill('runbook');
           await expect(search.getByRole('option').first()).toContainText('Service runbook');
-          if (role === 'administrator') await page.screenshot({ path: `${evidenceDirectory}/search.png` });
+          if (role === 'administrator') await page.screenshot({ path: `${evidenceDirectory}/search.png`, mask: [page.locator('.account')], maskColor: '#1b1e20' });
           await page.keyboard.press('Escape');
           stage = `${role} immutable history`;
           await page.getByRole('button', { name: 'History', exact: true }).click();
@@ -139,7 +139,7 @@ async function main() {
             await expect(body.locator('code').first()).toContainText('curl --fail');
             await expect(body.locator('table').first()).toBeVisible();
             await body.locator('table').first().scrollIntoViewIfNeeded();
-            await page.screenshot({ path: `${evidenceDirectory}/rich-document.png` });
+            await page.screenshot({ path: `${evidenceDirectory}/rich-document.png`, mask: [page.locator('.account')], maskColor: '#1b1e20' });
             await page.goBack();
             await expect(page).toHaveURL(startUrl);
             await expect(title).toHaveValue('Start here');
@@ -151,7 +151,7 @@ async function main() {
             await page.setViewportSize({ width: 390, height: 844 });
             await expect(page.getByRole('button', { name: 'Navigation', exact: true })).toBeVisible();
             assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
-            await page.screenshot({ path: `${evidenceDirectory}/mobile.png` });
+            await page.screenshot({ path: `${evidenceDirectory}/mobile.png`, mask: [page.locator('.account')], maskColor: '#1b1e20' });
           }
         }
         stage = `${role} logout`;
@@ -191,11 +191,15 @@ async function main() {
   async function login(page: Page, role: DemoRole) {
     const password = page.getByLabel('Password', { exact: true });
     try {
+      stage = `${role} login email entry`;
       await page.getByLabel('Email', { exact: true }).fill(credentials.accounts[role].email);
+      stage = `${role} login password entry`;
       await password.fill(credentials.accounts[role].password);
       const attempt = page.waitForResponse(response => new URL(response.url()).pathname === '/api/auth/sign-in/email'
         && response.request().method() === 'POST');
+      stage = `${role} login submission`;
       await page.getByRole('button', { name: 'Log in', exact: true }).click();
+      stage = `${role} authentication response`;
       const response = await attempt;
       // Retained previews keep their real rate limiter. Report only the status,
       // never request bodies, cookies, headers or an automatically retried login.
