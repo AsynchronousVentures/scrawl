@@ -17,7 +17,7 @@ The [architecture](docs/architecture.md), [core schema brief](docs/core-schema.m
 
 ## Current implementation
 
-The supplied Fastify scaffold provides environment validation, liveness/readiness, generated OpenAPI, standard problem responses, request IDs, redacted logging, PostgreSQL readiness access, and graceful shutdown. P0 established exact dependency pins, a reviewed npm lockfile and regression coverage. CI now has a Node 24/PostgreSQL 17 and 18 matrix; observed local and hosted results are recorded separately in validation.
+The supplied Fastify scaffold provides environment validation, liveness/readiness, generated OpenAPI, standard problem responses, request IDs, redacted logging, PostgreSQL readiness access, and graceful shutdown. P0 established exact dependency pins, a reviewed npm lockfile and regression coverage. CI uses Node 24 and PostgreSQL 18 only; observed local and hosted results are recorded separately in validation.
 
 P1 adds real local sessions, closed registration, host account commands, and administrator-managed space access. Authorization lives in core operations; Prisma records do not become HTTP DTOs.
 
@@ -37,7 +37,7 @@ The incoming archive's history is recorded in [changes-v3.md](docs/changes-v3.md
 
 ## Local development
 
-Requires Node.js 24, npm, and Docker Compose or a local PostgreSQL 18 database. PostgreSQL 17 remains supported through the explicit compatibility files and CI matrix.
+Requires Node.js 24, npm, and the existing PostgreSQL 18 instance. The fresh-checkout setup below is for contributors without an existing database; ongoing development does not create or test another database-version target.
 
 For a fresh checkout with no `.env`, copy the example exclusively and generate a secret without printing it. This refuses to overwrite an existing environment file:
 
