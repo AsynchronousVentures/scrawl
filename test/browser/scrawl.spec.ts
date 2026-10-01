@@ -53,9 +53,20 @@ test('document links support Back/Forward and opening a separate tab without dis
   await expect(title(page)).toHaveValue('Another handbook');
   await title(page).fill('Complete local draft in the current tab');
   await body(page).fill('Unsaved body stays here while another tab opens.');
-  const otherTab = context.waitForEvent('page');
   await page.getByRole('link', { name: original.data.revision.title, exact: true }).click({ modifiers: ['ControlOrMeta'] });
-  const opened = await otherTab;
+  // Opener isolation can replace the initial about:blank target. Observe the
+  // actual rendered native tab rather than keeping that transient page handle.
+  let opened: Page | undefined;
+  await expect.poll(async () => {
+    for (const candidate of context.pages()) {
+      if (candidate === page || candidate.isClosed() || candidate.url() !== originalUrl) continue;
+      try {
+        if (await title(candidate).count() === 1) { opened = candidate; return true; }
+      } catch { /* A transient target can close during opener isolation. */ }
+    }
+    return false;
+  }).toBe(true);
+  if (!opened) throw new Error('The native document tab did not finish loading');
   try {
     await expect(opened).toHaveURL(originalUrl);
     await expect(title(opened)).toHaveValue(original.data.revision.title);
@@ -491,6 +502,27 @@ test('a new native document enables supplied Upload after its first Save without
   await body(page).getByText('Add image', { exact: true }).click();
   await expect(page.getByRole('tab', { name: 'Upload', exact: true })).toBeVisible();
   expect((await readDocument(context, document.id)).data.currentRevisionNumber).toBe(1);
+});
+
+test('rapid new-draft navigation never inherits another document attachment authority or changes history', async ({ page, context }) => {
+  await login(page);
+  const original = await readDocument(context);
+  let writes = 0;
+  page.on('request', request => { if (['PATCH', 'POST', 'DELETE'].includes(request.method())) writes++; });
+  for (let attempt = 0; attempt < 6; attempt++) {
+    await page.getByRole('button', { name: 'New document', exact: true }).click();
+    await title(page).fill('Complete unsaved new document');
+    await body(page).fill('Complete unsaved body.');
+    await slashBlock(page, 'image', 'Image');
+    await expect(page.getByRole('tab', { name: 'Upload', exact: true })).toHaveCount(0);
+    await expect(page.getByText('Save this document before uploading attachments.', { exact: true })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await page.getByRole('link', { name: original.data.revision.title, exact: true }).click();
+    await page.getByRole('dialog', { name: 'Unsaved changes' }).getByRole('button', { name: 'Discard changes', exact: true }).click();
+    await expect(title(page)).toHaveValue(original.data.revision.title);
+  }
+  expect(writes).toBe(0);
+  expect(await readDocument(context)).toEqual(original);
 });
 
 test('a rejected native upload retains the entire local draft and creates no revision', async ({ page, context }) => {

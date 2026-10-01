@@ -130,7 +130,9 @@ export function App() {
     handledHref.current = href;
     if (href === location.pathname + location.search && !location.hash) return;
     canonicalTarget.current = href;
-    void navigate(href, { replace });
+    // The local draft and its URL must commit together. A deferred router
+    // render can otherwise treat an earlier canonical URL as user navigation.
+    void navigate(href, { replace, flushSync: true });
   }
   function resetDocument() {
     setLoadingDocument(false);

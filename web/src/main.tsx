@@ -2,7 +2,8 @@
 // Copyright (C) 2026 Asynchronous Ventures and contributors
 
 import { createRoot } from 'react-dom/client';
-import { createBrowserRouter, RouterProvider } from 'react-router';
+import { createBrowserRouter } from 'react-router';
+import { RouterProvider } from 'react-router/dom';
 import { App } from './App';
 import { PublicDocument } from './PublicDocument';
 import './styles.css';

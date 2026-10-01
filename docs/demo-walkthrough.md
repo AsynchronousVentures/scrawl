@@ -83,7 +83,7 @@ Publishing defaults off in normal configuration. It is explicitly `true` only in
 
 ## Verify the actual running demo
 
-This opt-in authored acceptance runner uses fresh browser sessions against the actual persistent origin. It reads private credentials safely, checks native blocks/private image/search/history/export/mobile/reader/outsider, logs no passwords/cookies, and creates no document revisions or reset:
+This opt-in authored acceptance runner uses fresh browser sessions against the actual persistent origin. It reads private credentials safely, checks native blocks/private image/search/history/export/mobile/reader/outsider and Back/Forward navigation, logs no passwords/cookies, and creates no document revisions or reset:
 
 ```sh
 cd /home/dev/t3/projects/scrawl/artifacts/demo18
