@@ -17,6 +17,7 @@ export type Attachment = JsonResponse<'uploadDocumentAttachment', 201>;
 export type ExportFormat = 'pdf' | 'docx';
 export type PublishingAvailability = JsonResponse<'getPublishingAvailability', 200>;
 export type PublicationStatus = JsonResponse<'readDocumentPublication', 200>;
+export type LiveMetadata = JsonResponse<'readLiveDocument', 200>;
 type WirePublicDocument = JsonResponse<'readPublicPublication', 200>;
 export type PublicDocument = Omit<WirePublicDocument, 'content'> & { content: ContentEnvelope };
 type WireDocument = JsonResponse<'readDocument', 200>;
@@ -90,6 +91,32 @@ export const api = {
   async document(id: string) {
     const { data, response } = await checked(client.GET('/api/v1/documents/{id}', { params: { path: { id } } }));
     return loaded(data, response);
+  },
+  async liveDocument(id: string) {
+    return (await checked(client.GET('/api/v1/documents/{id}/live', { params: { path: { id } } }))).data;
+  },
+  async enrollLive(id: string, etag: string) {
+    return (await checked(client.POST('/api/v1/documents/{id}/live', {
+      params: { path: { id }, header: { 'if-match': etag } }, body: {},
+    }))).data;
+  },
+  async liveUsers(id: string, userIds: string[]) {
+    return (await checked(client.POST('/api/v1/documents/{id}/live/users', {
+      params: { path: { id } }, body: { userIds },
+    }))).data;
+  },
+  async checkpointLive(id: string, etag: string, snapshot: Pick<LiveMetadata, 'epoch' | 'sequence'>) {
+    const { data, response } = await checked(client.POST('/api/v1/documents/{id}/live/{epoch}/checkpoint', {
+      params: { path: { id, epoch: snapshot.epoch }, header: { 'if-match': etag } }, body: { sequence: snapshot.sequence },
+    }));
+    return loaded(data, response);
+  },
+  async restoreLive(id: string, etag: string, snapshot: Pick<LiveMetadata, 'epoch' | 'sequence'>, revisionId: string) {
+    const { data, response } = await checked(client.POST('/api/v1/documents/{id}/live/{epoch}/restore', {
+      params: { path: { id, epoch: snapshot.epoch }, header: { 'if-match': etag } },
+      body: { sequence: snapshot.sequence, revisionId },
+    }));
+    return { ...loaded(data.document, response), room: data.room };
   },
   async documentBySlug(id: string, slug: string) {
     const { data, response } = await checked(client.GET('/api/v1/spaces/{id}/documents/by-slug/{slug}', {
