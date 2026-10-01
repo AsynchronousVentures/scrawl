@@ -20,7 +20,8 @@ import { createCollaboration } from '../../src/capabilities/collaboration/index.
 import { documentEtag } from '../../src/core/documents/index.js';
 import { spaceEtag } from '../../src/core/spaces/index.js';
 import { readLiveState } from '../../src/core/live/content.js';
-import { richDemoContent } from '../../scripts/demo-content.js';
+import { HttpProblem } from '../../src/http/problems.js';
+import { demoContent, richDemoContent } from '../../scripts/demo-content.js';
 import { buildApp } from '../../src/app.js';
 
 async function until(predicate: () => boolean | Promise<boolean>, description: string) {
@@ -54,7 +55,8 @@ test('prepared same-origin live transport commits before actual socket delivery 
   transport.attach(app.server);
   const address = await app.listen({ host: '127.0.0.1', port: 0 });
   const socketUrl = address.replace('http:', 'ws:') + '/api/v1/live';
-  const clients: { provider: HocuspocusProvider; websocket: HocuspocusProviderWebsocket; document: Y.Doc; frames: number[]; socket: WebSocket | undefined; socketCount: number }[] = [];
+  type LiveMetadata = { type: 'live-state'; epoch: string; sequence: string; documentEtag: string; canWrite: boolean };
+  const clients: { provider: HocuspocusProvider; websocket: HocuspocusProviderWebsocket; document: Y.Doc; frames: number[]; metadata: LiveMetadata[]; socket: WebSocket | undefined; socketCount: number }[] = [];
   t.after(async () => {
     for (const client of clients) { client.provider.destroy(); client.websocket.destroy(); client.document.destroy(); }
     await transport.close(app.server); await lease.close(); await app.close(); await database.close();
@@ -89,16 +91,30 @@ test('prepared same-origin live transport commits before actual socket delivery 
   const saved = await core.documents.create(editor, space.id, { title: 'Initial socket handbook', content: richDemoContent(['Private synthetic socket body']) });
   let room = await core.documents.live.enroll(editor, saved.id, documentEtag(saved));
   const name = () => `${saved.id}:${room.epoch}`;
+  const writeIsPaused = async () => (await database.pool.query<{ waiting: boolean }>(`SELECT EXISTS(
+    SELECT 1 FROM pg_stat_activity activity JOIN pg_locks lock ON lock.pid=activity.pid
+    WHERE activity.wait_event='advisory' AND lock.relation=$1::regclass
+      AND activity.query LIKE '%DocumentLive%' AND activity.pid<>pg_backend_pid()) AS waiting`,
+  [`"${schema}"."DocumentLive"`])).rows[0]!.waiting;
+
   async function connect(headers: Headers, documentName = name()) {
-    const document = new Y.Doc({ gc: false }), frames: number[] = [];
+    const document = new Y.Doc({ gc: false }), frames: number[] = [], metadata: LiveMetadata[] = [];
     document.getXmlFragment('document'); document.getMap('metadata'); document.getMap('threads');
     let socket: WebSocket | undefined, socketCount = 0;
     class SessionSocket extends WebSocket {
       constructor(url: string) {
         super(url, { headers: { origin: identityConfig.origin, cookie: headers.get('cookie') ?? '' } }); socket = this; socketCount++;
         this.on('message', data => {
-          if (!Buffer.isBuffer(data)) return;
-          const decoder = createDecoder(data); readVarString(decoder); frames.push(readVarUint(decoder));
+          const bytes = data instanceof ArrayBuffer ? new Uint8Array(data) : Array.isArray(data) ? Buffer.concat(data) : data;
+          const decoder = createDecoder(bytes); readVarString(decoder); const type = readVarUint(decoder); frames.push(type);
+          if (type === 5) {
+            const state: unknown = JSON.parse(readVarString(decoder));
+            assert(state && typeof state === 'object' && 'type' in state && state.type === 'live-state'
+              && 'epoch' in state && typeof state.epoch === 'string' && 'sequence' in state && typeof state.sequence === 'string'
+              && 'documentEtag' in state && typeof state.documentEtag === 'string' && 'canWrite' in state && typeof state.canWrite === 'boolean');
+            assert.deepEqual(Object.keys(state).sort(), ['canWrite', 'documentEtag', 'epoch', 'sequence', 'type']);
+            metadata.push(state as LiveMetadata);
+          }
         });
       }
     }
@@ -109,7 +125,7 @@ test('prepared same-origin live transport commits before actual socket delivery 
     });
     const provider = new HocuspocusProvider({ websocketProvider: websocket, name: documentName, document, awareness: null });
     provider.attach();
-    const client = { provider, websocket, document, frames, get socket() { return socket; }, get socketCount() { return socketCount; } }; clients.push(client);
+    const client = { provider, websocket, document, frames, metadata, get socket() { return socket; }, get socketCount() { return socketCount; } }; clients.push(client);
     await websocket.connect();
     return client;
   }
@@ -117,12 +133,15 @@ test('prepared same-origin live transport commits before actual socket delivery 
   let observer = await connect(peer);
   await until(() => [writer, observer, viewer].every(client => client.provider.isSynced && client.provider.unsyncedChanges === 0), 'All roles synchronize the initial durable state');
   await t.test('initial sync is identical, outsiders get no document bytes, and anonymous/wrong-origin upgrades fail', async () => {
+    await until(() => [writer, observer, viewer].every(client => client.metadata.length > 0), 'Genuine peers receive initial authorized metadata');
+    assert([writer, observer, viewer].every(client => client.frames.includes(0) && client.frames.includes(5)));
     assert.equal(title(viewer.document).toString(), saved.revision.title);
     assert.deepEqual(readLiveState(Y.encodeStateAsUpdate(viewer.document)).content, saved.revision.content);
     const denied = await connect(outsider);
     await until(() => denied.socket?.readyState === WebSocket.CLOSED, 'Outsider socket closes');
     assert(!denied.provider.isSynced); assert.equal(denied.document.getXmlFragment('document').length, 0);
     assert(!denied.frames.includes(0));
+    assert.equal(denied.metadata.length, 0);
     for (const headers of [{ origin: identityConfig.origin }, { origin: 'https://foreign.example.test', cookie: editor.get('cookie')! }]) {
       const ws = new WebSocket(socketUrl, { headers });
       const status = await new Promise<number>(resolve => { ws.on('unexpected-response', (_request, response) => { response.resume(); resolve(response.statusCode!); ws.terminate(); }); ws.on('error', () => {}); });
@@ -158,7 +177,7 @@ test('prepared same-origin live transport commits before actual socket delivery 
       await gate.query('SELECT pg_advisory_lock(7242033,hashtext($1))', [schema]);
       const beforeAck = writer.frames.filter(type => type === 8).length;
       title(writer.document).insert(0, 'Committed ');
-      await until(async () => (await database.pool.query<{ waiting: boolean }>(`SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE wait_event='advisory' AND query LIKE '%DocumentLive%' AND pid<>pg_backend_pid()) AS waiting`)).rows[0]!.waiting, 'The actual socket write waits inside PostgreSQL');
+      await until(writeIsPaused, 'The actual socket write waits inside PostgreSQL');
       assert.equal(title(observer.document).toString(), saved.revision.title);
       assert.equal(title(viewer.document).toString(), saved.revision.title);
       assert.equal(writer.frames.filter(type => type === 8).length, beforeAck);
@@ -171,6 +190,7 @@ test('prepared same-origin live transport commits before actual socket delivery 
       await gate.query('SELECT pg_advisory_unlock(7242033,hashtext($1))', [schema]);
       const newcomer = await joining;
       await until(() => writer.provider.unsyncedChanges === 0 && title(observer.document).toString().startsWith('Committed ') && title(viewer.document).toString().startsWith('Committed '), 'Only committed content reaches peers and successful acknowledgement');
+      assert(writer.frames.filter(type => type === 8).length > beforeAck, 'The actual successful acknowledgement frame arrives after commit');
       await until(() => newcomer.provider.isSynced && newcomer.provider.unsyncedChanges === 0, 'The joining peer synchronizes without a retry');
       assert.equal(newcomer.socketCount, 1); assert.equal(title(newcomer.document).toString(), title(observer.document).toString());
       room = await core.documents.live.read(editor, saved.id);
@@ -222,6 +242,80 @@ test('prepared same-origin live transport commits before actual socket delivery 
     observer = await connect(peer);
     await until(() => observer.provider.isSynced && observer.provider.unsyncedChanges === 0, 'Recovered peer reads durable content');
   });
+  let deliveredThreadId: string, deliveredCommentId: string;
+  const commentBody = demoContent(['Private review excluded from saved surfaces']).document;
+  await t.test('server comments reach real editor/reader sockets only after the SQL commit', async () => {
+    const readerPeer = await connect(reader);
+    await until(() => readerPeer.provider.isSynced && readerPeer.provider.unsyncedChanges === 0, 'Reader synchronizes before a server comment');
+    room = await core.documents.live.read(editor, saved.id);
+    const beforeSequence = room.sequence;
+    await until(() => observer.metadata.at(-1)?.sequence === beforeSequence,
+      `Initial server metadata must arrive; observed frame types ${JSON.stringify(observer.frames)}`);
+    const gate = await database.pool.connect();
+    await database.pool.query(`CREATE FUNCTION pause_comment_delivery() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+      PERFORM pg_advisory_xact_lock(7242035,hashtext('${schema}')); RETURN NEW; END $$;
+      CREATE TRIGGER comment_delivery_gate BEFORE UPDATE ON "DocumentLive" FOR EACH ROW EXECUTE FUNCTION pause_comment_delivery()`);
+    try {
+      await gate.query('SELECT pg_advisory_lock(7242035,hashtext($1))', [schema]);
+      let returned = false;
+      const pending = transport.comment(editor, saved.id, room.epoch, { type: 'create', body: commentBody }).then(result => { returned = true; return result; });
+      await until(writeIsPaused, 'The server comment is actually blocked in its SQL acceptance');
+      assert.equal(returned, false);
+      assert.equal(observer.document.getMap('threads').size, 0); assert.equal(readerPeer.document.getMap('threads').size, 0);
+      assert.equal(observer.metadata.at(-1)?.sequence, beforeSequence);
+      await gate.query('SELECT pg_advisory_unlock(7242035,hashtext($1))', [schema]);
+      const result = await pending; assert(result?.type === 'thread');
+      deliveredThreadId = result.id; deliveredCommentId = result.comments[0]!.id;
+      assert.equal(result.comments[0]!.userId, editorUser.id);
+      await until(() => observer.document.getMap('threads').has(result.id) && readerPeer.document.getMap('threads').has(result.id), 'Only committed native comment state reaches authorized peers');
+      room = await core.documents.live.read(reader, saved.id);
+      await until(() => readerPeer.metadata.at(-1)?.sequence === room.sequence, 'Reader receives accepted-state metadata');
+      assert.equal(readerPeer.metadata.at(-1)?.canWrite, false);
+      assert.deepEqual(readLiveState(Y.encodeStateAsUpdate(observer.document)), readLiveState(room.state));
+      assert(!JSON.stringify(await core.documents.exportNative(reader, saved.id)).includes('Private review'));
+      assert.equal(await database.prisma.documentRevision.count({ where: { documentId: saved.id } }), 1);
+    } finally { await gate.query('SELECT pg_advisory_unlock(7242035,hashtext($1))', [schema]); gate.release(); await database.pool.query('DROP TRIGGER comment_delivery_gate ON "DocumentLive"; DROP FUNCTION pause_comment_delivery()'); }
+  });
+  await t.test('denied comment actions neither mutate nor invalidate another authorized peer', async () => {
+    const before = await core.documents.live.read(editor, saved.id);
+    for (const headers of [reader, outsider]) await assert.rejects(transport.comment(headers, saved.id, room.epoch,
+      { type: 'create', body: commentBody }), (error: unknown) => error instanceof HttpProblem && error.status === 404);
+    await assert.rejects(transport.comment(peer, saved.id, room.epoch,
+      { type: 'edit', threadId: deliveredThreadId, commentId: deliveredCommentId, body: commentBody }),
+      (error: unknown) => error instanceof HttpProblem && error.status === 403);
+    assert.deepEqual(await core.documents.live.read(editor, saved.id), before);
+    assert.equal(observer.socket?.readyState, WebSocket.OPEN);
+    assert.equal(observer.document.getMap('threads').size, 1);
+  });
+  await t.test('a failed server comment closes the old room without comment delivery or durable change', async () => {
+    const before = await core.documents.live.read(editor, saved.id);
+    await database.pool.query(`CREATE FUNCTION fail_server_comment() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+      RAISE EXCEPTION 'Synthetic server comment failure'; END $$;
+      CREATE TRIGGER server_comment_failure BEFORE UPDATE ON "DocumentLive" FOR EACH ROW EXECUTE FUNCTION fail_server_comment()`);
+    try {
+      await assert.rejects(transport.comment(editor, saved.id, room.epoch, { type: 'create', body: commentBody }));
+      await until(() => observer.socket?.readyState === WebSocket.CLOSED, 'Database failure closes the cached peer');
+      assert.equal(observer.document.getMap('threads').size, 1);
+      assert.deepEqual(await core.documents.live.read(editor, saved.id), before);
+      assert.equal(await database.prisma.documentRevision.count({ where: { documentId: saved.id } }), 1);
+    } finally { await database.pool.query('DROP TRIGGER server_comment_failure ON "DocumentLive"; DROP FUNCTION fail_server_comment()'); }
+    observer = await connect(peer); await until(() => observer.provider.isSynced && observer.provider.unsyncedChanges === 0, 'Fresh peer loads the unchanged committed comment state');
+    assert.equal(observer.document.getMap('threads').size, 1);
+  });
+  await t.test('uncertain server comment acceptance reloads its real committed state without early delivery', async () => {
+    const original = core.documents.live.comment, before = await core.documents.live.read(editor, saved.id);
+    core.documents.live.comment = async (...args: Parameters<typeof original>) => { await original(...args); throw new HttpProblem(503, 'SYNTHETIC_COMMIT_UNCERTAIN'); };
+    try {
+      await assert.rejects(transport.comment(editor, saved.id, room.epoch, { type: 'create', body: commentBody }));
+      await until(() => observer.socket?.readyState === WebSocket.CLOSED, 'Unknown commit response invalidates the old comment cache');
+      assert.equal(observer.document.getMap('threads').size, 1);
+      room = await core.documents.live.read(editor, saved.id);
+      assert.equal(BigInt(room.sequence), BigInt(before.sequence) + 1n);
+    } finally { core.documents.live.comment = original; }
+    observer = await connect(peer); await until(() => observer.provider.isSynced && observer.provider.unsyncedChanges === 0, 'Replacement peer loads committed unacknowledged comments');
+    assert.equal(observer.document.getMap('threads').size, 2);
+    assert(clients.every(client => client.socketCount === 1));
+  });
   await t.test('an exception after an actual commit closes the old cache and reconnect reloads durable unacknowledged work', async () => {
     const uncertain = await connect(editor); await until(() => uncertain.provider.isSynced && uncertain.provider.unsyncedChanges === 0, 'Editor connects before injected response loss');
     const original = core.documents.live.update;
@@ -245,13 +339,18 @@ test('prepared same-origin live transport commits before actual socket delivery 
     assert.equal(title(observer.document).toString(), readLiveState(room.state).title);
     assert(clients.every(client => client.socketCount === 1), 'No rejected draft is automatically reconnected or replayed');
   });
-  await t.test('revocation closes an existing session before another editor can deliver new bytes', async () => {
-    const revoked = await connect(reader); await until(() => revoked.provider.isSynced, 'Reader reconnects before revocation');
+  await t.test('revocation closes an existing session before native/comment delivery', async () => {
+    const revoked = await connect(reader); await until(() => revoked.provider.isSynced && revoked.provider.unsyncedChanges === 0, 'Reader reconnects before revocation');
     const before = title(revoked.document).toString();
+    const beforeState = Y.encodeStateAsUpdate(revoked.document);
     space = await core.spaces.changeMembership(admin, { spaceId: space.id, userId: readerUser.id, role: null, expectedEtag: spaceEtag(space) });
+    await transport.comment(editor, saved.id, room.epoch, { type: 'reply', threadId: deliveredThreadId, body: commentBody });
     title(observer.document).insert(0, 'After revocation ');
     await until(() => observer.provider.unsyncedChanges === 0 && revoked.socket?.readyState === WebSocket.CLOSED, 'Revoked recipient receives no later content');
     assert.equal(title(revoked.document).toString(), before);
+    assert.deepEqual(Y.encodeStateAsUpdate(revoked.document), beforeState);
+    room = await core.documents.live.read(editor, saved.id);
+    assert(revoked.metadata.every(state => state.epoch !== room.epoch || state.sequence !== room.sequence));
     const forbidden = await connect(reader); await until(() => forbidden.socket?.readyState === WebSocket.CLOSED, 'Revoked cookie cannot reconnect');
     assert.equal(forbidden.document.getXmlFragment('document').length, 0);
   });
@@ -275,6 +374,7 @@ test('prepared same-origin live transport commits before actual socket delivery 
     await until(() => expiring.socket?.readyState === WebSocket.CLOSED, 'A passive expired session closes without typing');
     const downgraded = await connect(editor); await until(() => downgraded.provider.isSynced && downgraded.provider.unsyncedChanges === 0, 'Editor connects before downgrade');
     space = await core.spaces.changeMembership(admin, { spaceId: space.id, userId: editorUser.id, role: 'reader', expectedEtag: spaceEtag(space) });
+    await until(() => downgraded.metadata.at(-1)?.canWrite === false, 'Passive permission audit informs the existing client that editing is no longer allowed');
     const before = title(observer.document).toString();
     title(downgraded.document).insert(0, 'FORGED DOWNGRADE ');
     await until(() => downgraded.socket?.readyState === WebSocket.CLOSED, 'The downgraded user cannot mutate');
@@ -337,7 +437,7 @@ test('prepared same-origin live transport commits before actual socket delivery 
     try {
       await gate.query('SELECT pg_advisory_lock(7242034,hashtext($1))', [schema]);
       title(observer.document).insert(0, 'Unacknowledged lease loss ');
-      await until(async () => (await database.pool.query<{ waiting: boolean }>(`SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE wait_event='advisory' AND query LIKE '%DocumentLive%' AND pid<>pg_backend_pid()) AS waiting`)).rows[0]!.waiting, 'Socket acceptance is actually paused inside its SQL write');
+      await until(writeIsPaused, 'Socket acceptance is actually paused inside its SQL write');
       assert.equal((await database.pool.query<{ terminated: boolean }>('SELECT pg_terminate_backend($1) AS terminated', [lease.pid])).rows[0]?.terminated, true);
       await lease.lost;
       await until(() => clients.every(client => client.socket?.readyState === WebSocket.CLOSED), 'Ownership loss closes every socket');

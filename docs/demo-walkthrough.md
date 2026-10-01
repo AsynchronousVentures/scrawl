@@ -10,7 +10,7 @@ Links now use stable readable names, for example [the Demo Handbook release chec
 
 Document navigation uses normal links: Ctrl/Cmd-click or the browser context menu can open another tab, leaving this tab's draft intact. Move between two documents, then try Back/Forward. Unsaved title/body changes require either Keep editing or deliberate discard; navigation never creates a revision. Leaving during a Save/upload is blocked until its request finishes. Saved documents opened through search also participate in browser history.
 
-Private live-state storage is prepared in migration eight, with existing content, history and versions preserved. The running documents remain in solo mode. There are no collaborative connections or comments yet; Save, discard, history, export and selected publishing retain their established behavior. Isolated transport and recipient authorization pass real socket tests. Application startup, comments and peer-safe browser undo still need integration before activation.
+Private live-state storage is prepared in migration eight, with existing content, history and versions preserved. The running documents remain in solo mode. There are no collaborative connections or comments yet; Save, discard, history, export and selected publishing retain their established behavior. Isolated transport, serialized server comments and recipient authorization pass real socket tests. HTTP adapters, application startup and the official comment/live editor UI with peer-safe browser undo still need integration before activation.
 
 Retrieve credentials locally, without copying them into issues, screenshots or chat:
 

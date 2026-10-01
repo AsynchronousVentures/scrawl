@@ -157,9 +157,16 @@ test('private native live storage uses PostgreSQL and genuine authenticated sess
       { type: 'create', body: commentBody }, connections), 404);
     await problem(core.documents.live.comment(editor, commentDocument.id, commentRoom.epoch,
       { type: 'create', body: commentBody, userId: peerUser.id }), 400);
+    const foreignFile = await core.attachments.upload(editor, id, 'Synthetic.txt', Buffer.from('Synthetic separate-document file'));
+    const fileComment = (href: string) => [{ id: 'comment-file-link', type: 'paragraph', content: [
+      { type: 'link', href, content: [{ type: 'text', text: 'Private review of a document-owned file', styles: {} }] },
+    ] }];
+    await problem(core.documents.live.comment(editor, commentDocument.id, commentRoom.epoch,
+      { type: 'create', body: fileComment(foreignFile.url) }), 400, 'INVALID_ATTACHMENT_REFERENCE');
+    const ownFile = await core.attachments.upload(editor, commentDocument.id, 'Synthetic.txt', Buffer.from('Synthetic comment-owned file'));
     assert.deepEqual((await commentSnapshot()).state, commentRoom.state);
     const created = await core.documents.live.comment(editor, commentDocument.id, commentRoom.epoch,
-      { type: 'create', body: commentBody }, connections);
+      { type: 'create', body: fileComment(ownFile.url) }, connections);
     assert(created.result?.type === 'thread'); threadId = created.result.id; commentId = created.result.comments[0]!.id;
     await problem(core.documents.live.comment(editor, id, room.epoch, { type: 'reply', threadId, body: commentBody }), 404);
     assert.equal(created.result.comments[0]!.userId, editorUser.id);

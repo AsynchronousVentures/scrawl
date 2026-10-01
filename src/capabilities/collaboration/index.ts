@@ -82,12 +82,21 @@ export function createCollaboration(core: Core, owner: Owner, origin: string) {
       } else connection.readOnly = !permissions.get(connection.socketId);
     }
   }
+  function sendState(document: Document, state: { epoch: string; sequence: string; documentEtag: string }) {
+    for (const connection of document.getConnections()) {
+      const context = contexts.get(connection.socketId);
+      if (!context?.allowed) continue;
+      connection.sendStateless(JSON.stringify({ type: 'live-state', epoch: state.epoch,
+        sequence: state.sequence, documentEtag: state.documentEtag, canWrite: !connection.readOnly }));
+    }
+  }
   async function authorize(document: Document, context: Context) {
     owner.assertHeld();
     if (stopped || !context.allowed || !context.room || context.expiresAt <= Date.now()) throw unavailable();
     const receipt = await core.documents.live.authorizeConnections(context.headers, context.room.id, context.room.epoch, audience(document));
     owner.assertHeld(); prune(document, receipt.recipients);
     if (!context.allowed) throw unavailable();
+    return receipt;
   }
   function finish(context: Context, bytes: number) {
     context.release?.(); delete context.release;
@@ -128,7 +137,8 @@ export function createCollaboration(core: Core, owner: Owner, origin: string) {
       try {
         // Keep joining serialized through the supplied connection registration.
         // A recipient snapshot must not accidentally exclude a newly added peer.
-        await authorize(connection.document, context);
+        const state = await authorize(connection.document, context);
+        sendState(connection.document, state);
       } catch { fail(context); throw unavailable(); }
       finally { finishJoin(context); }
     },
@@ -171,6 +181,7 @@ export function createCollaboration(core: Core, owner: Owner, origin: string) {
         // Apply the complete committed state, not a possibly older cache. The
         // receiver's subsequent apply is idempotent and acknowledges only afterward.
         Y.applyUpdate(document, accepted.state, { source: 'connection', connection });
+        sendState(document, accepted);
       } catch (error) {
         // Unknown database/commit failures invalidate the cache for every peer.
         // Never infer rollback or allow a reconnect to read that old cache.
@@ -259,7 +270,7 @@ export function createCollaboration(core: Core, owner: Owner, origin: string) {
           for (const connection of document.getConnections()) {
             const context = contexts.get(connection.socketId);
             if (!context) { connection.close(unavailable()); continue; }
-            try { await authorize(document, context); break; }
+            try { const state = await authorize(document, context); sendState(document, state); break; }
             catch { fail(context); connection.close(unavailable()); }
           }
         } finally { release(); }
@@ -267,8 +278,40 @@ export function createCollaboration(core: Core, owner: Owner, origin: string) {
     })().catch(stop).finally(() => { auditTask = undefined; });
   }, 1000);
   audit.unref();
+  async function serverMutation<T>(name: string, operation: (document: Document | undefined) => Promise<T>) {
+    const work = (async () => {
+      if (!roomPattern.test(name)) throw new HttpProblem(400, 'INVALID_REQUEST');
+      const release = await acquire(name);
+      const document = hocuspocus.documents.get(name);
+      try {
+        owner.assertHeld();
+        if (stopped || failedRooms.has(name)) throw new HttpProblem(503, 'LIVE_CONNECTION_UNAVAILABLE');
+        return await operation(document);
+      } catch (error) {
+        if (!(error instanceof HttpProblem && error.status < 500) && document) abortRoom(document);
+        throw error;
+      } finally { release(); }
+    })();
+    const pending = work.then(() => {}, () => {});
+    processing.add(pending);
+    void pending.then(() => processing.delete(pending));
+    return work;
+  }
   return {
     attach(server: Server) { server.on('upgrade', upgrade); },
+    comment(headers: Headers, id: string, epoch: string, input: unknown) {
+      return serverMutation(`${id}:${epoch}`, async document => {
+        const accepted = await core.documents.live.comment(headers, id, epoch, input, document ? audience(document) : []);
+        owner.assertHeld();
+        if (stopped) throw new HttpProblem(503, 'LIVE_CONNECTION_UNAVAILABLE');
+        if (document && !document.isDestroyed) {
+          prune(document, accepted.recipients);
+          Y.applyUpdate(document, accepted.state, 'scrawl-server-comment');
+          sendState(document, accepted);
+        }
+        return accepted.result;
+      });
+    },
     async close(server: Server) {
       server.removeListener('upgrade', upgrade); clearInterval(audit);
       const pending = [...processing];

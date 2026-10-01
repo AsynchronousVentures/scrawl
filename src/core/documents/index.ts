@@ -228,6 +228,10 @@ export function createDocuments(prisma: PrismaClient, identity: Identity, spaces
         livePrecondition(room, { epoch }, false);
         const prepared = await prepareLiveComment(room.state, actor.id, input);
         await attachments.validateReferences(tx, id, prepared.content.document);
+        // The command parser has already rejected accessors and unknown fields.
+        // Live-only comment links need the same document ownership as body links.
+        const commentBody: unknown = input && typeof input === 'object' ? Object.getOwnPropertyDescriptor(input, 'body')?.value : undefined;
+        if (commentBody !== undefined) await attachments.validateReferences(tx, id, commentBody);
         if (room.sequence === 9_223_372_036_854_775_807n) throw new HttpProblem(409, 'LIVE_SEQUENCE_EXHAUSTED');
         const saved = await tx.documentLive.update({ where: { documentId_epoch: { documentId: id, epoch: room.epoch } },
           data: { state: new Uint8Array(prepared.state), sequence: { increment: 1 } } });
