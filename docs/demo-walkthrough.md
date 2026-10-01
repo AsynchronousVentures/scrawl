@@ -253,3 +253,6 @@ Opening a space starts at its first active alphabetical root. Longer breadcrumb 
 
 
 The complete local regression on `b03d230` passes 97 real browser workflows, including Demo A. A separate authenticated shared-editing fixture verifies that an incoming peer's complete title/body survives a pending structural move, without an implicit revision or peer-reverting undo. Only explicit Save checkpoints those changes. Run `NODE_ENV=test npm run test:browser -- test/browser/live.spec.ts --grep 'pending structural move'` to exercise that proof; the retained preview remains in solo mode pending its remaining native-selection activation gate. Use the existing PostgreSQL 18 instance only. No reset or additional migration is needed for this verification checkpoint.
+
+
+Use Document actions > Copy private link to copy the saved readable document address. This works for editors and readers, including when an editor has an unsaved title/body. It copies the stable saved location, leaves the draft and history alone, and grants no access or publication. If the browser refuses clipboard access, copy the address bar URL manually. Keyboard focus returns to Document actions. [Actual masked running interface](https://uwvqig7mu5.ufs.sh/f/tJOw1mn9psOE7HoTpqitwUWT3HxrEBYNkgzAoiu6SGqjCZDa).

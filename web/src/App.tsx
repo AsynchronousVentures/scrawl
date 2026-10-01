@@ -594,6 +594,17 @@ export function App() {
       }
     } finally { moveWriting.current = false; setBusy(false); }
   }
+  async function copyPrivateLink() {
+    if (!base || accessIssue || blocked) return;
+    const ticket = generation.current;
+    const link = new URL(`/spaces/${encodeURIComponent(base.document.spaceSlug)}/documents/${encodeURIComponent(base.document.slug)}`, window.location.origin).href;
+    try {
+      await navigator.clipboard.writeText(link);
+      if (ticket === generation.current) setNotice('Private link copied. Only people with space access can open it.');
+    } catch {
+      if (ticket === generation.current) setNotice('Copy is unavailable. Copy the document URL from your browser address bar. This does not change access.');
+    }
+  }
   async function changePublication() {
     if (!base || !mayPublish || blocked || !publicationPrompt) return;
     const ticket = generation.current, id = base.document.id, prompt = publicationPrompt;
@@ -748,6 +759,7 @@ export function App() {
             {draft && <div className="documentbar"><span className={dirty || accessIssue || saveError ? 'dirty' : ''} role="status">{status}</span>
               {base && !accessIssue && <><button disabled={blocked} onClick={() => { if (historyOpen) setHistoryOpen(false); else void openHistory(); }}>History</button>
                 <details className="doc-menu"><summary ref={actionsTrigger} aria-label="Document actions">⋯</summary><div className="menu-items">
+                  <button disabled={blocked} onClick={event => { event.currentTarget.closest('details')?.removeAttribute('open'); actionsTrigger.current?.focus(); void copyPrivateLink(); }}>Copy private link</button>
                   {space?.access === 'editor' && !base.document.archivedAt && <><button disabled={blocked || listLoading || Boolean(listError) || atNestingLimit} aria-describedby={atNestingLimit ? 'document-nesting-limit' : undefined} onClick={event => { event.currentTarget.closest('details')?.removeAttribute('open'); newDocument(base.document.id); }}>New child document</button>{atNestingLimit && <small id="document-nesting-limit">Nesting limit reached (32 levels).</small>}</>}
                   {space?.access === 'editor' && !conflict && <button disabled={blocked || hasUnsavedWork || Boolean(liveState?.pending)} onClick={event => { event.currentTarget.closest('details')?.removeAttribute('open'); setMoveParentId(base.document.parentDocumentId ?? ''); if (!moveNeedsCompare) setMoveError(''); setMoveOpen(true); }}>Move document</button>}
                   <button disabled={blocked} onClick={event => { event.currentTarget.closest('details')?.removeAttribute('open'); void exportDocument(); }}>Export JSON</button>

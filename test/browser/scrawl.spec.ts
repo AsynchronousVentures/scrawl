@@ -37,6 +37,61 @@ async function navigationDocument(context: BrowserContext) {
   return (await readDocument(context, value.id)).data;
 }
 
+test('copy private link uses the saved readable URL without saving drafts or granting recipient access', async ({ page, context, browser }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: demo.origin });
+  await login(page);
+  const original = await readDocument(context);
+  const canonical = `${demo.origin}/spaces/${original.data.spaceSlug}/documents/${original.data.slug}`;
+  await title(page).fill('Unsent title must not appear in the copied link');
+  await body(page).fill('Complete unsaved body stays in the editor.');
+  await page.getByLabel('Document actions', { exact: true }).focus(); await page.keyboard.press('Enter');
+  const copy = page.getByRole('button', { name: 'Copy private link', exact: true });
+  await copy.focus(); await evidence(page, 'private-link'); await page.keyboard.press('Enter');
+  await expect(page.getByRole('status').filter({ hasText: 'Private link copied. Only people with space access can open it.' })).toBeVisible();
+  const copied = await page.evaluate(() => navigator.clipboard.readText());
+  expect(copied).toBe(canonical);
+  await expect(page.getByLabel('Document actions', { exact: true })).toBeFocused();
+  await expect(title(page)).toHaveValue('Unsent title must not appear in the copied link');
+  await expect(body(page)).toHaveText('Complete unsaved body stays in the editor.');
+  expect(await readDocument(context)).toEqual(original);
+  const reader = await browser.newContext(), outsider = await browser.newContext();
+  try {
+    const readerPage = await reader.newPage(); await login(readerPage, 'reader', copied);
+    await expect(title(readerPage)).toHaveValue(original.data.revision.title);
+    await expect(body(readerPage)).not.toBeEditable();
+    await readerPage.getByLabel('Document actions', { exact: true }).click();
+    await expect(readerPage.getByRole('button', { name: 'Copy private link', exact: true })).toBeEnabled();
+    const outsiderPage = await outsider.newPage(); await login(outsiderPage, 'outsider', copied);
+    await expect(title(outsiderPage)).toHaveCount(0);
+    await expect(outsiderPage.getByRole('button', { name: 'Copy private link', exact: true })).toHaveCount(0);
+    await expect(outsiderPage.getByRole('link', { name: original.data.revision.title, exact: true })).toHaveCount(0);
+    const denied = await outsider.request.get(`${demo.origin}/api/v1/spaces/${seeded.spaceId}/documents/by-slug/${original.data.slug}`);
+    expect(denied.status()).toBe(404);
+    expect(await readDocument(context)).toEqual(original);
+  } finally { await reader.close(); await outsider.close(); }
+});
+
+test('a browser clipboard-policy denial retains drafts and never reports a successful copy or save', async ({ page, context }) => {
+  const runtimeErrors: string[] = []; page.on('pageerror', error => runtimeErrors.push(error.message));
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: demo.origin });
+  await page.route(url(), async route => {
+    const response = await route.fetch();
+    await route.fulfill({ response, headers: { ...response.headers(), 'permissions-policy': 'clipboard-write=()' } });
+  });
+  await login(page); const original = await readDocument(context);
+  await title(page).fill('Draft retained after denied clipboard access');
+  await body(page).fill('The browser refused the copy, not the save.');
+  await page.getByLabel('Document actions', { exact: true }).click();
+  await page.getByRole('button', { name: 'Copy private link', exact: true }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Copy is unavailable. Copy the document URL from your browser address bar.' })).toBeVisible();
+  await expect(page.getByRole('status').filter({ hasText: 'Private link copied.' })).toHaveCount(0);
+  await expect(title(page)).toHaveValue('Draft retained after denied clipboard access');
+  await expect(body(page)).toHaveText('The browser refused the copy, not the save.');
+  await expect(save(page)).toBeEnabled();
+  expect(await readDocument(context)).toEqual(original);
+  expect(runtimeErrors).toEqual([]);
+});
+
 test('document links support Back/Forward and opening a separate tab without disturbing a draft', async ({ page, context }) => {
   await login(page);
   const original = await readDocument(context), second = await navigationDocument(context);
@@ -300,7 +355,7 @@ async function confirmDiscard(page: Page) {
 }
 
 async function evidence(page: Page, name: 'editing' | 'conflict' | 'history' | 'access-loss' | 'mobile'
-  | 'organization' | 'organization-depth' | 'editor-toolbar' | 'link-editor' | 'discard-changes' | 'search' | 'attachments' | 'publication' | 'public-document') {
+  | 'organization' | 'organization-depth' | 'private-link' | 'editor-toolbar' | 'link-editor' | 'discard-changes' | 'search' | 'attachments' | 'publication' | 'public-document') {
   if (process.env.SCRAWL_BROWSER_EVIDENCE !== '1') return;
   const password = page.getByLabel('Password', { exact: true });
   if (await password.isVisible() && await password.inputValue() !== '') {
