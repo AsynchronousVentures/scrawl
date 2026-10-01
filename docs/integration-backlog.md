@@ -86,7 +86,7 @@ The first organization checkpoint implements nullable same-space parents, author
 
 ## Export usability follow-up
 
-Issue #2 now separates its implemented authorized attachments/native/PDF/DOCX capabilities from readable snapshot filenames from the remaining selected-history native JSON follow-up. Issues #3 and #4 record implemented search/publishing on the integration branch, with current observed verification; none is merged or released.
+Issue #2 records implemented authorized attachments, native/PDF/DOCX exports and readable snapshot filenames separately from the remaining selected-history native JSON follow-up. Issues #3 and #4 record implemented search/publishing on the integration branch, with current observed verification; none is merged or released.
 
 Readable snapshot filenames are now wired into native/binary response headers and the typed frontend download client. Use the exact exported snapshot title and revision number, bounded ASCII names and a safe generic fallback for titles without an ASCII basename. The client treats response filenames as advisory, rejecting paths, unrelated extensions and malformed names without blocking valid exported content. UUID provenance stays inside the export. Six filename/boundary unit checks pass; complete standard checks pass 101/101, real PostgreSQL 18 export checks 11/11 and focused parsed-download browser checks 4/4. Fresh retained-preview roles and snapshot-filename assertions pass after restart. [RFC 6266 section 4.3](https://www.rfc-editor.org/rfc/rfc6266#section-4.3) covers filename safety and advisory handling.
 
