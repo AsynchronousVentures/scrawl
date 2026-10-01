@@ -193,7 +193,14 @@ async function main() {
     try {
       await page.getByLabel('Email', { exact: true }).fill(credentials.accounts[role].email);
       await password.fill(credentials.accounts[role].password);
+      const attempt = page.waitForResponse(response => new URL(response.url()).pathname === '/api/auth/sign-in/email'
+        && response.request().method() === 'POST');
       await page.getByRole('button', { name: 'Log in', exact: true }).click();
+      const response = await attempt;
+      // Retained previews keep their real rate limiter. Report only the status,
+      // never request bodies, cookies, headers or an automatically retried login.
+      stage = `${role} fresh-session login (HTTP ${response.status()})`;
+      assert.equal(response.status(), 200, 'Authentication must succeed before checking workspace controls');
       await expect(page.getByRole('button', { name: 'Log out', exact: true })).toBeVisible();
     } finally { if (await password.isVisible()) await password.fill(''); }
   }

@@ -15,6 +15,12 @@ Focused command: `NODE_ENV=test npm run test:browser -- --grep 'space access|spa
 The preceding final space-creation browser rerun on 1e27343 finished 76/77 in 10.9 minutes, zero retries/skips (`artifacts/space-create-focus-full-browser.log`). The delayed-read focus correction and all private workflows passed. The same isolated nested-list native caret case failed before undo assertions; retained collaboration stays disabled. The run completed before adding the new API implementation.
 
 
+## Preview login diagnosis
+
+A bounded 12-login probe reproduced four failures with `/api/auth/sign-in/email` returning 429, while the eight accepted attempts returned 200 followed by `/me` 200. The browser retained its login form and visible error. The enabled pinned Better Auth rate limiter permits three sign-ins per ten seconds from the same client IP. The earlier verifier did not record authentication status, so those older failures cannot individually be assigned to rate limiting. No auth settings, headers or limits were changed.
+
+The retained verifier now explicitly checks the sign-in HTTP response and reports only its status in the failure stage. It never logs response bodies, credentials, cookies or headers, and never retries a sign-in automatically. After the burst ended, complete fresh administrator, reader, outsider and anonymous publication/image verification passed (`artifacts/demo18/verification-space-access-rate-aware.log`). All eight retained content/grant/history/attachment/publication/live table fingerprints still match. Strict types passed (`artifacts/preview-login-status-types.log`). These checks add no revisions, grants or resets. [Better Auth rate-limit contract](https://better-auth.com/docs/concepts/rate-limit).
+
 ## Administrator space creation
 
 The existing administrator-only create-space API is now available as New space in desktop navigation and the mobile drawer. The typed client uses implemented OpenAPI; no route, dependency, schema or migration changes are required. Creating a space leaves an open title/body draft, native editor undo stack, save error, conflict comparison and ETag intact. Only a workspace with neither a selected space nor a draft enters the new empty space automatically. Feedback reports space creation separately from document saving. New spaces grant no reader/editor access automatically.
