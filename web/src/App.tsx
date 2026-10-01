@@ -8,6 +8,7 @@ import { Link, useBlocker, useLocation, useNavigate } from 'react-router';
 import { extractPlainText, validateContent } from '@scrawl/content';
 import { Editor } from './Editor';
 import { SearchDialog } from './SearchDialog';
+import { SpaceAccess } from './SpaceAccess';
 import { LiveSession, type LiveState } from './live';
 import type { CommentState } from './PrivateComments';
 import { api, ApiError } from './api/client';
@@ -57,6 +58,8 @@ export function App() {
   const [user, setUser] = useState<User | null>();
   const [bootError, setBootError] = useState('');
   const [spaces, setSpaces] = useState<Space[]>([]);
+  const [accessOpen, setAccessOpen] = useState(false);
+  const [accessBusy, setAccessBusy] = useState(false);
   const [spacePrompt, setSpacePrompt] = useState(false);
   const [spaceName, setSpaceName] = useState('');
   const [creatingSpace, setCreatingSpace] = useState(false);
@@ -114,6 +117,7 @@ export function App() {
   const listGeneration = useRef(0);
   const titleInput = useRef<HTMLInputElement>(null);
   const spaceTrigger = useRef<HTMLButtonElement>(null);
+  const accessTrigger = useRef<HTMLButtonElement>(null);
   const owner = useRef<string | null>(null);
   const draftSpaceId = useRef<string | null>(null);
   const newDraftBaseline = useRef<Draft | null>(null);
@@ -129,7 +133,7 @@ export function App() {
   const mayEdit = Boolean(user && !accessIssue && collaborationKnown && !liveChecking && !liveCheckError && space?.access === 'editor' && !base?.document.archivedAt
     && (!base || base.document.editingMode === 'solo' || collaborationEnabled && liveState?.initialized)
     && (!live || liveState?.phase === 'connected' && liveState.metadata.canWrite));
-  const blocked = busy || creatingSpace || uploading > 0 || commentState.pending;
+  const blocked = busy || accessBusy || creatingSpace || uploading > 0 || commentState.pending;
   const blockedRef = useRef(blocked); blockedRef.current = blocked;
   const mayPublish = Boolean(publishing?.mayPublish && user && !accessIssue && base && !base.document.archivedAt && !conflict);
   const uploadContext = useRef({ id: base?.document.id ?? null, editable: mayEdit });
@@ -159,6 +163,7 @@ export function App() {
     void navigate(href, { replace, flushSync: true });
   }
   function resetDocument() {
+    setAccessOpen(false);
     setLiveCheckError(false);
     liveRef.current?.destroy(); liveRef.current = null; setLive(null); setLiveState(null); setRetainedLiveDraft(null);
     setLoadingDocument(false);
@@ -245,7 +250,7 @@ export function App() {
     if (!(error instanceof ApiError) || ![401,403,404].includes(error.status)) return false;
     generation.current++; historyGeneration.current++;
     setAccessIssue(error.status === 401 ? 'session' : 'access');
-    setSearchOpen(false); setSpacePrompt(false); setSpaceNotice(''); setUploadMessage('');
+    setSearchOpen(false); setAccessOpen(false); setSpacePrompt(false); setSpaceNotice(''); setUploadMessage('');
     setPublication(null); setPublicationPrompt(null); setPublicationError('');
     setSpaces([]); setSpace(null); setDocuments([]); setSpacesCursor(null); setDocumentsCursor(null);
     setListLoading(false); setLoadingDocument(false); setHistoryOpen(false);
@@ -322,6 +327,17 @@ export function App() {
         ? 'Enter a space name between 1 and 200 characters.'
         : 'The space could not be created. Check your connection and try again. Your document edits are retained.');
     } finally { setCreatingSpace(false); }
+  }
+  async function recheckAccess(error: ApiError) {
+    if (error.status === 401) { unavailable(error); return; }
+    const ticket = generation.current;
+    setAccessOpen(false); setBusy(true); setBusyLabel('Checking access…');
+    try {
+      const current = await api.me();
+      if (ticket === generation.current) await workspace(current, Boolean(dirtyRef.current && draftRef.current));
+    } catch (failure) {
+      if (ticket === generation.current && !unavailable(failure)) setSaveError('Access could not be checked. Your local work is retained.');
+    } finally { setBusy(false); }
   }
   async function moreSpaces(cursor: string) {
     const ticket = generation.current;
@@ -634,6 +650,7 @@ export function App() {
     finally { setBusy(false); }
   }
 
+  const accessTicket = generation.current;
   const navigation = <>
     {(spaces.length > 0 || user?.role === 'administrator' && !accessIssue) && <div className="listhead space-heading">
       {spaces.length > 0 ? <label htmlFor="space">Space</label> : <span>Spaces</span>}
@@ -643,6 +660,7 @@ export function App() {
     {spaces.length > 0 && <select id="space" aria-label="Space" value={space?.id ?? ''} disabled={blocked} onChange={event => {
       const selected = spaces.find(item => item.id === event.target.value); if (selected) void navigate(`/spaces/${selected.slug}`);
     }}><option value="" disabled>Select a space</option>{spaces.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select>}
+    {space && user?.role === 'administrator' && !accessIssue && <button className="quiet space-access" ref={accessTrigger} aria-haspopup="dialog" disabled={blocked} onClick={() => { setMobileOpen(false); setAccessOpen(true); }}>Space access</button>}
     {spacesCursor && <button disabled={listLoading} onClick={() => { void moreSpaces(spacesCursor); }}>More spaces</button>}
     {space && <><div className="listhead"><span>Documents</span>{space.access === 'editor' && !accessIssue && <button onClick={newDocument} disabled={blocked}>New document</button>}</div>
       {listLoading && <p role="status" className="muted">Loading documents…</p>}
@@ -749,6 +767,9 @@ export function App() {
         <div className="actions"><Dialog.Close type="button" disabled={creatingSpace}>Cancel</Dialog.Close><button className="primary" disabled={creatingSpace || !spaceName.trim()}>Create space</button></div>
       </form>
     </Dialog.Content></Dialog.Portal></Dialog.Root>
+    {accessOpen && space && user?.role === 'administrator' && !accessIssue && <SpaceAccess key={`${user.id}:${space.id}`} space={space} onClose={() => setAccessOpen(false)}
+      onCloseFocus={() => { if (accessTrigger.current?.isConnected) accessTrigger.current.focus(); else titleInput.current?.focus(); }} onBusyChange={setAccessBusy}
+      onChanged={updated => { if (accessTicket === generation.current && updated.id === space.id) { setSpace(updated); setSpaces(previous => previous.map(item => item.id === updated.id ? updated : item)); } }} onPermissionFailure={async error => { if (accessTicket === generation.current) await recheckAccess(error); }} />}
     {searchOpen && user && !accessIssue && <SearchDialog onClose={() => setSearchOpen(false)} onPick={pickSearchResult} onFailure={unavailable} />}
     <Dialog.Root open={Boolean(publicationPrompt)} onOpenChange={open => { if (!open) setPublicationPrompt(null); }}><Dialog.Portal><Dialog.Overlay className="dialog-overlay" /><Dialog.Content className="dialog" onCloseAutoFocus={event => { event.preventDefault(); titleInput.current?.focus(); }}>
       <Dialog.Title>{publicationPrompt?.action === 'publish' ? `Publish revision ${publicationPrompt.revision.revisionNumber}?` : 'Withdraw publication?'}</Dialog.Title>

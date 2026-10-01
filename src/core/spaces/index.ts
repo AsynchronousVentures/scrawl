@@ -105,6 +105,7 @@ export function createSpaces(prisma: PrismaClient, identity: Identity) {
         throw new HttpProblem(400, 'INVALID_REQUEST');
       }
       const principal = await identity.resolve(headers);
+      if ((await identity.actor(principal)).role !== 'administrator') throw new HttpProblem(404, 'NOT_FOUND');
       return prisma.$transaction(async db => {
         // Reads share the same space lock as grant/revoke and hold current
         // actor credentials stable while projecting the member page.

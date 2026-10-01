@@ -10,6 +10,8 @@ type JsonResponse<T extends keyof operations, S extends keyof operations[T]['res
   operations[T]['responses'][S] extends { content: { 'application/json': infer R } } ? R : never;
 export type User = JsonResponse<'getMe', 200>;
 export type Space = JsonResponse<'readSpace', 200>;
+export type SpaceMembers = JsonResponse<'listSpaceMembers', 200>;
+export type MemberProfile = JsonResponse<'lookupUser', 200>;
 export type DocumentSummary = JsonResponse<'listDocuments', 200>['items'][number];
 export type RevisionSummary = JsonResponse<'listDocumentRevisions', 200>['items'][number];
 export type SearchResult = JsonResponse<'searchDocuments', 200>['items'][number];
@@ -52,6 +54,11 @@ async function checked<T>(request: Promise<{ data?: T; error?: unknown; response
   if (result.data === undefined) throw new ApiError(502);
   return { data: result.data, response: result.response };
 }
+function spaceEtag(response: Response) {
+  const etag = response.headers.get('etag');
+  if (!etag || !/^"space-[0-9a-f-]+-v[1-9][0-9]*"$/i.test(etag)) throw new ApiError(502);
+  return etag;
+}
 function documentEtag(response: Response) {
   const etag = response.headers.get('etag');
   if (!etag || !/^"doc-[0-9a-f-]+-bn1-v[1-9][0-9]*"$/i.test(etag)) throw new ApiError(502);
@@ -82,6 +89,22 @@ export const api = {
   async createSpace(name: string) { return (await checked(client.POST('/api/v1/spaces', { body: { name } }))).data; },
   async space(id: string) { return (await checked(client.GET('/api/v1/spaces/{id}', { params: { path: { id } } }))).data; },
   async spaceBySlug(slug: string) { return (await checked(client.GET('/api/v1/spaces/by-slug/{slug}', { params: { path: { slug } } }))).data; },
+  async lookupUser(email: string) {
+    return (await checked(client.POST('/api/v1/users/lookup', { body: { email } }))).data;
+  },
+  async members(id: string, cursor?: string) {
+    const { data, response } = await checked(client.GET('/api/v1/spaces/{id}/members', {
+      params: { path: { id }, query: { limit: 50, ...(cursor ? { cursor } : {}) } },
+    }));
+    return { members: data, etag: spaceEtag(response) };
+  },
+  async changeMember(id: string, userId: string, etag: string, role: 'reader' | 'editor' | null) {
+    const params = { path: { id, userId }, header: { 'if-match': etag } };
+    const { data, response } = await checked(role === null
+      ? client.DELETE('/api/v1/spaces/{id}/members/{userId}', { params })
+      : client.PUT('/api/v1/spaces/{id}/members/{userId}', { params, body: { role } }));
+    return { space: data, etag: spaceEtag(response) };
+  },
   async search(q: string, signal: AbortSignal) {
     return (await checked(client.GET('/api/v1/search', { params: { query: { q, limit: 20 } }, signal }))).data;
   },

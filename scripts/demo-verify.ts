@@ -33,6 +33,12 @@ async function main() {
       try {
         await page.goto(location);
         await login(page, role);
+        if (role !== 'administrator') {
+          stage = `${role} space-access isolation`;
+          await expect(page.getByRole('button', { name: 'Space access', exact: true })).toHaveCount(0);
+          assert.equal((await context.request.get(`${origin}/api/v1/spaces/${manifest.spaceId}/members`)).status(), 404);
+          assert.equal((await context.request.post(`${origin}/api/v1/users/lookup`, { headers: { origin }, data: { email: credentials.accounts.reader.email } })).status(), 404);
+        }
         if (role === 'outsider') {
           stage = 'outsider isolation';
           await expect(page.getByRole('textbox', { name: 'Document title', exact: true })).toHaveCount(0);
@@ -75,6 +81,19 @@ async function main() {
             await page.keyboard.press('Escape');
             await expect(dialog).toBeHidden(); await expect(trigger).toBeFocused();
             await expect(title).toHaveValue('Start here');
+            stage = 'administrator current space access and exact account lookup';
+            await page.getByRole('button', { name: 'Space access', exact: true }).click();
+            const accessDialog = page.getByRole('dialog', { name: 'Space access', exact: true });
+            await expect(accessDialog.getByRole('combobox', { name: `Access for ${credentials.accounts.reader.email}` })).toBeVisible();
+            await accessDialog.getByLabel('Existing account email').fill(credentials.accounts.reader.email);
+            await page.screenshot({ path: `${evidenceDirectory}/space-access.png`, mask: [page.locator('.account')], maskColor: '#1b1e20' });
+            const lookup = await context.request.post(`${origin}/api/v1/users/lookup`, { headers: { origin }, data: { email: credentials.accounts.reader.email } });
+            assert.equal(lookup.status(), 200);
+            const profile: unknown = await lookup.json();
+            assert(profile && typeof profile === 'object' && 'id' in profile && profile.id === credentials.accounts.reader.id);
+            assert.deepEqual(Object.keys(profile).sort(), ['email', 'id', 'name', 'role']);
+            await accessDialog.getByRole('button', { name: 'Done', exact: true }).click();
+            await expect(page.getByRole('button', { name: 'Space access', exact: true })).toBeFocused();
             await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
             await page.screenshot({ path: `${evidenceDirectory}/workspace.png` });
             await image.scrollIntoViewIfNeeded();

@@ -269,6 +269,8 @@ test('P1 identity and space acceptance against migrated PostgreSQL and real HTTP
     try {
       await lock.query('BEGIN');
       await lock.query('SELECT id FROM "Space" WHERE id = $1 FOR UPDATE', [spaceId]);
+      const nonAdmin = await reader.send('GET', `/api/v1/spaces/${spaceId}/members`);
+      assert.equal(nonAdmin.status, 404, 'Non-admin reads must be denied while the space remains exclusively locked');
       const pending = admin.send('GET', `/api/v1/spaces/${spaceId}/members`);
       let blocked = false;
       for (let attempt = 0; attempt < 100; attempt++) {

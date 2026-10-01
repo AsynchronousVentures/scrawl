@@ -120,3 +120,21 @@
 .space-form label { display: block; margin: 18px 0 8px; }
 .space-form input { width: 100%; min-width: 0; }
 .space-heading label { margin-bottom: 0; }
+
+.space-access { margin: -14px 0 22px; font-size: 12px; }
+.access-dialog { width: min(620px, calc(100% - 32px)); }
+.access-form { margin: 20px 0; }
+.access-form > label { display: block; margin-bottom: 8px; }
+.access-form input { width: 100%; min-width: 0; }
+.access-grant, .member-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.access-grant { margin-top: 12px; }
+.access-grant .primary { margin-left: auto; }
+.members { list-style: none; margin: 20px 0 0; padding: 0; }
+.members > li { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 0; border-top: 1px solid var(--line); }
+.member-info { min-width: 0; overflow-wrap: anywhere; }
+.member-info strong, .member-info small { display: block; }
+.member-info small { color: var(--muted); margin-top: 4px; }
+.member-actions { flex-shrink: 0; }
+.member-actions button, .member-actions select { font-size: 12px; }
+.access-removal { border-top: 1px solid var(--line); margin-top: 20px; padding-top: 12px; }
+@media (max-width: 700px) { .members > li { align-items: flex-start; flex-direction: column; gap: 10px; } }

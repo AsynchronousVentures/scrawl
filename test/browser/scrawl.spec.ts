@@ -1988,6 +1988,7 @@ test('space creation is absent for readers and outsiders and the server rejects 
     try {
       const page = await context.newPage(); await login(page, role, role === 'outsider' ? demo.origin : url());
       await expect(page.getByRole('button', { name: 'New space', exact: true })).toHaveCount(0);
+      await expect(page.getByRole('button', { name: 'Space access', exact: true })).toHaveCount(0);
       const response = await apiRequest(context, '/api/v1/spaces', {
         method: 'POST', headers: { origin: demo.origin }, data: { name: 'Unauthorized space' },
       });
@@ -2060,4 +2061,194 @@ test('mobile space creation blocks dismissal and duplicate submission while its 
     expect(creates).toBe(1);
     expect(await readDocument(context)).toEqual(original);
   } finally { release(); }
+});
+
+test('space access grants, changes and revokes an existing session without saving the administrator draft', async ({ page, context, browser }) => {
+  await login(page, 'administrator');
+  const original = await readDocument(context);
+  const baselineBody = await body(page).innerText();
+  await title(page).fill('Administrator local access-management draft'); await body(page).fill('Complete unsaved access-management body.');
+  await page.getByRole('button', { name: 'Space access', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Space access', exact: true });
+  await expect(dialog.getByLabel('Existing account email')).toBeFocused();
+  await dialog.getByLabel('Existing account email').fill(demo.accountEmail('outsider'));
+  await dialog.getByRole('button', { name: 'Grant access', exact: true }).click();
+  await expect(dialog.getByRole('status').filter({ hasText: 'Access updated.' })).toBeVisible();
+  const outsiderContext = await browser.newContext();
+  try {
+    const outsider = await outsiderContext.newPage(); await login(outsider, 'outsider');
+    await expect(title(outsider)).toHaveValue(original.data.revision.title);
+    await expect(title(outsider)).toHaveAttribute('readonly', ''); await expect(save(outsider)).toHaveCount(0);
+    const row = dialog.locator('li').filter({ hasText: demo.accountEmail('outsider') });
+    await row.getByRole('combobox').selectOption('editor'); await row.getByRole('button', { name: 'Apply', exact: true }).click();
+    await expect(row.getByRole('combobox')).toHaveValue('editor');
+    await outsider.reload(); await expect(body(outsider)).toBeEditable();
+    await title(outsider).fill('Retained after membership revocation'); await body(outsider).fill('Complete revoked local draft.');
+    await row.getByRole('button', { name: 'Remove', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Keep access', exact: true }).click();
+    expect((await apiRequest(outsiderContext, `/api/v1/documents/${seeded.documentId}`)).status()).toBe(200);
+    await row.getByRole('button', { name: 'Remove', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Remove access', exact: true }).click();
+    await expect(row).toHaveCount(0);
+    expect((await apiRequest(outsiderContext, `/api/v1/documents/${seeded.documentId}`)).status()).toBe(404);
+    await save(outsider).click();
+    await expect(title(outsider)).toHaveValue('Retained after membership revocation');
+    await expect(title(outsider)).toHaveAttribute('readonly', '');
+    await expect(body(outsider)).toContainText('Complete revoked local draft.');
+    await expect(outsider.getByRole('navigation', { name: 'Documents', exact: true })).toHaveCount(0);
+    await cannotSave(outsider);
+    expect(await readDocument(context)).toEqual(original);
+    await dialog.getByRole('button', { name: 'Done', exact: true }).click();
+    await expect(title(page)).toHaveValue('Administrator local access-management draft');
+    await expect(body(page)).toContainText('Complete unsaved access-management body.');
+    await body(page).press('ControlOrMeta+z'); await expect(body(page)).toHaveText(baselineBody, { useInnerText: true });
+    await body(page).press('ControlOrMeta+Shift+z'); await expect(body(page)).toContainText('Complete unsaved access-management body.');
+    await save(page).click(); await expect(page.getByRole('status').filter({ hasText: 'Saved · revision 2' })).toBeVisible();
+    expect((await readDocument(context)).data.currentRevisionNumber).toBe(2);
+  } finally { await outsiderContext.close(); }
+});
+
+test('space access requires deliberate reload and resubmission after concurrent membership changes', async ({ page, context }) => {
+  await login(page, 'administrator');
+  const original = await readDocument(context);
+  await title(page).fill('Local draft during access conflict'); await body(page).fill('Complete body during access conflict.');
+  await page.getByRole('button', { name: 'Space access', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Space access', exact: true });
+  await expect(dialog.getByRole('button', { name: 'Reload access', exact: true })).toHaveCount(0);
+  await expect(dialog.getByRole('combobox', { name: `Access for ${demo.accountEmail('reader')}` })).toBeVisible();
+  const space = await apiRequest(context, `/api/v1/spaces/${seeded.spaceId}`);
+  const concurrent = await apiRequest(context, `/api/v1/spaces/${seeded.spaceId}/members/${demo.accountId('editor')}`, {
+    method: 'PUT', headers: { origin: demo.origin, 'if-match': space.headers().etag! }, data: { role: 'reader' },
+  });
+  expect(concurrent.status()).toBe(200);
+  const attempted: Array<string | undefined> = [];
+  page.on('request', request => { if (request.method() === 'PUT') attempted.push(request.headers()['if-match']); });
+  await dialog.getByLabel('Existing account email').fill(demo.accountEmail('reader'));
+  await dialog.getByRole('combobox', { name: 'Access', exact: true }).selectOption('editor');
+  await dialog.getByRole('button', { name: 'Grant access', exact: true }).click();
+  await expect(dialog.getByRole('alert')).toContainText('Access changed elsewhere.');
+  await expect(dialog.getByRole('button', { name: 'Grant access', exact: true })).toBeDisabled();
+  await expect(dialog.getByLabel('Existing account email')).toHaveValue(demo.accountEmail('reader'));
+  expect(attempted).toEqual([space.headers().etag]);
+  expect(await readDocument(context)).toEqual(original);
+  await dialog.getByRole('button', { name: 'Reload access', exact: true }).click();
+  await expect(dialog.getByRole('button', { name: 'Grant access', exact: true })).toBeEnabled();
+  await dialog.getByRole('button', { name: 'Grant access', exact: true }).click();
+  await expect(dialog.getByRole('status').filter({ hasText: 'Access updated.' })).toBeVisible();
+  expect(attempted).toEqual([space.headers().etag, concurrent.headers().etag]);
+  await dialog.getByRole('button', { name: 'Done', exact: true }).click();
+  await expect(title(page)).toHaveValue('Local draft during access conflict'); await expect(body(page)).toContainText('Complete body during access conflict.');
+  expect(await readDocument(context)).toEqual(original);
+});
+
+test('space access failures retain requested changes and never provision accounts or retry writes', async ({ page, context }) => {
+  await login(page, 'administrator');
+  const original = await readDocument(context), users = await demo.database.prisma.user.count();
+  await title(page).fill('Draft retained through access failure'); await body(page).fill('Retained document body.');
+  await page.getByRole('button', { name: 'Space access', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Space access', exact: true });
+  await dialog.getByLabel('Existing account email').fill('not-provisioned@example.test');
+  await expect(dialog.getByRole('button', { name: 'Grant access', exact: true })).toBeEnabled();
+  await dialog.getByRole('button', { name: 'Grant access', exact: true }).click();
+  await expect(dialog.getByRole('alert')).toContainText('No existing account uses that email.');
+  expect(await demo.database.prisma.user.count()).toBe(users);
+  await dialog.getByLabel('Existing account email').fill(demo.accountEmail('administrator'));
+  await dialog.getByRole('button', { name: 'Grant access', exact: true }).click();
+  await expect(dialog.getByRole('status').filter({ hasText: 'Administrators already have access' })).toBeVisible();
+  let writes = 0;
+  await page.route(`**/api/v1/spaces/${seeded.spaceId}/members/*`, async route => {
+    if (route.request().method() === 'PUT') { writes++; await route.fulfill({ status: 503, contentType: 'application/json', body: '{}' }); }
+    else await route.continue();
+  });
+  await dialog.getByLabel('Existing account email').fill(demo.accountEmail('reader'));
+  await dialog.getByRole('combobox', { name: 'Access', exact: true }).selectOption('editor');
+  await dialog.getByRole('button', { name: 'Grant access', exact: true }).click();
+  await expect(dialog.getByRole('alert')).toContainText('The access change could not be confirmed.');
+  await expect(dialog.getByRole('button', { name: 'Grant access', exact: true })).toBeDisabled();
+  await expect(dialog.getByLabel('Existing account email')).toHaveValue(demo.accountEmail('reader'));
+  await expect(dialog.getByRole('combobox', { name: 'Access', exact: true })).toHaveValue('editor');
+  expect(writes).toBe(1);
+  await page.keyboard.press('Escape'); await expect(dialog).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Space access', exact: true })).toBeFocused();
+  await expect(title(page)).toHaveValue('Draft retained through access failure'); await expect(body(page)).toContainText('Retained document body.');
+  expect(await readDocument(context)).toEqual(original);
+});
+
+test('space access loss rechecks permissions and retains the entire local draft without unrelated navigation', async ({ page, context }) => {
+  await login(page, 'administrator');
+  const original = await readDocument(context);
+  await title(page).fill('Full local title after administrator downgrade'); await body(page).fill('Full local body after administrator downgrade.');
+  await page.getByRole('button', { name: 'Space access', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Space access', exact: true });
+  await dialog.getByLabel('Existing account email').fill(demo.accountEmail('reader'));
+  await expect(dialog.getByRole('button', { name: 'Grant access', exact: true })).toBeEnabled();
+  await demo.database.prisma.user.update({ where: { id: demo.accountId('administrator') }, data: { role: 'member' } });
+  try {
+    await dialog.getByRole('button', { name: 'Grant access', exact: true }).click();
+    await expect(dialog).toBeHidden();
+    await expect(title(page)).toHaveValue('Full local title after administrator downgrade');
+    await expect(title(page)).toHaveAttribute('readonly', ''); await expect(body(page)).toContainText('Full local body after administrator downgrade.');
+    await expect(page.getByRole('navigation', { name: 'Documents', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Space access', exact: true })).toHaveCount(0); await cannotSave(page);
+    expect(await demo.database.prisma.documentRevision.count({ where: { documentId: seeded.documentId } })).toBe(1);
+  } finally { await demo.database.prisma.user.update({ where: { id: demo.accountId('administrator') }, data: { role: 'administrator' } }); }
+  expect(await readDocument(context)).toEqual(original);
+});
+
+test('mobile space access has keyboard focus, loading feedback and pending-write dismissal guards', async ({ page, context }) => {
+  await page.setViewportSize({ width: 390, height: 844 }); await login(page, 'administrator');
+  const original = await readDocument(context);
+  let releaseRead!: () => void, releaseWrite!: () => void;
+  const readHeld = new Promise<void>(resolve => { releaseRead = resolve; }), writeHeld = new Promise<void>(resolve => { releaseWrite = resolve; });
+  await page.route(`**/api/v1/spaces/${seeded.spaceId}/members**`, async route => {
+    if (route.request().method() === 'GET') await readHeld;
+    if (route.request().method() === 'PUT') await writeHeld;
+    await route.continue();
+  });
+  try {
+    await page.getByRole('button', { name: 'Navigation', exact: true }).click();
+    await page.getByRole('button', { name: 'Space access', exact: true }).press('Enter');
+    const dialog = page.getByRole('dialog', { name: 'Space access', exact: true });
+    await expect(dialog.getByRole('status')).toHaveText('Loading members…');
+    await expect(dialog.getByLabel('Existing account email')).toBeFocused();
+    await expect(dialog.getByRole('button', { name: 'Grant access', exact: true })).toBeDisabled();
+    releaseRead();
+    await dialog.getByLabel('Existing account email').fill(demo.accountEmail('reader'));
+    await expect(dialog.getByRole('button', { name: 'Grant access', exact: true })).toBeEnabled();
+    await dialog.getByRole('button', { name: 'Grant access', exact: true }).click();
+    await expect(dialog.getByRole('status').filter({ hasText: 'Updating access…' })).toBeVisible();
+    await page.keyboard.press('Escape'); await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole('button', { name: 'Done', exact: true })).toBeDisabled();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await mkdir('artifacts/screenshots', { recursive: true });
+    await page.screenshot({ path: 'artifacts/screenshots/space-access-mobile.png', mask: [page.locator('.account')], maskColor: '#1b1e20' });
+    releaseWrite(); await expect(dialog.getByRole('button', { name: 'Done', exact: true })).toBeEnabled();
+    await dialog.getByRole('button', { name: 'Done', exact: true }).click();
+    expect(await readDocument(context)).toEqual(original);
+  } finally { releaseRead(); releaseWrite(); }
+});
+
+test('space access shows a real empty grant list and read failures cannot enable mutations', async ({ page, context }) => {
+  await login(page, 'administrator');
+  const response = await apiRequest(context, '/api/v1/spaces', { method: 'POST', headers: { origin: demo.origin }, data: { name: 'Unshared handbook' } });
+  expect(response.status()).toBe(201);
+  const created: unknown = await response.json();
+  if (!created || typeof created !== 'object' || !('slug' in created) || typeof created.slug !== 'string'
+    || !('id' in created) || typeof created.id !== 'string') throw new Error('Created space identity is missing');
+  await page.goto(`${demo.origin}/spaces/${created.slug}`);
+  await expect(page.getByRole('heading', { name: 'No documents yet', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Space access', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Space access', exact: true });
+  await expect(dialog.getByText('No member grants. Only administrators can access this space.', { exact: true })).toBeVisible();
+  await page.keyboard.press('Escape'); await expect(dialog).toBeHidden();
+  await page.route(`**/api/v1/spaces/${created.id}/members**`, route => route.fulfill({ status: 503, contentType: 'application/json', body: '{}' }));
+  await page.getByRole('button', { name: 'Space access', exact: true }).click();
+  await expect(dialog.getByRole('alert')).toContainText('The member list could not be loaded.');
+  await dialog.getByLabel('Existing account email').fill(demo.accountEmail('reader'));
+  await expect(dialog.getByRole('button', { name: 'Grant access', exact: true })).toBeDisabled();
+  expect(await demo.database.prisma.spaceMembership.count({ where: { spaceId: created.id } })).toBe(0);
+  await page.unroute(`**/api/v1/spaces/${created.id}/members**`);
+  await dialog.getByRole('button', { name: 'Reload access', exact: true }).click();
+  await expect(dialog.getByRole('button', { name: 'Grant access', exact: true })).toBeEnabled();
+  await expect(dialog.getByLabel('Existing account email')).toHaveValue(demo.accountEmail('reader'));
 });
