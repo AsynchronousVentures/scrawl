@@ -1,5 +1,21 @@
 # Validation
 
+## Comment-only drafts through session and permission loss
+
+A real expired-session response used to unmount the workspace when title/body was clean but a comment composer was dirty. Recovery now retains every kind of local work, including comment-only drafts and separate reconnect drafts. Same-account sign-in verifies access without replacing the composer. Loss of authority leaves unsent text read-only with an explicit warning; regaining authority never submits it automatically.
+
+Observed results without retries or skips:
+
+- `npm run check` passed 91 cases, strict types, boundaries, builds and generated API drift. Log: `artifacts/live-comment-authority-check.log`.
+- The final complete `npm run test:browser` passed 64/64 against real HTTP, authenticated sessions and PostgreSQL, preserving all prior workflows and Demo A. Log: `artifacts/live-comment-authority-final-full-browser.log`.
+- Two real browser/session/PostgreSQL cases passed for expiry/sign-in and editor-to-reader downgrade, regrant and revocation. Log: `artifacts/live-comment-authority-focused.log`. They assert complete reply retention, blocked editing/submission, no unrelated navigation after denial, unchanged live bytes/history and no private browser storage.
+- The first complete 64-case run passed 63 and failed one failed-delete test because its baseline preceded the separate thread-anchor commit. Log: `artifacts/live-comment-authority-full-browser.log`. The test now awaits the actual anchor response and completion before capturing that baseline; its exact stored-record and history assertions remain unchanged. Three independent corrected fixtures passed, with no retries: `artifacts/live-comment-delete-baseline-repetitions.log`.
+- `npm audit --json` returned zero advisories across 617 dependencies. Log: `artifacts/live-comment-authority-audit.json`. No package changed.
+
+Both complete hosted matrices for `43ee4da` passed ([PR](https://github.com/AsynchronousVentures/scrawl/actions/runs/36865645885), [push](https://github.com/AsynchronousVentures/scrawl/actions/runs/36865638945)) on PostgreSQL 17 and 18. The retained preview was verified again in fresh administrator, reader, outsider and anonymous-publication sessions, with no writes/reset: `artifacts/demo18/verification-native-comments.log`. All 147 regular source archive members matched the checkout and its served hash matched locally.
+
+No migration or dependency change is required. Backend is unchanged from the preceding complete 136/136 database suites on each PostgreSQL version. Retained collaboration remains disabled; reaction errors, presence, nested-block peer undo, hard restart and live-only rendered export/publication isolation remain unverified activation work. Same-account recovery is tested; this does not claim that every multi-account or browser-crash scenario has been verified.
+
 ## Native comment actions and retained replies
 
 The supplied BlockNote toolbar/menu now reports rejected comment commands, with accessible names and continuously reachable keyboard actions. A single supplied sidebar owns reply editors, avoiding duplicate floating/sidebar composers whose focus changes could discard a reply. Dirty or pending composers remain mounted when focus moves to the title or navigation guard. Native author/date text and action controls have separate space. Loss of submission authority explicitly asks users to copy their unsent text; it never reports a save.

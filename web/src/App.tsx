@@ -617,7 +617,7 @@ export function App() {
       <label className="archive-toggle"><input type="checkbox" checked={includeArchived} disabled={blocked} onChange={event => { setIncludeArchived(event.target.checked); void listDocuments(space,event.target.checked); }} />Show archived</label>
     </>}
     {!space && !listLoading && <p className="muted">{accessIssue ? 'Space access is unavailable.' : 'No accessible spaces.'}</p>}
-    {listError && <div role="alert"><p>{listError}</p><button onClick={() => { if (space) void listDocuments(space); else if (user) void workspace(user,Boolean(dirty && draft)); }}>Retry</button></div>}
+    {listError && <div role="alert"><p>{listError}</p><button onClick={() => { if (space) void listDocuments(space); else if (user) void workspace(user,Boolean(hasUnsavedWork && draft)); }}>Retry</button></div>}
   </>;
   const status = accessIssue ? 'Not saved · local draft only' : busy ? busyLabel : uploading > 0 ? 'Uploading attachment…' : conflict ? 'Not saved · resolve conflict'
     : liveChecking || liveState?.phase === 'connecting' ? 'Connecting shared document…'
@@ -637,8 +637,8 @@ export function App() {
     </header>
     {user === undefined ? <main className="state">{bootError ? <><h1>Could not load Scrawl</h1><p role="alert">{bootError}</p><button onClick={() => { void start(); }}>Retry</button></> : <p role="status">Loading Scrawl…</p>}</main>
       : <>
-        {!user && <Login onLogin={account => workspace(account,Boolean(dirty && draft))} />}
-        {(user || dirty && draft) && <div className={`workspace${!user ? ' retained-workspace' : ''}`}>
+        {!user && <Login onLogin={account => workspace(account,Boolean(hasUnsavedWork && draft))} />}
+        {(user || hasUnsavedWork && draft) && <div className={`workspace${!user ? ' retained-workspace' : ''}`}>
           {user && !narrow && <aside className="sidebar" aria-label="Workspace navigation">{navigation}</aside>}
           {user && narrow && <Dialog.Root open={mobileOpen} onOpenChange={setMobileOpen}><Dialog.Portal><Dialog.Overlay className="dialog-overlay" /><Dialog.Content className="mobile-navigation" aria-describedby={undefined}><Dialog.Title className="sr">Workspace navigation</Dialog.Title><Dialog.Close className="quiet">Close navigation</Dialog.Close>{navigation}</Dialog.Content></Dialog.Portal></Dialog.Root>}
           <main className="main">
@@ -654,7 +654,7 @@ export function App() {
                 </div></details></>}
               {mayEdit && <div className="save-actions">{live ? <><button disabled={blocked || !liveState?.canUndo} aria-label="Undo my changes" onClick={() => live.undo()}>Undo</button><button disabled={blocked || !liveState?.canRedo} aria-label="Redo my changes" onClick={() => live.redo()}>Redo</button></> : <button disabled={blocked || (!hasDraftChanges && !contentError)} onClick={discardChanges}>Discard changes</button>}<button className="primary" disabled={blocked || !dirty || Boolean(conflict) || Boolean(contentError) || Boolean(liveState?.pending)} onClick={save}>Save</button></div>}
             </div>}
-            {accessIssue && <div className="notice" role="alert"><strong>{saveError || (accessIssue === 'session' ? 'Your session expired.' : 'Access to this document is unavailable.')}</strong><p>{dirty ? 'Your complete unsaved title and body are retained in this tab. Nothing was saved. Server actions are unavailable. Copy your draft before closing or reloading.' : 'Sign in or ask an administrator to verify your access.'}</p>
+            {accessIssue && <div className="notice" role="alert"><strong>{saveError || (accessIssue === 'session' ? 'Your session expired.' : 'Access to this document is unavailable.')}</strong><p>{dirty ? 'Your complete unsaved title and body are retained in this tab. Nothing was saved. Server actions are unavailable. Copy your draft before closing or reloading.' : commentState.dirty ? 'Your unsent comment text remains in this tab. Nothing was submitted. Server actions are unavailable. Copy it before closing or reloading.' : 'Sign in or ask an administrator to verify your access.'}</p>
               {dirty && draft && <button onClick={() => { void navigator.clipboard.writeText(draft.title+'\n\n'+extractPlainText(draft.content.document)).then(() => setNotice('Local draft text copied. Nothing was saved.')).catch(() => setNotice('Copy is unavailable. Select and copy the retained title and body.')); }}>Copy local draft text</button>}
             </div>}
             {!accessIssue && saveError && <div className="notice" role="alert"><strong>{saveError}</strong>{dirty && <p>Your complete local draft is retained. It has not been saved.</p>}{!draft && <button onClick={() => { if(requestedDocument.current)void loadDocument(requestedDocument.current); }}>Retry</button>}</div>}

@@ -454,9 +454,15 @@ test('failed native comment deletion reports failure without changing the thread
   await body(page).focus(); await page.keyboard.press('ControlOrMeta+Home'); await page.keyboard.press('Shift+End');
   await page.getByRole('button', { name: 'Add comment', exact: true }).click();
   await page.locator('.bn-comment-editor [contenteditable="true"]').fill('Synthetic native comment retained after failed deletion.');
+  const anchored = page.waitForResponse(response => response.request().method() === 'POST'
+    && new URL(response.url()).pathname.endsWith('/addToDocument'));
   await page.locator('.bn-thread').getByRole('button', { name: 'Save', exact: true }).click();
+  expect((await anchored).status()).toBe(200);
   const sidebar = page.locator('.document-comments'); await sidebar.locator('summary').click();
   await expect(sidebar).toContainText('Synthetic native comment retained after failed deletion.');
+  // Thread creation and anchoring are separate committed operations. Capture
+  // the failure baseline only after the complete native creation has finished.
+  await expect(page.getByRole('status').filter({ hasText: 'Submitting comment…' })).toHaveCount(0);
   const before = await demo.database.prisma.documentLive.findFirstOrThrow({ where: { documentId: seeded.documentId } });
   const endpoint = `**/api/v1/documents/${seeded.documentId}/live/*/threads/*/comments/*?soft=false`;
   await page.route(endpoint, route => route.request().method() === 'DELETE'
@@ -554,4 +560,100 @@ test('native reply and own-comment editing retain complete text after failures a
   await expect(sidebar).toContainText('Complete retained native reply after an explicit edit.');
   expect((await latest(context)).currentRevisionNumber).toBe(1); expect(runtimeErrors).toEqual([]);
   expect(await page.evaluate(() => localStorage.length + sessionStorage.length)).toBe(0);
+});
+
+test('a comment-only draft survives real session expiry and deliberate same-account sign-in without saving or exposing server actions', async ({ page, context }) => {
+  const runtimeErrors: string[] = []; page.on('pageerror', error => runtimeErrors.push(error.message));
+  await login(page); await expect(title(page)).toBeVisible(); const original = await latest(context); await enroll(page);
+  await body(page).focus(); await page.keyboard.press('ControlOrMeta+Home'); await page.keyboard.press('Shift+End');
+  await page.getByRole('button', { name: 'Add comment', exact: true }).click();
+  await page.locator('.bn-comment-editor [contenteditable="true"]').fill('Saved parent for a private session-loss reply.');
+  await page.locator('.bn-thread').getByRole('button', { name: 'Save', exact: true }).click();
+  const sidebar = page.locator('.document-comments'); await sidebar.locator('summary').click();
+  await expect(sidebar).toContainText('Saved parent for a private session-loss reply.');
+  await expect(page.getByRole('status').filter({ hasText: 'Submitting comment…' })).toHaveCount(0);
+  await sidebar.locator('.bn-thread').first().focus();
+  const composer = sidebar.locator('.bn-thread-composer .bn-comment-editor .bn-editor');
+  await composer.fill('Complete unsent reply retained through session loss.');
+  await expect(save(page)).toBeDisabled();
+  await expect(title(page)).toHaveValue(original.revision.title);
+  const stored = await demo.database.prisma.documentLive.findFirstOrThrow({ where: { documentId: seeded.documentId } });
+  await demo.database.prisma.session.updateMany({ where: { userId: demo.accountId('editor') }, data: { expiresAt: new Date(0) } });
+  const expired = page.waitForResponse(response => new URL(response.url()).pathname === `/api/v1/documents/${seeded.documentId}/revisions`);
+  await page.getByRole('button', { name: 'History', exact: true }).click();
+  expect((await expired).status()).toBe(401);
+  await expect(page.getByRole('button', { name: 'Log in', exact: true })).toBeVisible();
+  await expect(composer).toHaveText('Complete unsent reply retained through session loss.');
+  await expect(sidebar.locator('[contenteditable="true"]')).toHaveCount(0);
+  await composer.press('x'); await expect(composer).toHaveText('Complete unsent reply retained through session loss.');
+  await expect(sidebar.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
+  await expect(page.getByRole('status').filter({ hasText: 'Submission is unavailable.' })).toBeVisible();
+  await expect(save(page)).toHaveCount(0);
+  await expect(page.getByLabel('Document actions', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('combobox', { name: 'Space', exact: true })).toHaveCount(0);
+  await demo.fillCredentials(page.getByLabel('Email', { exact: true }), page.getByLabel('Password', { exact: true }), 'editor');
+  await page.getByRole('button', { name: 'Log in', exact: true }).click(); demo.authenticationCompleted();
+  await expect(page.getByRole('button', { name: 'Log out', exact: true })).toBeVisible();
+  await expect(composer).toHaveText('Complete unsent reply retained through session loss.');
+  await expect(page.getByText('The shared connection closed.', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Reconnect and compare', exact: true }).click();
+  const guard = page.getByRole('dialog', { name: 'Unsaved changes', exact: true });
+  await expect(guard).toContainText('unsent comment text');
+  await guard.getByRole('button', { name: 'Keep editing', exact: true }).click();
+  await expect(composer).toHaveText('Complete unsent reply retained through session loss.');
+  expect(await demo.database.prisma.documentLive.findFirstOrThrow({ where: { documentId: seeded.documentId } })).toEqual(stored);
+  expect((await latest(context)).currentRevisionNumber).toBe(1); expect(runtimeErrors).toEqual([]);
+  expect(await page.evaluate(() => localStorage.length + sessionStorage.length)).toBe(0);
+});
+
+test('an unsent native reply stays read-only through a real role downgrade and remains retained after membership revocation', async ({ page, context, browser }) => {
+  const runtimeErrors: string[] = []; page.on('pageerror', error => runtimeErrors.push(error.message));
+  await login(page); await expect(title(page)).toBeVisible(); await enroll(page);
+  await body(page).focus(); await page.keyboard.press('ControlOrMeta+Home'); await page.keyboard.press('Shift+End');
+  await page.getByRole('button', { name: 'Add comment', exact: true }).click();
+  await page.locator('.bn-comment-editor [contenteditable="true"]').fill('Saved thread for synthetic permission changes.');
+  await page.locator('.bn-thread').getByRole('button', { name: 'Save', exact: true }).click();
+  const sidebar = page.locator('.document-comments'); await sidebar.locator('summary').click();
+  await expect(sidebar).toContainText('Saved thread for synthetic permission changes.');
+  await expect(page.getByRole('status').filter({ hasText: 'Submitting comment…' })).toHaveCount(0);
+  await sidebar.locator('.bn-thread').first().focus();
+  const composer = sidebar.locator('.bn-thread-composer .bn-comment-editor .bn-editor');
+  await composer.fill('Complete unsent reply retained through revoked authority.');
+  const stored = await demo.database.prisma.documentLive.findFirstOrThrow({ where: { documentId: seeded.documentId } });
+  const administrator = await browser.newContext();
+  try {
+    const adminPage = await administrator.newPage(); await login(adminPage, 'administrator');
+    const membership = `${demo.origin}/api/v1/spaces/${seeded.spaceId}/members/${demo.accountId('editor')}`;
+    async function grant(role: 'reader' | 'editor') {
+      const space = await administrator.request.get(`${demo.origin}/api/v1/spaces/${seeded.spaceId}`); expect(space.status()).toBe(200);
+      expect((await administrator.request.put(membership, { headers: { Origin: demo.origin, 'If-Match': space.headers().etag! }, data: { role } })).status()).toBe(200);
+    }
+    await grant('reader');
+    await expect(save(page)).toHaveCount(0); await expect(body(page)).not.toBeEditable();
+    await expect(sidebar.locator('[contenteditable="true"]')).toHaveCount(0);
+    await composer.press('x'); await expect(composer).toHaveText('Complete unsent reply retained through revoked authority.');
+    await expect(sidebar.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
+    await expect(page.getByRole('status').filter({ hasText: 'Submission is unavailable.' })).toBeVisible();
+    const epoch = (await demo.database.prisma.document.findUniqueOrThrow({ where: { id: seeded.documentId } })).liveEpoch;
+    expect((await context.request.post(`${demo.origin}/api/v1/documents/${seeded.documentId}/live/${epoch}/threads`, {
+      headers: { Origin: demo.origin }, data: { initialComment: { body: [{ id: 'denied-reply', type: 'paragraph', props: { backgroundColor: 'default', textColor: 'default', textAlignment: 'left' }, content: [{ type: 'text', text: 'Denied reader comment', styles: {} }], children: [] }] } },
+    })).status()).toBe(404);
+    await grant('editor');
+    await expect(composer).toHaveAttribute('contenteditable', 'true');
+    await expect(composer).toHaveText('Complete unsent reply retained through revoked authority.');
+    await expect(sidebar.getByRole('button', { name: 'Save', exact: true })).toBeEnabled();
+    const space = await administrator.request.get(`${demo.origin}/api/v1/spaces/${seeded.spaceId}`); expect(space.status()).toBe(200);
+    expect((await administrator.request.delete(membership, { headers: { Origin: demo.origin, 'If-Match': space.headers().etag! } })).status()).toBe(200);
+    await expect(page.getByText('The shared connection closed.', { exact: true })).toBeVisible();
+    const denied = page.waitForResponse(response => new URL(response.url()).pathname === `/api/v1/documents/${seeded.documentId}/revisions`);
+    await page.getByRole('button', { name: 'History', exact: true }).click(); expect((await denied).status()).toBe(404);
+    await expect(composer).toHaveText('Complete unsent reply retained through revoked authority.');
+    await expect(page.getByRole('alert').filter({ hasText: 'Access to this document is unavailable.' })).toBeVisible();
+    await expect(page.getByRole('combobox', { name: 'Space', exact: true })).toHaveCount(0);
+    await expect(page.getByLabel('Document actions', { exact: true })).toHaveCount(0);
+    await expect(sidebar.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
+    expect(await demo.database.prisma.documentLive.findFirstOrThrow({ where: { documentId: seeded.documentId } })).toEqual(stored);
+    expect(await demo.database.prisma.documentRevision.count({ where: { documentId: seeded.documentId } })).toBe(1);
+    expect(runtimeErrors).toEqual([]); expect(await page.evaluate(() => localStorage.length + sessionStorage.length)).toBe(0);
+  } finally { await administrator.close(); }
 });
