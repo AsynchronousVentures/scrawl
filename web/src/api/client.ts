@@ -79,6 +79,7 @@ export const api = {
   async spaces(cursor?: string) { return (await checked(client.GET('/api/v1/spaces', {
     params: { query: { limit: 100, ...(cursor ? { cursor } : {}) } },
   }))).data; },
+  async createSpace(name: string) { return (await checked(client.POST('/api/v1/spaces', { body: { name } }))).data; },
   async space(id: string) { return (await checked(client.GET('/api/v1/spaces/{id}', { params: { path: { id } } }))).data; },
   async spaceBySlug(slug: string) { return (await checked(client.GET('/api/v1/spaces/by-slug/{slug}', { params: { path: { slug } } }))).data; },
   async search(q: string, signal: AbortSignal) {

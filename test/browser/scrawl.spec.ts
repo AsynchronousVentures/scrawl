@@ -1911,3 +1911,153 @@ test('discard after a stale save keeps the old baseline and requires deliberate 
     expect(reconciled.data.revision.title).toBe('Deliberately reconciled after discard');
   } finally { await second.close(); }
 });
+
+
+test('administrator space creation preserves the complete draft and saves it only on explicit Save', async ({ page, context }) => {
+  await login(page, 'administrator');
+  const original = await readDocument(context);
+  await expect(page).toHaveURL(`${demo.origin}/spaces/${original.data.spaceSlug}/documents/${original.data.slug}`);
+  const originalUrl = page.url();
+  const revisionCount = await demo.database.prisma.documentRevision.count({ where: { documentId: seeded.documentId } });
+  await title(page).fill('Unsaved handbook title');
+  await body(page).fill('Complete unsaved handbook body.');
+  await page.getByRole('button', { name: 'New space', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'New space', exact: true });
+  await expect(dialog.getByLabel('Space name')).toBeFocused();
+  await dialog.getByLabel('Space name').fill('Product engineering');
+  await mkdir('artifacts/screenshots', { recursive: true });
+  await page.screenshot({ path: 'artifacts/screenshots/space-create-desktop.png', mask: [page.locator('.account')] });
+  const createdResponse = page.waitForResponse(response => response.request().method() === 'POST'
+    && new URL(response.url()).pathname === '/api/v1/spaces');
+  await dialog.getByRole('button', { name: 'Create space', exact: true }).click();
+  expect((await createdResponse).status()).toBe(201);
+  await expect(dialog).toBeHidden();
+  await expect(page.getByRole('status').filter({ hasText: 'Created space "Product engineering".' })).toBeVisible();
+  await expect(page).toHaveURL(originalUrl);
+  await expect(title(page)).toHaveValue('Unsaved handbook title');
+  await expect(body(page)).toContainText('Complete unsaved handbook body.');
+  expect(await readDocument(context)).toEqual(original);
+  expect(await demo.database.prisma.documentRevision.count({ where: { documentId: seeded.documentId } })).toBe(revisionCount);
+  await save(page).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved · revision 2' })).toBeVisible();
+  const saved = await readDocument(context);
+  expect(saved.data.revision.title).toBe('Unsaved handbook title');
+  expect(saved.data.currentRevisionNumber).toBe(2);
+  const created = await demo.database.prisma.space.findFirstOrThrow({ where: { name: 'Product engineering' } });
+  await page.getByRole('combobox', { name: 'Space', exact: true }).selectOption(created.id);
+  await expect(page.getByRole('heading', { name: 'No documents yet', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'New document', exact: true }).click();
+  await title(page).fill('Engineering start here'); await body(page).fill('A real first document in the new space.');
+  await save(page).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved · revision 1' })).toBeVisible();
+  await page.reload();
+  await expect(title(page)).toHaveValue('Engineering start here');
+  await expect(body(page)).toContainText('A real first document in the new space.');
+});
+
+test('space creation failure and keyboard cancellation retain document edits without automatic retry', async ({ page, context }) => {
+  await login(page, 'administrator');
+  const original = await readDocument(context), count = await demo.database.prisma.space.count();
+  await title(page).fill('Retained after a failed space request'); await body(page).fill('Retained unsaved body.');
+  let creates = 0;
+  await page.route('**/api/v1/spaces', async route => {
+    if (route.request().method() !== 'POST') return route.continue();
+    creates++; await route.abort('failed');
+  });
+  await page.getByRole('button', { name: 'New space', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'New space', exact: true });
+  await dialog.getByLabel('Space name').fill('   ');
+  await expect(dialog.getByRole('button', { name: 'Create space', exact: true })).toBeDisabled();
+  await dialog.getByLabel('Space name').fill('Network failure space');
+  await dialog.getByRole('button', { name: 'Create space', exact: true }).click();
+  await expect(dialog.getByRole('alert')).toContainText('The space could not be created.');
+  await expect(dialog.getByLabel('Space name')).toHaveValue('Network failure space');
+  await page.keyboard.press('Escape'); await expect(dialog).toBeHidden();
+  await expect(page.getByRole('button', { name: 'New space', exact: true })).toBeFocused();
+  await expect(title(page)).toHaveValue('Retained after a failed space request');
+  await expect(body(page)).toContainText('Retained unsaved body.');
+  expect(creates).toBe(1);
+  expect(await demo.database.prisma.space.count()).toBe(count);
+  expect(await readDocument(context)).toEqual(original);
+});
+
+test('space creation is absent for readers and outsiders and the server rejects their direct requests', async ({ browser }) => {
+  const count = await demo.database.prisma.space.count();
+  for (const role of ['reader', 'outsider'] as const) {
+    const context = await browser.newContext();
+    try {
+      const page = await context.newPage(); await login(page, role, role === 'outsider' ? demo.origin : url());
+      await expect(page.getByRole('button', { name: 'New space', exact: true })).toHaveCount(0);
+      const response = await apiRequest(context, '/api/v1/spaces', {
+        method: 'POST', headers: { origin: demo.origin }, data: { name: 'Unauthorized space' },
+      });
+      expect(response.status()).toBe(403);
+      if (role === 'outsider') {
+        await expect(page.getByRole('heading', { name: 'No accessible spaces' })).toBeVisible();
+        await expect(page.getByRole('combobox', { name: 'Space', exact: true })).toHaveCount(0);
+      }
+    } finally { await context.close(); }
+  }
+  expect(await demo.database.prisma.space.count()).toBe(count);
+});
+
+
+test('space creation preserves a stale-save conflict without adopting a newer document ETag', async ({ page, context }) => {
+  await login(page, 'administrator');
+  const original = await readDocument(context);
+  await title(page).fill('Local conflict title'); await body(page).fill('Complete local conflict body.');
+  const concurrent = await apiRequest(context, `/api/v1/documents/${seeded.documentId}`, {
+    method: 'PATCH', headers: { origin: demo.origin, 'if-match': original.etag },
+    data: { title: 'Concurrent server title', content: original.data.revision.content },
+  });
+  expect(concurrent.status()).toBe(200);
+  await save(page).click();
+  await expect(page.getByRole('heading', { name: 'Save conflict', exact: true })).toBeVisible();
+  const latest = await readDocument(context);
+  await page.getByRole('button', { name: 'New space', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'New space', exact: true });
+  await dialog.getByLabel('Space name').fill('Conflict-safe workspace');
+  await dialog.getByRole('button', { name: 'Create space', exact: true }).click(); await expect(dialog).toBeHidden();
+  await expect(title(page)).toHaveValue('Local conflict title');
+  await expect(body(page)).toContainText('Complete local conflict body.');
+  await expect(save(page)).toBeDisabled();
+  await expect(page.getByRole('heading', { name: 'Concurrent server title', exact: true })).toBeVisible();
+  expect(await readDocument(context)).toEqual(latest);
+  await page.getByRole('button', { name: 'Use my changes', exact: true }).click();
+  await save(page).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved · revision 3' })).toBeVisible();
+  expect((await readDocument(context)).data.revision.title).toBe('Local conflict title');
+});
+
+test('mobile space creation blocks dismissal and duplicate submission while its actual request is pending', async ({ page, context }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await login(page, 'administrator');
+  const original = await readDocument(context);
+  await title(page).fill('Mobile local draft'); await body(page).fill('Complete mobile draft.');
+  await page.getByRole('button', { name: 'Navigation', exact: true }).click();
+  await page.getByRole('button', { name: 'New space', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'New space', exact: true });
+  await dialog.getByLabel('Space name').fill('Mobile engineering');
+  let release!: () => void, creates = 0;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  await page.route('**/api/v1/spaces', async route => {
+    if (route.request().method() === 'POST') { creates++; await held; }
+    await route.continue();
+  });
+  try {
+    const requested = page.waitForRequest(request => request.method() === 'POST' && new URL(request.url()).pathname === '/api/v1/spaces');
+    await dialog.getByRole('button', { name: 'Create space', exact: true }).click(); await requested;
+    await expect(dialog.getByRole('status')).toHaveText('Creating space…');
+    await expect(dialog.getByRole('button', { name: 'Create space', exact: true })).toBeDisabled();
+    await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toBeDisabled();
+    await page.keyboard.press('Escape'); await expect(dialog).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await mkdir('artifacts/screenshots', { recursive: true });
+    await page.screenshot({ path: 'artifacts/screenshots/space-create-mobile.png', mask: [page.locator('.account')] });
+    release(); await expect(dialog).toBeHidden();
+    await expect(title(page)).toHaveValue('Mobile local draft');
+    await expect(body(page)).toContainText('Complete mobile draft.');
+    expect(creates).toBe(1);
+    expect(await readDocument(context)).toEqual(original);
+  } finally { release(); }
+});

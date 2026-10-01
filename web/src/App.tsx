@@ -57,6 +57,11 @@ export function App() {
   const [user, setUser] = useState<User | null>();
   const [bootError, setBootError] = useState('');
   const [spaces, setSpaces] = useState<Space[]>([]);
+  const [spacePrompt, setSpacePrompt] = useState(false);
+  const [spaceName, setSpaceName] = useState('');
+  const [creatingSpace, setCreatingSpace] = useState(false);
+  const [spaceCreateError, setSpaceCreateError] = useState('');
+  const [spaceNotice, setSpaceNotice] = useState('');
   const [spacesCursor, setSpacesCursor] = useState<string | null>(null);
   const [space, setSpace] = useState<Space | null>(null);
   const [documents, setDocuments] = useState<DocumentSummary[]>([]);
@@ -108,6 +113,7 @@ export function App() {
   const historyGeneration = useRef(0);
   const listGeneration = useRef(0);
   const titleInput = useRef<HTMLInputElement>(null);
+  const spaceTrigger = useRef<HTMLButtonElement>(null);
   const owner = useRef<string | null>(null);
   const draftSpaceId = useRef<string | null>(null);
   const newDraftBaseline = useRef<Draft | null>(null);
@@ -123,7 +129,7 @@ export function App() {
   const mayEdit = Boolean(user && !accessIssue && collaborationKnown && !liveChecking && !liveCheckError && space?.access === 'editor' && !base?.document.archivedAt
     && (!base || base.document.editingMode === 'solo' || collaborationEnabled && liveState?.initialized)
     && (!live || liveState?.phase === 'connected' && liveState.metadata.canWrite));
-  const blocked = busy || uploading > 0 || commentState.pending;
+  const blocked = busy || creatingSpace || uploading > 0 || commentState.pending;
   const blockedRef = useRef(blocked); blockedRef.current = blocked;
   const mayPublish = Boolean(publishing?.mayPublish && user && !accessIssue && base && !base.document.archivedAt && !conflict);
   const uploadContext = useRef({ id: base?.document.id ?? null, editable: mayEdit });
@@ -239,7 +245,7 @@ export function App() {
     if (!(error instanceof ApiError) || ![401,403,404].includes(error.status)) return false;
     generation.current++; historyGeneration.current++;
     setAccessIssue(error.status === 401 ? 'session' : 'access');
-    setSearchOpen(false); setUploadMessage('');
+    setSearchOpen(false); setSpacePrompt(false); setSpaceNotice(''); setUploadMessage('');
     setPublication(null); setPublicationPrompt(null); setPublicationError('');
     setSpaces([]); setSpace(null); setDocuments([]); setSpacesCursor(null); setDocumentsCursor(null);
     setListLoading(false); setLoadingDocument(false); setHistoryOpen(false);
@@ -294,6 +300,28 @@ export function App() {
       return null;
     } finally { if (ticket === generation.current && request === listGeneration.current) setListLoading(false); }
   }
+  function openSpacePrompt() {
+    if (user?.role !== 'administrator' || accessIssue || blocked) return;
+    setMobileOpen(false); setSpaceName(''); setSpaceCreateError(''); setSpaceNotice(''); setSpacePrompt(true);
+  }
+  async function createSpace() {
+    if (user?.role !== 'administrator' || accessIssue || blocked || !spaceName.trim()) return;
+    const ticket = generation.current;
+    setCreatingSpace(true); setSpaceCreateError('');
+    try {
+      const created = await api.createSpace(spaceName.trim());
+      if (ticket !== generation.current) return;
+      setSpaces(previous => previous.some(item => item.id === created.id) ? previous : [...previous, created]);
+      setSpacePrompt(false); setSpaceNotice(`Created space "${created.name}".`);
+      // Creating a space is not document navigation. Keep the draft, editor
+      // undo stack, save error and comparison ETag intact in an open workspace.
+      if (!space && !draftRef.current) await selectSpace(created);
+    } catch (error) {
+      if (ticket === generation.current && !unavailable(error)) setSpaceCreateError(error instanceof ApiError && error.status === 400
+        ? 'Enter a space name between 1 and 200 characters.'
+        : 'The space could not be created. Check your connection and try again. Your document edits are retained.');
+    } finally { setCreatingSpace(false); }
+  }
   async function moreSpaces(cursor: string) {
     const ticket = generation.current;
     setListLoading(true); setListError('');
@@ -321,6 +349,7 @@ export function App() {
   }
   async function workspace(account: User, recover = false) {
     handledHref.current = location.pathname + location.search;
+    setSpacePrompt(false); setSpaceNotice('');
     setUser(account); setBootError(''); setListLoading(true); setListError('');
     const ticket = ++generation.current;
     try {
@@ -605,9 +634,14 @@ export function App() {
   }
 
   const navigation = <>
-    {spaces.length > 0 && <><label htmlFor="space">Space</label><select id="space" aria-label="Space" value={space?.id ?? ''} disabled={blocked} onChange={event => {
+    {(spaces.length > 0 || user?.role === 'administrator' && !accessIssue) && <div className="listhead space-heading">
+      {spaces.length > 0 ? <label htmlFor="space">Space</label> : <span>Spaces</span>}
+      {user?.role === 'administrator' && !accessIssue && <button ref={spaceTrigger} aria-haspopup="dialog" disabled={blocked || listLoading} onClick={openSpacePrompt}>New space</button>}
+    </div>}
+    {spaceNotice && <p role="status" className="muted">{spaceNotice}</p>}
+    {spaces.length > 0 && <select id="space" aria-label="Space" value={space?.id ?? ''} disabled={blocked} onChange={event => {
       const selected = spaces.find(item => item.id === event.target.value); if (selected) void navigate(`/spaces/${selected.slug}`);
-    }}><option value="" disabled>Select a space</option>{spaces.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></>}
+    }}><option value="" disabled>Select a space</option>{spaces.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select>}
     {spacesCursor && <button disabled={listLoading} onClick={() => { void moreSpaces(spacesCursor); }}>More spaces</button>}
     {space && <><div className="listhead"><span>Documents</span>{space.access === 'editor' && !accessIssue && <button onClick={newDocument} disabled={blocked}>New document</button>}</div>
       {listLoading && <p role="status" className="muted">Loading documents…</p>}
@@ -691,7 +725,7 @@ export function App() {
                 {revisionsCursor && <button disabled={historyLoading} onClick={() => { void openHistory(revisionsCursor); }}>More revisions</button>}
                 {revision && !historyLoading && <Editor key={revision.id} initialContent={revision.content} label="Revision content" editable={false} resolveFileUrl={api.resolveFileUrl} onChange={() => {}} header={<><h3>{revision.title}</h3>{mayEdit && !conflict && <button className="restore" disabled={blocked || revision.id===base?.document.revision.id || Boolean(live && (dirty || commentState.dirty || liveState?.pending || retainedLiveDraft))} onClick={() => { void restoreRevision(revision.id); }}>Restore revision {revision.revisionNumber}</button>}{mayPublish && <button disabled={blocked || !publication} onClick={() => setPublicationPrompt({ action: 'publish', revision })}>Publish revision {revision.revisionNumber}</button>}<div className="revision-exports"><button disabled={blocked} onClick={() => { void exportDocument('pdf', revision.id); }}>Export PDF</button><button disabled={blocked} onClick={() => { void exportDocument('docx', revision.id); }}>Export DOCX</button></div></>} />}
               </aside>}
-            </div> : !loadingDocument && !saveError && !accessIssue && !listLoading && <section className="state"><h1>{space ? 'No documents yet' : 'No accessible spaces'}</h1><p>{space ? 'Create a document when you are ready.' : 'Ask an administrator for space access.'}</p></section>}
+            </div> : !loadingDocument && !saveError && !accessIssue && !listLoading && <section className="state"><h1>{space ? 'No documents yet' : 'No accessible spaces'}</h1><p>{space ? space.access === 'editor' ? 'Create a document when you are ready.' : 'An editor can add the first document.' : user?.role === 'administrator' ? 'Create a space to organize your documents.' : 'Ask an administrator for space access.'}</p></section>}
           </main>
         </div>}
       </>}
@@ -705,6 +739,15 @@ export function App() {
       const action = pending?.action; setPending(null); resetDraftToBaseline();
       if (navigationBlocker.state === 'blocked') navigationBlocker.proceed(); else action?.();
     }}>Discard changes</button></div></Dialog.Content></Dialog.Portal></Dialog.Root>
+    <Dialog.Root open={spacePrompt} onOpenChange={open => { if (!creatingSpace) setSpacePrompt(open); }}><Dialog.Portal><Dialog.Overlay className="dialog-overlay" /><Dialog.Content className="dialog" onCloseAutoFocus={event => { event.preventDefault(); if (spaceTrigger.current?.isConnected) spaceTrigger.current.focus(); else titleInput.current?.focus(); }} onEscapeKeyDown={event => { if (creatingSpace) event.preventDefault(); }} onPointerDownOutside={event => { if (creatingSpace) event.preventDefault(); }}>
+      <Dialog.Title>New space</Dialog.Title><Dialog.Description>Create a space for private documents. Only administrators have access until members are granted access.</Dialog.Description>
+      <form className="space-form" onSubmit={event => { event.preventDefault(); void createSpace(); }}>
+        <label htmlFor="new-space-name">Space name</label><input id="new-space-name" required maxLength={200} value={spaceName} disabled={creatingSpace} onChange={event => setSpaceName(event.target.value)} />
+        {spaceCreateError && <p role="alert">{spaceCreateError}</p>}
+        {creatingSpace && <p role="status">Creating space…</p>}
+        <div className="actions"><Dialog.Close type="button" disabled={creatingSpace}>Cancel</Dialog.Close><button className="primary" disabled={creatingSpace || !spaceName.trim()}>Create space</button></div>
+      </form>
+    </Dialog.Content></Dialog.Portal></Dialog.Root>
     {searchOpen && user && !accessIssue && <SearchDialog onClose={() => setSearchOpen(false)} onPick={pickSearchResult} onFailure={unavailable} />}
     <Dialog.Root open={Boolean(publicationPrompt)} onOpenChange={open => { if (!open) setPublicationPrompt(null); }}><Dialog.Portal><Dialog.Overlay className="dialog-overlay" /><Dialog.Content className="dialog" onCloseAutoFocus={event => { event.preventDefault(); titleInput.current?.focus(); }}>
       <Dialog.Title>{publicationPrompt?.action === 'publish' ? `Publish revision ${publicationPrompt.revision.revisionNumber}?` : 'Withdraw publication?'}</Dialog.Title>

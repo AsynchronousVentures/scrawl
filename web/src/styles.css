@@ -115,3 +115,8 @@
 
 .document-comments .bn-editor, .bn-thread .bn-comment-editor .bn-editor { min-height: 0; padding-bottom: 0; font-size: 14px; line-height: 1.65; }
 @media (max-width: 700px) { .save-actions { flex-wrap: wrap; max-width: 100%; flex-shrink: 1; } }
+
+/* Space creation uses the existing dialog and navigation surfaces. */
+.space-form label { display: block; margin: 18px 0 8px; }
+.space-form input { width: 100%; min-width: 0; }
+.space-heading label { margin-bottom: 0; }

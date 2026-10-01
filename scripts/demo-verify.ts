@@ -40,6 +40,7 @@ async function main() {
           assert(!await page.getByText('Scrawl field guide', { exact: true }).count());
           const denied: APIResponse = await context.request.get(`${origin}/api/v1/documents/${manifest.startDocumentId}`);
           assert.equal(denied.status(), 404);
+          await expect(page.getByRole('button', { name: 'New space', exact: true })).toHaveCount(0);
         } else {
           stage = `${role} native saved content and private image`;
           const title = page.getByRole('textbox', { name: 'Document title', exact: true });
@@ -59,10 +60,21 @@ async function main() {
           await expect(image).toBeVisible();
           await expect.poll(() => image.evaluate(element => element instanceof HTMLImageElement && element.complete && element.naturalWidth > 0)).toBe(true);
           if (role === 'reader') {
+            await expect(page.getByRole('button', { name: 'New space', exact: true })).toHaveCount(0);
             await expect(title).toHaveAttribute('readonly', '');
             await expect(body).toHaveAttribute('aria-readonly', 'true');
             await expect(page.getByRole('button', { name: 'Save', exact: true })).toHaveCount(0);
           } else {
+            stage = 'administrator space dialog and keyboard cancellation';
+            const trigger = page.getByRole('button', { name: 'New space', exact: true });
+            await trigger.click();
+            const dialog = page.getByRole('dialog', { name: 'New space', exact: true });
+            await expect(dialog.getByLabel('Space name')).toBeFocused();
+            await dialog.getByLabel('Space name').fill('Synthetic workspace example');
+            await page.screenshot({ path: `${evidenceDirectory}/new-space.png`, mask: [page.locator('.account')], maskColor: '#1b1e20' });
+            await page.keyboard.press('Escape');
+            await expect(dialog).toBeHidden(); await expect(trigger).toBeFocused();
+            await expect(title).toHaveValue('Start here');
             await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
             await page.screenshot({ path: `${evidenceDirectory}/workspace.png` });
             await image.scrollIntoViewIfNeeded();
