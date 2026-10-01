@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Asynchronous Ventures and contributors
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { Search } from 'lucide-react';
 import { Link, useBlocker, useLocation, useNavigate } from 'react-router';
@@ -9,7 +9,7 @@ import { extractPlainText, validateContent } from '@scrawl/content';
 import { Editor } from './Editor';
 import { SearchDialog } from './SearchDialog';
 import { SpaceAccess } from './SpaceAccess';
-import { DocumentNavigation, DocumentPath, ParentOptions } from './DocumentOrganization';
+import { DocumentNavigation, DocumentPath, ParentOptions, documentAncestors, initialDocument } from './DocumentOrganization';
 import { LiveSession, type LiveState } from './live';
 import type { CommentState } from './PrivateComments';
 import { api, ApiError } from './api/client';
@@ -142,6 +142,8 @@ export function App() {
     && (!base || base.document.editingMode === 'solo' || collaborationEnabled && liveState?.initialized)
     && (!live || liveState?.phase === 'connected' && liveState.metadata.canWrite));
   const blocked = busy || accessBusy || creatingSpace || uploading > 0 || commentState.pending;
+  const parentId = base?.document.parentDocumentId ?? null;
+  const atNestingLimit = useMemo(() => documentAncestors(parentId, new Map(documents.map(item => [item.id, item]))).length >= 31, [parentId, documents]);
   const blockedRef = useRef(blocked); blockedRef.current = blocked;
   const mayPublish = Boolean(publishing?.mayPublish && user && !accessIssue && base && !base.document.archivedAt && !conflict);
   const uploadContext = useRef({ id: base?.document.id ?? null, editable: mayEdit });
@@ -376,7 +378,7 @@ export function App() {
     if (!documentTarget) rememberSelection(selected.slug, null);
     const result = await listDocuments(selected);
     if (ticket !== generation.current || !result) return;
-    const target = documentTarget ?? result.items[0]?.id;
+    const target = documentTarget ?? initialDocument(result.items)?.id;
     if (target) await loadDocument(target, ticket, selected.id);
   }
   async function workspace(account: User, recover = false) {
@@ -746,7 +748,7 @@ export function App() {
             {draft && <div className="documentbar"><span className={dirty || accessIssue || saveError ? 'dirty' : ''} role="status">{status}</span>
               {base && !accessIssue && <><button disabled={blocked} onClick={() => { if (historyOpen) setHistoryOpen(false); else void openHistory(); }}>History</button>
                 <details className="doc-menu"><summary ref={actionsTrigger} aria-label="Document actions">⋯</summary><div className="menu-items">
-                  {space?.access === 'editor' && !base.document.archivedAt && <button disabled={blocked} onClick={event => { event.currentTarget.closest('details')?.removeAttribute('open'); newDocument(base.document.id); }}>New child document</button>}
+                  {space?.access === 'editor' && !base.document.archivedAt && <><button disabled={blocked || listLoading || Boolean(listError) || atNestingLimit} aria-describedby={atNestingLimit ? 'document-nesting-limit' : undefined} onClick={event => { event.currentTarget.closest('details')?.removeAttribute('open'); newDocument(base.document.id); }}>New child document</button>{atNestingLimit && <small id="document-nesting-limit">Nesting limit reached (32 levels).</small>}</>}
                   {space?.access === 'editor' && !conflict && <button disabled={blocked || hasUnsavedWork || Boolean(liveState?.pending)} onClick={event => { event.currentTarget.closest('details')?.removeAttribute('open'); setMoveParentId(base.document.parentDocumentId ?? ''); if (!moveNeedsCompare) setMoveError(''); setMoveOpen(true); }}>Move document</button>}
                   <button disabled={blocked} onClick={event => { event.currentTarget.closest('details')?.removeAttribute('open'); void exportDocument(); }}>Export JSON</button>
                   {collaborationEnabled && !live && mayEdit && <button disabled={blocked || dirty} onClick={event => { event.currentTarget.closest('details')?.removeAttribute('open'); void enableLive(); }}>Enable shared editing</button>}

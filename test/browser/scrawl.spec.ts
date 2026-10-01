@@ -300,7 +300,7 @@ async function confirmDiscard(page: Page) {
 }
 
 async function evidence(page: Page, name: 'editing' | 'conflict' | 'history' | 'access-loss' | 'mobile'
-  | 'organization' | 'editor-toolbar' | 'link-editor' | 'discard-changes' | 'search' | 'attachments' | 'publication' | 'public-document') {
+  | 'organization' | 'organization-depth' | 'editor-toolbar' | 'link-editor' | 'discard-changes' | 'search' | 'attachments' | 'publication' | 'public-document') {
   if (process.env.SCRAWL_BROWSER_EVIDENCE !== '1') return;
   const password = page.getByLabel('Password', { exact: true });
   if (await password.isVisible() && await password.inputValue() !== '') {
@@ -2576,4 +2576,98 @@ test('organization assembles all authorized cursor pages before locating a child
   await expect(title(page)).toHaveValue('Complete pagination draft remains local');
   await expect(navigation.getByRole('link', { name: parent.revision.title, exact: true })).toBeVisible();
   expect((await readDocument(context, child.id)).data.revision).toEqual(before.data.revision);
+});
+
+test('organization a 32-level branch stays usable on mobile and cannot offer an impossible child location', async ({ page, context }) => {
+  await login(page);
+  const original = await readDocument(context);
+  let leaf = original.data;
+  for (let level = 2; level <= 32; level++) {
+    const response = await apiRequest(context, `/api/v1/spaces/${seeded.spaceId}/documents`, {
+      method: 'POST', headers: { origin: demo.origin },
+      data: { title: `Level ${level} handbook appendix`, content: original.data.revision.content, parentDocumentId: leaf.id },
+    });
+    expect(response.status()).toBe(201);
+    leaf = await response.json() as Document;
+  }
+  const before = await readDocument(context, leaf.id);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`${demo.origin}/spaces/${leaf.spaceSlug}/documents/${leaf.slug}`);
+  await expect(title(page)).toHaveValue(leaf.revision.title);
+  const path = page.getByRole('navigation', { name: 'Document path', exact: true });
+  await expect(path.locator('a')).toHaveCount(32);
+  await expect(path.getByRole('link')).toHaveCount(3);
+  const earlier = path.getByLabel('Earlier parent documents');
+  await earlier.focus(); await page.keyboard.press('Enter');
+  await expect(path.getByRole('link', { name: original.data.revision.title, exact: true })).toBeVisible();
+  await earlier.focus(); await page.keyboard.press('Enter');
+  await expect(path.getByRole('link')).toHaveCount(3);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.getByLabel('Document actions').click();
+  const childAction = page.getByRole('button', { name: 'New child document', exact: true });
+  await expect(childAction).toBeDisabled();
+  await expect(childAction).toHaveAccessibleDescription('Nesting limit reached (32 levels).');
+  const menuBounds = await page.locator('.doc-menu .menu-items').boundingBox();
+  expect(menuBounds).not.toBeNull();
+  expect(menuBounds!.x).toBeGreaterThanOrEqual(0);
+  expect(menuBounds!.x + menuBounds!.width).toBeLessThanOrEqual(390);
+  await evidence(page, 'organization-depth');
+  const rejected = await apiRequest(context, `/api/v1/spaces/${seeded.spaceId}/documents`, {
+    method: 'POST', headers: { origin: demo.origin },
+    data: { title: 'Impossible level 33', content: original.data.revision.content, parentDocumentId: leaf.id },
+  });
+  expect(rejected.status()).toBe(409);
+  expect((await readDocument(context, leaf.id)).data).toEqual(before.data);
+  await page.getByLabel('Document actions').click();
+  await page.getByRole('button', { name: 'Navigation', exact: true }).click();
+  const navigation = page.getByRole('navigation', { name: 'Documents', exact: true });
+  const current = navigation.getByRole('link', { name: leaf.revision.title, exact: true });
+  await current.scrollIntoViewIfNeeded();
+  await expect(current).toBeInViewport();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  const parentToggle = navigation.getByRole('button', { name: 'Child documents of Level 31 handbook appendix', exact: true });
+  await parentToggle.focus(); await page.keyboard.press('Enter');
+  await expect(current).toHaveCount(0);
+  await page.keyboard.press('Enter');
+  await expect(current).toBeVisible();
+  await page.getByRole('button', { name: 'New document', exact: true }).click();
+  await expect(page.getByLabel('New document location')).toHaveValue('');
+  await title(page).fill('New root outside the deep branch');
+  await body(page).fill('A new root remains available after the nesting limit is reached.');
+  await save(page).click();
+  await expect(page.locator('.documentbar').getByRole('status')).toHaveText('Saved · revision 1');
+  expect((await readDocument(context, leaf.id)).data).toEqual(before.data);
+});
+
+test('organization opening a space selects its first active alphabetical root instead of a UUID-sorted child', async ({ page, context }) => {
+  await login(page);
+  const original = await readDocument(context), other = await navigationDocument(context);
+  const ordered = [original.data, other].sort((a, b) => a.id.localeCompare(b.id));
+  const rootSnapshots: Document[] = [];
+  for (const [index, document] of ordered.entries()) {
+    const current = await readDocument(context, document.id);
+    const renamed = await apiRequest(context, `/api/v1/documents/${document.id}`, {
+      method: 'PATCH', headers: { origin: demo.origin, 'If-Match': current.etag },
+      data: { title: index === 0 ? 'Z root' : 'A root', content: current.data.revision.content },
+    });
+    expect(renamed.status()).toBe(200);
+    rootSnapshots.push(await renamed.json() as Document);
+  }
+  const first = rootSnapshots.find(item => item.revision.title === 'A root')!;
+  const child = await apiRequest(context, `/api/v1/spaces/${seeded.spaceId}/documents`, {
+    method: 'POST', headers: { origin: demo.origin },
+    data: { title: '0 child before root titles', content: first.revision.content, parentDocumentId: first.id },
+  });
+  expect(child.status()).toBe(201);
+  const listed = await apiRequest(context, `/api/v1/spaces/${seeded.spaceId}/documents`);
+  expect(listed.status()).toBe(200);
+  const documents = await listed.json() as operations['listDocuments']['responses'][200]['content']['application/json'];
+  expect(documents.items[0]?.title).not.toBe('A root');
+  await page.goto(`${demo.origin}/spaces/${first.spaceSlug}`);
+  await expect(title(page)).toHaveValue('A root');
+  await expect(page).toHaveURL(`${demo.origin}/spaces/${first.spaceSlug}/documents/${first.slug}`);
+  expect((await readDocument(context, first.id)).data).toEqual(first);
+  await page.reload();
+  await expect(title(page)).toHaveValue('A root');
+  expect((await readDocument(context, first.id)).data).toEqual(first);
 });

@@ -152,3 +152,15 @@
 .draft-location select { min-width: 0; max-width: 100%; color: var(--text); }
 .space-form select { width: 100%; min-width: 0; }
 .document-tree ul ul.deep-document-branch { margin-left: 0; padding-left: 0; border-left: 0; }
+
+.document-path { position: relative; align-items: center; }
+.path-menu summary { cursor: pointer; list-style: none; padding: 0 4px; min-width: 20px; text-align: center; }
+.path-menu summary::-webkit-details-marker { display: none; }
+.path-menu .menu-items { top: 100%; left: 0; right: 0; max-height: 50dvh; overflow: auto; }
+.path-menu .menu-items a { display: block; padding: 8px; overflow-wrap: anywhere; }
+.path-menu .menu-items a:hover { background: var(--surface); }
+@media (max-width: 700px) {
+  .documentbar { position: relative; }
+  .documentbar .doc-menu { position: static; }
+  .documentbar .doc-menu .menu-items { top: 100%; left: 0; right: 0; min-width: 0; max-height: 60dvh; overflow: auto; }
+}
