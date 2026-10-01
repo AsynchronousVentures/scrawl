@@ -13,6 +13,7 @@ import type { Core } from '../../core/index.js';
 import type { Principal } from '../../core/identity/index.js';
 import { LIVE_LIMITS } from '../../core/live/content.js';
 import { HttpProblem } from '../../http/problems.js';
+import { documentEtag } from '../../core/documents/index.js';
 
 type Owner = { assertHeld(): void; lost: Promise<void> };
 type Context = {
@@ -24,6 +25,7 @@ type Context = {
 };
 const uuid = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 const roomPattern = new RegExp(`^(${uuid}):(${uuid})$`);
+const documentPattern = new RegExp(`^${uuid}$`);
 const addressPattern = new RegExp(`^${uuid}:${uuid}(?:\\0${uuid})?$`);
 const unavailable = () => ({ code: 4403, reason: 'Live connection unavailable' });
 
@@ -37,10 +39,13 @@ export function createCollaboration(core: Core, owner: Owner, origin: string) {
   let stopped = false, pendingUpgrades = 0;
   let auditTask: Promise<void> | undefined;
   async function acquire(name: string) {
-    const entry = locks.get(name) ?? { mutex: new Mutex(), users: 0 };
-    locks.set(name, entry); entry.users++;
+    // Restores change epochs. Joins, enrollment and lifecycle mutations still
+    // share one document lock with every old-epoch in-flight acceptance.
+    const id = name.split(':')[0]!;
+    const entry = locks.get(id) ?? { mutex: new Mutex(), users: 0 };
+    locks.set(id, entry); entry.users++;
     const unlock = await entry.mutex.acquire();
-    return () => { unlock(); if (--entry.users === 0) locks.delete(name); };
+    return () => { unlock(); if (--entry.users === 0) locks.delete(id); };
   }
   function fail(context: Context) {
     context.allowed = false;
@@ -280,15 +285,20 @@ export function createCollaboration(core: Core, owner: Owner, origin: string) {
   audit.unref();
   async function serverMutation<T>(name: string, operation: (document: Document | undefined) => Promise<T>) {
     const work = (async () => {
-      if (!roomPattern.test(name)) throw new HttpProblem(400, 'INVALID_REQUEST');
+      if (!roomPattern.test(name) && !documentPattern.test(name)) throw new HttpProblem(400, 'INVALID_REQUEST');
       const release = await acquire(name);
-      const document = hocuspocus.documents.get(name);
+      const document = hocuspocus.documents.get(name) ?? (documentPattern.test(name)
+        ? [...hocuspocus.documents.values()].find(room => room.name.startsWith(`${name}:`)) : undefined);
       try {
         owner.assertHeld();
-        if (stopped || failedRooms.has(name)) throw new HttpProblem(503, 'LIVE_CONNECTION_UNAVAILABLE');
+        if (stopped || failedRooms.has(name) || document && failedRooms.has(document.name)) throw new HttpProblem(503, 'LIVE_CONNECTION_UNAVAILABLE');
         return await operation(document);
       } catch (error) {
-        if (!(error instanceof HttpProblem && error.status < 500) && document) abortRoom(document);
+        if (!(error instanceof HttpProblem && error.status < 500)) {
+          if (documentPattern.test(name)) {
+            for (const room of hocuspocus.documents.values()) if (room.name.startsWith(`${name}:`)) abortRoom(room);
+          } else if (document) abortRoom(document);
+        }
         throw error;
       } finally { release(); }
     })();
@@ -299,6 +309,76 @@ export function createCollaboration(core: Core, owner: Owner, origin: string) {
   }
   return {
     attach(server: Server) { server.on('upgrade', upgrade); },
+    async users(headers: Headers, id: string, userIds: readonly string[]) {
+      owner.assertHeld();
+      if (stopped) throw new HttpProblem(503, 'LIVE_CONNECTION_UNAVAILABLE');
+      const users = await core.documents.live.users(headers, id, userIds);
+      owner.assertHeld();
+      if (stopped) throw new HttpProblem(503, 'LIVE_CONNECTION_UNAVAILABLE');
+      return users;
+    },
+    async read(headers: Headers, id: string) {
+      owner.assertHeld();
+      if (stopped) throw new HttpProblem(503, 'LIVE_CONNECTION_UNAVAILABLE');
+      const room = await core.documents.live.read(headers, id);
+      owner.assertHeld();
+      if (stopped) throw new HttpProblem(503, 'LIVE_CONNECTION_UNAVAILABLE');
+      const { state: _state, ...metadata } = room;
+      return metadata;
+    },
+    enroll(headers: Headers, id: string, expectedEtag?: string) {
+      return serverMutation(id, async () => {
+        const room = await core.documents.live.enroll(headers, id, expectedEtag);
+        owner.assertHeld();
+        if (stopped) throw new HttpProblem(503, 'LIVE_CONNECTION_UNAVAILABLE');
+        const { state: _state, ...metadata } = room;
+        return metadata;
+      });
+    },
+    lifecycle(headers: Headers, id: string, operation: 'archive' | 'unarchive', expectedEtag?: string) {
+      return serverMutation(id, async () => {
+        const saved = await core.documents[operation](headers, id, expectedEtag);
+        owner.assertHeld();
+        if (stopped) throw new HttpProblem(503, 'LIVE_CONNECTION_UNAVAILABLE');
+        if (operation === 'archive') {
+          for (const room of hocuspocus.documents.values()) if (room.name.startsWith(`${id}:`)) {
+            for (const connection of room.getConnections()) {
+              const context = contexts.get(connection.socketId); if (context) context.allowed = false;
+            }
+            for (const connection of room.getConnections()) connection.close(unavailable());
+          }
+        }
+        return saved;
+      });
+    },
+    checkpoint(headers: Headers, id: string, epoch: string, input: unknown, expectedEtag?: string) {
+      return serverMutation(`${id}:${epoch}`, async document => {
+        const accepted = await core.documents.live.checkpoint(headers, id, input, expectedEtag, document ? audience(document) : []);
+        owner.assertHeld();
+        if (stopped) throw new HttpProblem(503, 'LIVE_CONNECTION_UNAVAILABLE');
+        if (document && !document.isDestroyed) {
+          prune(document, accepted.recipients);
+          sendState(document, { ...accepted, documentEtag: documentEtag(accepted.document) });
+        }
+        return accepted.document;
+      });
+    },
+    restore(headers: Headers, id: string, epoch: string, input: unknown, expectedEtag?: string) {
+      return serverMutation(`${id}:${epoch}`, async document => {
+        const accepted = await core.documents.live.restore(headers, id, input, expectedEtag, document ? audience(document) : []);
+        owner.assertHeld();
+        if (stopped) throw new HttpProblem(503, 'LIVE_CONNECTION_UNAVAILABLE');
+        if (document && !document.isDestroyed) {
+          // Old-epoch peers must deliberately reload. Disable sends before close callbacks run.
+          for (const connection of document.getConnections()) {
+            const context = contexts.get(connection.socketId); if (context) context.allowed = false;
+          }
+          for (const connection of document.getConnections()) connection.close(unavailable());
+        }
+        const { state: _state, ...room } = accepted.room;
+        return { document: accepted.document, room };
+      });
+    },
     comment(headers: Headers, id: string, epoch: string, input: unknown) {
       return serverMutation(`${id}:${epoch}`, async document => {
         const accepted = await core.documents.live.comment(headers, id, epoch, input, document ? audience(document) : []);
@@ -324,3 +404,5 @@ export function createCollaboration(core: Core, owner: Owner, origin: string) {
     },
   };
 }
+
+export type Collaboration = ReturnType<typeof createCollaboration>;

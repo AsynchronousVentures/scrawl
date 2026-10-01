@@ -50,6 +50,12 @@ export function createIdentity(prisma: PrismaClient, config: IdentityConfig) {
       return { expiresAt: session.expiresAt.getTime() };
     },
     lockActors,
+    async publicNames(db: Prisma.TransactionClient, userIds: readonly string[]) {
+      return db.user.findMany({ where: { id: { in: [...userIds] }, OR: [
+        { banned: false }, { banned: null }, { banned: true, banExpires: { lte: new Date() } },
+      ] },
+        select: { id: true, name: true, role: true } });
+    },
     async me(headers: Headers) { return actor(await resolve(headers)); },
     async requireUser(db: Prisma.TransactionClient, userId: string) {
       if (!await db.user.findUnique({ where: { id: userId }, select: { id: true } })) {

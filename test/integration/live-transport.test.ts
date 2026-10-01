@@ -9,6 +9,8 @@ import { request } from 'node:http';
 import { setTimeout as delay } from 'node:timers/promises';
 import { WebSocket } from 'ws';
 import { HocuspocusProvider, HocuspocusProviderWebsocket } from '@hocuspocus/provider';
+import { RESTYjsThreadStore } from '@blocknote/core/yjs';
+import { DefaultThreadStoreAuth } from '@blocknote/core/comments';
 import { createDecoder, readVarString, readVarUint } from 'lib0/decoding';
 import * as Y from 'yjs';
 import { readConfig } from '../../src/config.js';
@@ -51,7 +53,7 @@ test('prepared same-origin live transport commits before actual socket delivery 
   assert.equal(migrated.status, 0);
   let lease = await claimLiveOwner(database.pool);
   let transport = createCollaboration(core, lease, identityConfig.origin);
-  const app = await buildApp({ config, core, logging: false, checkDatabase: () => database.ping() });
+  const app = await buildApp({ config, core, collaboration: transport, logging: false, checkDatabase: () => database.ping() });
   transport.attach(app.server);
   const address = await app.listen({ host: '127.0.0.1', port: 0 });
   const socketUrl = address.replace('http:', 'ws:') + '/api/v1/live';
@@ -129,6 +131,117 @@ test('prepared same-origin live transport commits before actual socket delivery 
     await websocket.connect();
     return client;
   }
+  await t.test('real HTTP enrollment and native REST comment clients preserve authorization, JSON contracts and history', async () => {
+    const contract = app.swagger(); assert('openapi' in contract);
+    const resolveOperation = contract.paths?.['/api/v1/documents/{id}/live/{epoch}/threads/{threadId}/resolve']?.post;
+    const response = resolveOperation?.responses?.['200']; assert(response && !('$ref' in response));
+    assert(response.content?.['application/json'], 'Generated OpenAPI describes the actual native JSON null response');
+    const requestBody = resolveOperation?.requestBody; assert(requestBody && !('$ref' in requestBody));
+    assert.equal(requestBody.required, false, 'The documented native command accepts its official bodyless request');
+    const doc = await core.documents.create(editor, space.id, { title: 'Native HTTP comments', content: demoContent(['Private HTTP fixture']) });
+    const path = `/api/v1/documents/${doc.id}/live`;
+    async function http(headers: Headers, suffix: string, method = 'GET', body?: unknown, etag?: string) {
+      const input = new Headers(headers); input.set('content-type', 'application/json');
+      if (etag !== undefined) input.set('if-match', etag);
+      return fetch(address + path + suffix, { method, headers: input, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
+    }
+    assert.equal((await http(new Headers(), '')).status, 401);
+    assert.equal((await http(outsider, '')).status, 404);
+    assert.equal((await http(editor, '', 'POST')).status, 428);
+    assert.equal((await http(new Headers({ cookie: editor.get('cookie')! }), '', 'POST', undefined, documentEtag(doc))).status, 403);
+    const enrolled = await http(reader, '', 'POST', undefined, documentEtag(doc));
+    assert.equal(enrolled.status, 200);
+    const metadata = await enrolled.json() as { epoch: string; sequence: string; documentEtag: string; canWrite: boolean };
+    assert.deepEqual(Object.keys(metadata).sort(), ['canWrite', 'documentEtag', 'documentId', 'epoch', 'schemaVersion', 'sequence']);
+    assert.equal(metadata.canWrite, false); assert.equal(enrolled.headers.get('etag'), metadata.documentEtag);
+    assert.equal((await http(editor, '', 'POST', undefined, documentEtag(doc))).status, 412);
+    const names = await http(reader, '/users', 'POST', { userIds: [administrator.id, editorUser.id, readerUser.id, outsiderUser.id, 'unknown-user'] });
+    assert.equal(names.status, 200);
+    const users = await names.json() as { id: string; name: string }[];
+    assert.deepEqual(users.map(user => user.id).sort(), [administrator.id, editorUser.id, readerUser.id].sort());
+    assert(users.every(user => Object.keys(user).sort().join(',') === 'id,name'));
+    assert.equal((await http(outsider, '/users', 'POST', { userIds: [editorUser.id] })).status, 404);
+    assert.equal((await http(reader, '/users', 'POST', { userIds: Array.from({ length: 129 }, (_, index) => String(index)) })).status, 400);
+    const author = await connect(editor, `${doc.id}:${metadata.epoch}`), recipient = await connect(reader, `${doc.id}:${metadata.epoch}`);
+    await until(() => author.provider.isSynced && recipient.provider.isSynced, 'HTTP native clients receive initial live state');
+    const store = new RESTYjsThreadStore(address + path + `/${metadata.epoch}/threads`, Object.fromEntries(editor),
+      author.document.getMap('threads'), new DefaultThreadStoreAuth(editorUser.id, 'editor'));
+    const comment = { body: demoContent(['Private HTTP discussion']).document };
+    const thread = await store.createThread({ initialComment: comment });
+    assert.equal(thread.type, 'thread'); assert.equal(thread.comments[0]!.userId, editorUser.id);
+    assert.equal(thread.comments[0]!.body[0].content[0].text, 'Private HTTP discussion');
+    assert(!JSON.stringify(thread).includes('session'));
+    await until(() => recipient.document.getMap('threads').has(thread.id), 'Committed HTTP comment reaches authorized reader');
+    const selection = { anchor: Y.createRelativePositionFromTypeIndex(nativeText(author.document, 'Private HTTP fixture'), 0),
+      head: Y.createRelativePositionFromTypeIndex(nativeText(author.document, 'Private HTTP fixture'), 5) };
+    const anchored = await http(editor, `/${metadata.epoch}/threads/${thread.id}/addToDocument`, 'POST', {
+      selection: { prosemirror: { anchor: 0, head: 999999 }, yjs: selection },
+    });
+    assert.equal(anchored.status, 200); assert.equal(await anchored.json(), null);
+    assert.equal((await http(reader, `/${metadata.epoch}/threads`, 'POST', { initialComment: comment })).status, 404);
+    assert.equal((await http(outsider, `/${metadata.epoch}/threads`, 'POST', { initialComment: comment })).status, 404);
+    assert.equal((await http(editor, `/${metadata.epoch}/threads`, 'POST', { initialComment: comment, userId: outsiderUser.id })).status, 400);
+    const reply = await store.addComment({ threadId: thread.id, comment });
+    assert.equal(reply.userId, editorUser.id);
+    assert.equal(await store.updateComment({ threadId: thread.id, commentId: reply.id, comment }), null);
+    assert.equal(await store.addReaction({ threadId: thread.id, commentId: reply.id, emoji: '👍' }), null);
+    assert.equal(await store.deleteReaction({ threadId: thread.id, commentId: reply.id, emoji: '👍' }), null);
+    assert.equal(await store.resolveThread({ threadId: thread.id }), null);
+    assert.equal(await store.unresolveThread({ threadId: thread.id }), null);
+    assert.equal(await store.deleteComment({ threadId: thread.id, commentId: reply.id, softDelete: true }), null);
+    assert.equal(await store.deleteThread({ threadId: thread.id }), null);
+    const missing = await http(editor, `/${metadata.epoch}/checkpoint`, 'POST', {}, metadata.documentEtag);
+    assert.equal(missing.status, 428);
+    const current = await http(editor, ''); assert.equal(current.status, 200);
+    const latest = await current.json() as typeof metadata;
+    assert.equal(latest.canWrite, true);
+    const checkpoint = await http(editor, `/${metadata.epoch}/checkpoint`, 'POST', { sequence: latest.sequence }, latest.documentEtag);
+    assert.equal(checkpoint.status, 200);
+    const savedHttp = await checkpoint.json() as { revision: { content: unknown }; currentRevisionNumber: number };
+    assert.equal(savedHttp.currentRevisionNumber, 1, 'Live-only comments do not create document revisions');
+    assert.deepEqual(savedHttp.revision.content, doc.revision.content);
+    assert(!Object.hasOwn(savedHttp, 'recipients')); assert(!Object.hasOwn(savedHttp, 'state'));
+    assert.equal((await http(editor, `/${metadata.epoch}/checkpoint`, 'POST', { sequence: metadata.sequence }, latest.documentEtag)).status, 412);
+    title(author.document).insert(title(author.document).length, ' saved over HTTP');
+    await until(() => author.provider.unsyncedChanges === 0 && title(recipient.document).toString().endsWith(' saved over HTTP'), 'Native changes commit before explicit HTTP save');
+    const changed = await (await http(editor, '')).json() as typeof metadata;
+    const saves = await Promise.all([0, 1].map(() => http(editor, `/${metadata.epoch}/checkpoint`, 'POST', { sequence: changed.sequence }, changed.documentEtag)));
+    assert.deepEqual(saves.map(response => response.status).sort(), [200, 412]);
+    assert.equal(await database.prisma.documentRevision.count({ where: { documentId: doc.id } }), 2);
+    assert.equal((await http(reader, `/${metadata.epoch}/checkpoint`, 'POST', { sequence: changed.sequence }, changed.documentEtag)).status, 404);
+    const checkpointed = await (await http(editor, '')).json() as typeof metadata;
+    await until(() => recipient.metadata.some(state => state.documentEtag === checkpointed.documentEtag), 'Accepted checkpoints send authorized metadata');
+    const restored = await http(editor, `/${metadata.epoch}/restore`, 'POST', { sequence: checkpointed.sequence, revisionId: doc.revision.id }, checkpointed.documentEtag);
+    assert.equal(restored.status, 200);
+    const result = await restored.json() as { room: { epoch: string }; document: { currentRevisionNumber: number } };
+    assert.equal(result.document.currentRevisionNumber, 3); assert.notEqual(result.room.epoch, metadata.epoch);
+    assert(!Object.hasOwn(result.room, 'state'));
+    await until(() => [author, recipient].every(client => client.socket?.readyState === WebSocket.CLOSED), 'HTTP restore immediately closes old-epoch sockets');
+    const fresh = await connect(editor, `${doc.id}:${result.room.epoch}`);
+    await until(() => fresh.provider.isSynced, 'Restored HTTP epoch starts from its immutable revision');
+    assert.equal(fresh.document.getMap('threads').size, 0);
+    const archiveHeaders = new Headers(admin); archiveHeaders.set('content-type', 'application/json');
+    archiveHeaders.set('if-match', restored.headers.get('etag')!);
+    const archived = await fetch(`${address}/api/v1/documents/${doc.id}/archive`, { method: 'POST', headers: archiveHeaders, body: '{}' });
+    assert.equal(archived.status, 200);
+    await until(() => fresh.socket?.readyState === WebSocket.CLOSED, 'HTTP archive closes live connections after commit');
+    assert.equal((await http(reader, '')).status, 409);
+    archiveHeaders.set('if-match', archived.headers.get('etag')!);
+    const unarchived = await fetch(`${address}/api/v1/documents/${doc.id}/unarchive`, { method: 'POST', headers: archiveHeaders, body: '{}' });
+    assert.equal(unarchived.status, 200);
+    assert.equal(await database.prisma.documentRevision.count({ where: { documentId: doc.id } }), 3);
+    assert.equal((await (await http(reader, '')).json() as typeof metadata).epoch, result.room.epoch);
+    space = await core.spaces.changeMembership(admin, { spaceId: space.id, userId: readerUser.id, role: null, expectedEtag: spaceEtag(space) });
+    try {
+      const revokedNames = await http(editor, '/users', 'POST', { userIds: [readerUser.id, editorUser.id] });
+      assert.equal(revokedNames.status, 200);
+      assert.deepEqual((await revokedNames.json() as { id: string }[]).map(user => user.id), [editorUser.id]);
+      assert.equal((await http(reader, '/users', 'POST', { userIds: [editorUser.id] })).status, 404);
+    } finally {
+      space = await core.spaces.changeMembership(admin, { spaceId: space.id, userId: readerUser.id, role: 'reader', expectedEtag: spaceEtag(space) });
+    }
+    fresh.provider.destroy(); fresh.websocket.destroy();
+  });
   const writer = await connect(editor), viewer = await connect(reader);
   let observer = await connect(peer);
   await until(() => [writer, observer, viewer].every(client => client.provider.isSynced && client.provider.unsyncedChanges === 0), 'All roles synchronize the initial durable state');

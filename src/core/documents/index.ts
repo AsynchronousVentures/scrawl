@@ -117,7 +117,7 @@ function pageLimit(input: number | undefined) {
 export function createDocuments(prisma: PrismaClient, identity: Identity, spaces: Spaces, attachments: Attachments) {
   async function liveOperation<T>(headers: Headers, id: string, mode: 'read' | 'enroll' | 'write',
     operation: (tx: Prisma.TransactionClient, document: Head, actor: Actor,
-      recipients: { connectionId: string; canWrite: boolean }[]) => Promise<T>, connections: readonly LiveConnection[] = []) {
+      recipients: { connectionId: string; canWrite: boolean }[], canWrite: boolean) => Promise<T>, connections: readonly LiveConnection[] = []) {
     if (connections.length > 128 || new Set(connections.map(connection => connection.connectionId)).size !== connections.length) {
       throw new HttpProblem(400, 'INVALID_LIVE_AUDIENCE');
     }
@@ -129,12 +129,13 @@ export function createDocuments(prisma: PrismaClient, identity: Identity, spaces
       if (mode === 'read') await tx.$queryRaw`SELECT "id" FROM "Document" WHERE "id" = ${id}::uuid FOR SHARE`;
       else await tx.$queryRaw`SELECT "id" FROM "Document" WHERE "id" = ${id}::uuid FOR UPDATE`;
       await identity.lockActors(tx, [principal, ...connections.map(connection => connection.principal)]);
-      const actor = await spaces.authorize(tx, principal, target.spaceId, mode === 'write');
+      const { actor, canWrite } = await spaces.access(tx, principal, target.spaceId);
+      if (mode === 'write' && !canWrite) throw new HttpProblem(404, 'NOT_FOUND');
       const document = await tx.document.findUniqueOrThrow({ where: { id }, include: { head: true, space: { select: { slug: true } } } });
       if (document.archivedAt) throw new HttpProblem(409, 'DOCUMENT_ARCHIVED');
       const recipients: { connectionId: string; canWrite: boolean }[] = [];
       try {
-        const result = await operation(tx, document, actor, recipients);
+        const result = await operation(tx, document, actor, recipients, canWrite);
         // Rows stay locked, but their lifetime can expire while SQL waits.
         // Fill the receipt and recheck the sender only after the write finishes.
         for (const connection of connections) {
@@ -174,9 +175,9 @@ export function createDocuments(prisma: PrismaClient, identity: Identity, spaces
       throw new HttpProblem(412, 'LIVE_VERSION_CONFLICT');
     }
   }
-  function roomSnapshot(document: Document, room: DocumentLive) {
+  function roomSnapshot(document: Document, room: DocumentLive, canWrite: boolean) {
     return { documentId: document.id, epoch: room.epoch, sequence: room.sequence.toString(),
-      schemaVersion: LIVE_SCHEMA_VERSION, documentEtag: documentEtag(document), state: new Uint8Array(room.state) };
+      schemaVersion: LIVE_SCHEMA_VERSION, canWrite, documentEtag: documentEtag(document), state: new Uint8Array(room.state) };
   }
   async function newRoom(tx: Prisma.TransactionClient, document: Head, lockVersion = document.lockVersion + 1) {
     const native = revisionDto(document.head).content;
@@ -186,19 +187,32 @@ export function createDocuments(prisma: PrismaClient, identity: Identity, spaces
     const updated = await tx.document.update({ where: { id: document.id }, data: {
       liveEpoch: room.epoch, lockVersion,
     } });
-    return roomSnapshot(updated, room);
+    return roomSnapshot(updated, room, true);
   }
 
   const live = {
+    users(headers: Headers, id: string, userIds: readonly string[]) {
+      if (userIds.length > 128 || userIds.some(value => typeof value !== 'string' || !value.length || value.length > 128)) {
+        throw new HttpProblem(400, 'INVALID_REQUEST');
+      }
+      return liveOperation(headers, id, 'read', async (tx, document) => {
+        await currentRoom(tx, document);
+        const members = new Set(await spaces.memberIds(tx, document.spaceId, userIds));
+        return (await identity.publicNames(tx, userIds)).filter(user => members.has(user.id) || user.role === 'administrator')
+          .map(({ id, name }) => ({ id, name }));
+      });
+    },
     enroll(headers: Headers, id: string, expectedEtag?: string) {
-      return liveOperation(headers, id, 'enroll', async (tx, document) => {
+      return liveOperation(headers, id, 'enroll', async (tx, document, _actor, _recipients, canWrite) => {
         precondition(document, expectedEtag);
         // Readers may initialize a server-derived representation, never authored content.
-        return document.liveEpoch ? roomSnapshot(document, await currentRoom(tx, document)) : newRoom(tx, document);
+        const room = document.liveEpoch ? roomSnapshot(document, await currentRoom(tx, document), canWrite) : await newRoom(tx, document);
+        return { ...room, canWrite };
       });
     },
     read(headers: Headers, id: string) {
-      return liveOperation(headers, id, 'read', async (tx, document) => roomSnapshot(document, await currentRoom(tx, document)));
+      return liveOperation(headers, id, 'read', async (tx, document, _actor, _recipients, canWrite) =>
+        roomSnapshot(document, await currentRoom(tx, document), canWrite));
     },
     authorizeConnections(headers: Headers, id: string, epoch: unknown, connections: readonly LiveConnection[]) {
       return liveOperation(headers, id, 'read', async (tx, document, _actor, recipients) => {
@@ -215,11 +229,11 @@ export function createDocuments(prisma: PrismaClient, identity: Identity, spaces
         await attachments.validateReferences(tx, id, prepared.content.document);
         // Duplicate delivery is a no-op. A CRDT-only change still advances live
         // sequence, even when its native checkpoint content is unchanged.
-        if (Buffer.from(prepared.state).equals(Buffer.from(room.state))) return { ...roomSnapshot(document, room), recipients };
+        if (Buffer.from(prepared.state).equals(Buffer.from(room.state))) return { ...roomSnapshot(document, room, true), recipients };
         if (room.sequence === 9_223_372_036_854_775_807n) throw new HttpProblem(409, 'LIVE_SEQUENCE_EXHAUSTED');
         const saved = await tx.documentLive.update({ where: { documentId_epoch: { documentId: id, epoch: room.epoch } },
           data: { state: new Uint8Array(prepared.state), sequence: { increment: 1 } } });
-        return { ...roomSnapshot(document, saved), recipients };
+        return { ...roomSnapshot(document, saved, true), recipients };
       }, connections);
     },
     comment(headers: Headers, id: string, epoch: unknown, input: unknown, connections: readonly LiveConnection[] = []) {
@@ -235,28 +249,29 @@ export function createDocuments(prisma: PrismaClient, identity: Identity, spaces
         if (room.sequence === 9_223_372_036_854_775_807n) throw new HttpProblem(409, 'LIVE_SEQUENCE_EXHAUSTED');
         const saved = await tx.documentLive.update({ where: { documentId_epoch: { documentId: id, epoch: room.epoch } },
           data: { state: new Uint8Array(prepared.state), sequence: { increment: 1 } } });
-        return { ...roomSnapshot(document, saved), recipients, result: prepared.result };
+        return { ...roomSnapshot(document, saved, true), recipients, result: prepared.result };
       }, connections);
     },
-    checkpoint(headers: Headers, id: string, input: unknown, expectedEtag?: string) {
+    checkpoint(headers: Headers, id: string, input: unknown, expectedEtag?: string, connections: readonly LiveConnection[] = []) {
       const fields = record(input, ['epoch', 'sequence', 'changeNote']);
       const note = changeNote(fields.changeNote);
-      return liveOperation(headers, id, 'write', async (tx, document, actor) => {
+      return liveOperation(headers, id, 'write', async (tx, document, actor, recipients) => {
         precondition(document, expectedEtag);
         const room = await currentRoom(tx, document);
         livePrecondition(room, fields, true);
         const projected = readLiveState(room.state);
         const snapshot = { title: title(projected.title), content: content(projected.content), changeNote: note };
         const previous = content(revisionDto(document.head).content).content;
-        if (snapshot.title === document.head.title && JSON.stringify(snapshot.content.content) === JSON.stringify(previous)) return documentDto(document);
-        return documentDto(await append(tx, document, actor, snapshot));
-      });
+        const saved = snapshot.title === document.head.title && JSON.stringify(snapshot.content.content) === JSON.stringify(previous)
+          ? document : await append(tx, document, actor, snapshot);
+        return { document: documentDto(saved), recipients, epoch: room.epoch, sequence: room.sequence.toString() };
+      }, connections);
     },
-    restore(headers: Headers, id: string, input: unknown, expectedEtag?: string) {
+    restore(headers: Headers, id: string, input: unknown, expectedEtag?: string, connections: readonly LiveConnection[] = []) {
       const fields = record(input, ['epoch', 'sequence', 'revisionId', 'changeNote']);
       if (typeof fields.revisionId !== 'string' || !uuid.test(fields.revisionId)) throw new HttpProblem(400, 'INVALID_REQUEST');
       const revisionId = fields.revisionId, note = changeNote(fields.changeNote);
-      return liveOperation(headers, id, 'write', async (tx, document, actor) => {
+      return liveOperation(headers, id, 'write', async (tx, document, actor, recipients) => {
         precondition(document, expectedEtag);
         const room = await currentRoom(tx, document);
         livePrecondition(room, fields, true);
@@ -272,8 +287,8 @@ export function createDocuments(prisma: PrismaClient, identity: Identity, spaces
         // Appending the restored checkpoint already advanced this operation's lock.
         const next = await newRoom(tx, restored, restored.lockVersion);
         const head = await tx.document.findUniqueOrThrow({ where: { id }, include: { head: true, space: { select: { slug: true } } } });
-        return { document: documentDto(head), room: next };
-      });
+        return { document: documentDto(head), room: next, recipients };
+      }, connections);
     },
   };
   async function authorizeDocument(headers: Headers, id: string) {

@@ -106,3 +106,5 @@ Whole-instance backup and document export remain distinct. Future content import
 ## Not in this schema
 
 Tenants, subscriptions, model providers, external sources, connectors, embedding vectors, workflows, queues, webhooks, generic custom fields, arbitrary entity-link registries, feature entitlements, or runtime plugin manifests.
+
+Prepared optional HTTP routes under `/api/v1/documents/{id}/live` expose authorized metadata/enrollment; epoch paths expose checkpoint/restore and native REST thread commands. `/live/users` resolves a bounded supplied ID list to current space-member or administrator display names only. The feature is absent unless the collaboration capability is supplied, and application startup still does not supply it. Strong ETags, explicit accepted sequence and epoch remain independent preconditions. HTTP never serializes encoded live state, connection audiences or identity/session records. Enrollment, checkpoint, restore and archive share the document mutex across epochs; core operations retain authorization and database transactions. The checkpoint's internal result separates its document DTO from delivery receipts.

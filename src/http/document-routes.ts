@@ -7,6 +7,7 @@ import type { Core } from '../core/index.js';
 import { documentEtag } from '../core/documents/index.js';
 import { problemSchema } from './problems.js';
 import { slugSchema } from './slugs.js';
+import type { Collaboration } from '../capabilities/collaboration/index.js';
 
 const contentSchema = {
   type: 'object', additionalProperties: false, required: ['format', 'schemaVersion', 'editorVersion', 'document'],
@@ -48,7 +49,7 @@ const documentProperties = {
 const documentRequired = [
   'id', 'slug', 'spaceId', 'spaceSlug', 'currentRevisionNumber', 'lockVersion', 'createdAt', 'createdBy', 'updatedAt', 'archivedAt', 'archivedBy',
 ] as const;
-const documentSchema = {
+export const documentSchema = {
   type: 'object', additionalProperties: false, required: [...documentRequired, 'revision'],
   properties: { ...documentProperties, revision: revisionSchema },
 } as const;
@@ -96,7 +97,7 @@ const preconditionHeaders = {
 const limitSchema = { type: 'integer', minimum: 1, maximum: 100 } as const;
 const errors = { '4xx': problemSchema, '5xx': problemSchema };
 
-export function registerDocumentRoutes(app: FastifyInstance, core: Core) {
+export function registerDocumentRoutes(app: FastifyInstance, core: Core, collaboration?: Collaboration) {
   app.get<{ Params: { id: string; slug: string } }>('/api/v1/spaces/:id/documents/by-slug/:slug', { schema: {
     operationId: 'readDocumentBySlug', tags: ['Documents'],
     params: { ...documentParams, required: ['id', 'slug'], properties: { ...documentParams.properties, slug: slugSchema } },
@@ -207,9 +208,10 @@ export function registerDocumentRoutes(app: FastifyInstance, core: Core) {
         response: { 200: documentSchema, ...errors },
       },
     }, async (request, reply) => {
-      const document = await core.documents[operation](
-        fromNodeHeaders(request.headers), request.params.id, request.headers['if-match'],
-      );
+      const headers = fromNodeHeaders(request.headers);
+      const document = collaboration
+        ? await collaboration.lifecycle(headers, request.params.id, operation, request.headers['if-match'])
+        : await core.documents[operation](headers, request.params.id, request.headers['if-match']);
       return reply.header('etag', documentEtag(document)).send(document);
     });
   }

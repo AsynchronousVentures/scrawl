@@ -136,6 +136,214 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/documents/{id}/live": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["readLiveDocument"];
+        put?: never;
+        post: operations["enrollLiveDocument"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{id}/live/{epoch}/checkpoint": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["checkpointLiveDocument"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{id}/live/{epoch}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["restoreLiveDocument"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{id}/live/{epoch}/threads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["createLiveCommentThread"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{id}/live/{epoch}/threads/{threadId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["deleteLiveCommentThread"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{id}/live/{epoch}/threads/{threadId}/addToDocument": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["anchorLiveCommentThread"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{id}/live/{epoch}/threads/{threadId}/comments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["replyToLiveCommentThread"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{id}/live/{epoch}/threads/{threadId}/comments/{commentId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["editLiveComment"];
+        post?: never;
+        delete: operations["deleteLiveComment"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{id}/live/{epoch}/threads/{threadId}/comments/{commentId}/reactions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["reactToLiveComment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{id}/live/{epoch}/threads/{threadId}/comments/{commentId}/reactions/{emoji}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["removeLiveCommentReaction"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{id}/live/{epoch}/threads/{threadId}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["resolveLiveCommentThread"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{id}/live/{epoch}/threads/{threadId}/unresolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["unresolveLiveCommentThread"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{id}/live/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["resolveLiveDocumentUsers"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/documents/{id}/publication": {
         parameters: {
             query?: never;
@@ -1168,6 +1376,1125 @@ export interface operations {
                         title: string;
                         type: string;
                     };
+                };
+            };
+        };
+    };
+    readLiveDocument: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        canWrite: boolean;
+                        documentEtag: string;
+                        /** Format: uuid */
+                        documentId: string;
+                        /** Format: uuid */
+                        epoch: string;
+                        /** @enum {integer} */
+                        schemaVersion: 1;
+                        sequence: string;
+                    };
+                };
+            };
+        };
+    };
+    enrollLiveDocument: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Current strong document ETag. Missing is 428; stale is 412. */
+                "if-match"?: string;
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": Record<string, never>;
+            };
+        };
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        canWrite: boolean;
+                        documentEtag: string;
+                        /** Format: uuid */
+                        documentId: string;
+                        /** Format: uuid */
+                        epoch: string;
+                        /** @enum {integer} */
+                        schemaVersion: 1;
+                        sequence: string;
+                    };
+                };
+            };
+        };
+    };
+    checkpointLiveDocument: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Current strong document ETag. Missing is 428; stale is 412. */
+                "if-match"?: string;
+            };
+            path: {
+                epoch: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    changeNote?: string;
+                    sequence?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: date-time */
+                        archivedAt: string | null;
+                        archivedBy: string | null;
+                        /** Format: date-time */
+                        createdAt: string;
+                        createdBy: string;
+                        currentRevisionNumber: number;
+                        /** Format: uuid */
+                        id: string;
+                        lockVersion: number;
+                        revision: {
+                            authorId: string;
+                            changeNote: string | null;
+                            content: {
+                                document: {
+                                    [key: string]: unknown;
+                                }[];
+                                /** @enum {string} */
+                                editorVersion: "0.55.0";
+                                /** @enum {string} */
+                                format: "blocknote-json";
+                                /** @enum {integer} */
+                                schemaVersion: 1;
+                            };
+                            /** Format: date-time */
+                            createdAt: string;
+                            /** Format: uuid */
+                            documentId: string;
+                            /** Format: uuid */
+                            id: string;
+                            plainText: string;
+                            revisionNumber: number;
+                            title: string;
+                        };
+                        slug: string;
+                        /** Format: uuid */
+                        spaceId: string;
+                        spaceSlug: string;
+                        /** Format: date-time */
+                        updatedAt: string;
+                    };
+                };
+            };
+        };
+    };
+    restoreLiveDocument: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Current strong document ETag. Missing is 428; stale is 412. */
+                "if-match"?: string;
+            };
+            path: {
+                epoch: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    changeNote?: string;
+                    /** Format: uuid */
+                    revisionId: string;
+                    sequence?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        document: {
+                            /** Format: date-time */
+                            archivedAt: string | null;
+                            archivedBy: string | null;
+                            /** Format: date-time */
+                            createdAt: string;
+                            createdBy: string;
+                            currentRevisionNumber: number;
+                            /** Format: uuid */
+                            id: string;
+                            lockVersion: number;
+                            revision: {
+                                authorId: string;
+                                changeNote: string | null;
+                                content: {
+                                    document: {
+                                        [key: string]: unknown;
+                                    }[];
+                                    /** @enum {string} */
+                                    editorVersion: "0.55.0";
+                                    /** @enum {string} */
+                                    format: "blocknote-json";
+                                    /** @enum {integer} */
+                                    schemaVersion: 1;
+                                };
+                                /** Format: date-time */
+                                createdAt: string;
+                                /** Format: uuid */
+                                documentId: string;
+                                /** Format: uuid */
+                                id: string;
+                                plainText: string;
+                                revisionNumber: number;
+                                title: string;
+                            };
+                            slug: string;
+                            /** Format: uuid */
+                            spaceId: string;
+                            spaceSlug: string;
+                            /** Format: date-time */
+                            updatedAt: string;
+                        };
+                        room: {
+                            canWrite: boolean;
+                            documentEtag: string;
+                            /** Format: uuid */
+                            documentId: string;
+                            /** Format: uuid */
+                            epoch: string;
+                            /** @enum {integer} */
+                            schemaVersion: 1;
+                            sequence: string;
+                        };
+                    };
+                };
+            };
+        };
+    };
+    createLiveCommentThread: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                epoch: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    initialComment: {
+                        body: {
+                            [key: string]: unknown;
+                        }[];
+                    };
+                };
+            };
+        };
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        comments: {
+                            body?: {
+                                [key: string]: unknown;
+                            }[];
+                            /** Format: date-time */
+                            createdAt: string;
+                            /** Format: date-time */
+                            deletedAt?: string;
+                            /** Format: uuid */
+                            id: string;
+                            metadata?: Record<string, never>;
+                            reactions: {
+                                /** Format: date-time */
+                                createdAt: string;
+                                emoji: string;
+                                userIds: string[];
+                            }[];
+                            /** @enum {string} */
+                            type: "comment";
+                            /** Format: date-time */
+                            updatedAt: string;
+                            userId: string;
+                        }[];
+                        /** Format: date-time */
+                        createdAt: string;
+                        /** Format: date-time */
+                        deletedAt?: string;
+                        /** Format: uuid */
+                        id: string;
+                        metadata?: Record<string, never>;
+                        resolved: boolean;
+                        resolvedBy?: string;
+                        /** Format: date-time */
+                        resolvedUpdatedAt?: string;
+                        /** @enum {string} */
+                        type: "thread";
+                        /** Format: date-time */
+                        updatedAt: string;
+                    };
+                };
+            };
+        };
+    };
+    deleteLiveCommentThread: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                epoch: string;
+                id: string;
+                threadId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": Record<string, never>;
+            };
+        };
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": never | null;
+                };
+            };
+        };
+    };
+    anchorLiveCommentThread: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                epoch: string;
+                id: string;
+                threadId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    selection: {
+                        prosemirror?: {
+                            anchor: number;
+                            head: number;
+                        };
+                        yjs: {
+                            anchor: {
+                                /** @enum {integer} */
+                                assoc?: -1 | 0 | 1;
+                                item?: {
+                                    client: number;
+                                    clock: number;
+                                } | null;
+                                /** @enum {string|null} */
+                                tname?: "document" | null;
+                                type?: {
+                                    client: number;
+                                    clock: number;
+                                } | null;
+                            };
+                            head: {
+                                /** @enum {integer} */
+                                assoc?: -1 | 0 | 1;
+                                item?: {
+                                    client: number;
+                                    clock: number;
+                                } | null;
+                                /** @enum {string|null} */
+                                tname?: "document" | null;
+                                type?: {
+                                    client: number;
+                                    clock: number;
+                                } | null;
+                            };
+                        };
+                    };
+                };
+            };
+        };
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": never | null;
+                };
+            };
+        };
+    };
+    replyToLiveCommentThread: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                epoch: string;
+                id: string;
+                threadId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    comment: {
+                        body: {
+                            [key: string]: unknown;
+                        }[];
+                    };
+                };
+            };
+        };
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        body?: {
+                            [key: string]: unknown;
+                        }[];
+                        /** Format: date-time */
+                        createdAt: string;
+                        /** Format: date-time */
+                        deletedAt?: string;
+                        /** Format: uuid */
+                        id: string;
+                        metadata?: Record<string, never>;
+                        reactions: {
+                            /** Format: date-time */
+                            createdAt: string;
+                            emoji: string;
+                            userIds: string[];
+                        }[];
+                        /** @enum {string} */
+                        type: "comment";
+                        /** Format: date-time */
+                        updatedAt: string;
+                        userId: string;
+                    };
+                };
+            };
+        };
+    };
+    editLiveComment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                commentId: string;
+                epoch: string;
+                id: string;
+                threadId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    comment: {
+                        body: {
+                            [key: string]: unknown;
+                        }[];
+                    };
+                };
+            };
+        };
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": never | null;
+                };
+            };
+        };
+    };
+    deleteLiveComment: {
+        parameters: {
+            query?: {
+                soft?: boolean;
+            };
+            header?: never;
+            path: {
+                commentId: string;
+                epoch: string;
+                id: string;
+                threadId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": Record<string, never>;
+            };
+        };
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": never | null;
+                };
+            };
+        };
+    };
+    reactToLiveComment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                commentId: string;
+                epoch: string;
+                id: string;
+                threadId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    emoji: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": never | null;
+                };
+            };
+        };
+    };
+    removeLiveCommentReaction: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                commentId: string;
+                emoji: string;
+                epoch: string;
+                id: string;
+                threadId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": Record<string, never>;
+            };
+        };
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": never | null;
+                };
+            };
+        };
+    };
+    resolveLiveCommentThread: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                epoch: string;
+                id: string;
+                threadId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": Record<string, never>;
+            };
+        };
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": never | null;
+                };
+            };
+        };
+    };
+    unresolveLiveCommentThread: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                epoch: string;
+                id: string;
+                threadId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": Record<string, never>;
+            };
+        };
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": never | null;
+                };
+            };
+        };
+    };
+    resolveLiveDocumentUsers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    userIds: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        id: string;
+                        name: string;
+                    }[];
                 };
             };
         };

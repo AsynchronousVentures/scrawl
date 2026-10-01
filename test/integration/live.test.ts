@@ -62,6 +62,8 @@ test('private native live storage uses PostgreSQL and genuine authenticated sess
   const attachmentStorageDir = await mkdtemp(join(tmpdir(), 'scrawl-live-test-'));
   const core = createCore(database.prisma, identityConfig, { attachmentStorageDir }), operator = createOperator(database.prisma, identityConfig);
   const app = await buildApp({ config, core, checkDatabase: () => database.ping(), logging: false });
+  assert.equal((await app.inject({ method: 'GET', url: `/api/v1/documents/${randomUUID()}/live` })).statusCode, 404,
+    'Prepared collaboration routes stay absent when the capability is not supplied');
   t.after(async () => { await app.close(); await database.close(); await owner.pool.query(`DROP SCHEMA "${schema}" CASCADE`); await owner.close(); await rm(attachmentStorageDir, { recursive: true }); });
   for (let i = 0; i < 2; i++) {
     const migrated = spawnSync(process.execPath, ['node_modules/prisma/build/index.js', 'migrate', 'deploy'], {
@@ -119,7 +121,7 @@ test('private native live storage uses PostgreSQL and genuine authenticated sess
     }
   };
   const checkpoint = (headers = editor, etag = documentEtag(document), snapshot = room) => core.documents.live.checkpoint(headers, id,
-    { epoch: snapshot.epoch, sequence: snapshot.sequence }, etag);
+    { epoch: snapshot.epoch, sequence: snapshot.sequence }, etag).then(accepted => accepted.document);
 
   await t.test('reader enrollment is server-derived, authorized, preconditioned and atomic', async () => {
     await problem(core.documents.live.enroll(outsider, id, documentEtag(document)), 404);
@@ -181,7 +183,7 @@ test('private native live storage uses PostgreSQL and genuine authenticated sess
     assert.equal((await core.search.find(reader, { query: 'Private review' })).items.length, 0);
     const noop = await core.documents.live.checkpoint(editor, commentDocument.id,
       { epoch: commentRoom.epoch, sequence: commentRoom.sequence }, commentRoom.documentEtag);
-    assert.equal(noop.revision.id, commentDocument.revision.id);
+    assert.equal(noop.document.revision.id, commentDocument.revision.id);
   });
   await t.test('concurrent replies retain both authors and only the comment author can edit', async () => {
     const before = await commentSnapshot();

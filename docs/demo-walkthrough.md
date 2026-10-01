@@ -174,3 +174,5 @@ Reset removes synthetic rows and the credential/workspace/result/export manifest
 ## Resume implementation
 
 Read status, validation, the five integration issues and accepted ADRs. Continue on `integration/blocknote-demo` and keep draft PR #6 unmerged. The next substantial work is isolated durable collaboration/comments under [ADR 0003](adr/0003-collaboration-checkpoints.md), with real storage/permission/reconnect/undo gates before enabling it. No paid AI calls, new provider accounts or generic extension framework are needed. Keep the existing demo runnable and preserve its history/private files.
+
+The optional collaboration HTTP adapter is now verified in isolated real-session PostgreSQL/socket tests, including the official BlockNote REST comment client and explicit checkpoint/restore/archive. It is still omitted by demo startup, with no live controls or enrollment of retained documents. Continue using the solo editing walkthrough above. The next integration is the supplied collaboration/comment UI with deliberate reconnect, peer-safe undo and browser acceptance; prepared API coverage is not a claim that this preview supports multiplayer editing.

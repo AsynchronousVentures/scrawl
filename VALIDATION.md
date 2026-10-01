@@ -1,6 +1,26 @@
 # Validation
 
-## Prepared serialized comment delivery
+## Prepared authenticated collaboration HTTP integration
+
+Optional implemented routes now expose enrollment/metadata, explicit checkpoints, epoch-changing restore, document-scoped author names and the pinned BlockNote REST comment contract. The running application does not mount this capability yet. Core transactions continue to check access and session lifetime; checkpoint/restore include current recipient receipts. A single document mutex serializes socket acceptance, joins, comments, enrollment and lifecycle changes across old/new epochs. Restore and archive close old connections only after commit. Unknown lifecycle failure invalidates every cached epoch for that document.
+
+HTTP schemas are separate from persistence models. Responses exclude Yjs bytes, recipient/session records and emails. Native comments use the supplied RESTYjsThreadStore, with genuine cookie sessions. The test covers create, relative anchor, reply, author edit, reactions, resolve/unresolve and soft/hard deletion, including the official client's JSON headers on bodyless commands. Numeric ProseMirror offsets never replace relative anchors. User lookup is bounded and document scoped; revoked members and unrelated users return no names. Concurrent checkpoints produce one 200, one 412 and exactly one new revision; omitted sequence is 428, live-only comments do not create revisions, restore appends history, and HTTP archive/unarchive preserves it.
+
+Observed final results, without skips or retries:
+
+- `npm run check`: 89 tests, types, import boundaries, backend/frontend builds and generated OpenAPI/types passed. Log: `artifacts/live-http-final-check.log`.
+- `npm run test:db`: 136/136 on PostgreSQL 18, including Demo A, migration preservation, transaction rollback, authorization and real sockets. Log: `artifacts/live-http-final-db18.log`.
+- The same complete suite passed 136/136 on a separately owned temporary PostgreSQL 17 container/database. Log: `artifacts/live-http-db17.log`. Its container and credential file were removed; retained 17 and 18 data were untouched.
+- Focused final native storage/HTTP/socket acceptance passed 40/40. Log: `artifacts/live-http-lock-final18.log`.
+- `npm run test:browser -- --grep 'document links support|supplied external link'`: 2/2 passed against the real API/database. Log: `artifacts/live-http-navigation-browser.log`. No collaborative browser acceptance is claimed.
+
+An initial new fixture used a string instead of the existing fixture helper's string array, then incomplete native comment blocks; those failed runs were corrected, not counted as passing. Missing empty-body compatibility and an old checkpoint DTO assertion were also caught before the final checks. The private checkpoint result now explicitly separates its document DTO from its internal recipient/sequence receipt. A temporary 17 startup failed because Linux tmpfs rejected `size=1GB`; the owned failed container was removed and `size=1g` used for the successful runs.
+
+Hosted delivery checkpoint `fa532a6` has a successful complete [PR matrix](https://github.com/AsynchronousVentures/scrawl/actions/runs/36845242946). Its [push matrix](https://github.com/AsynchronousVentures/scrawl/actions/runs/36845236701) passed PostgreSQL 17 but failed two of 47 PostgreSQL 18 browser scenarios: modified-click document tab loading and the supplied external-link toolbar. Both pass in the focused local run above. Their intermittent cause remains unverified; this is not classified as an infrastructure failure and no assertion was weakened. New checkpoint hosted results remain pending until observed.
+
+There is no new migration, dependency change, retained-data reset or live enrollment. The existing eight migrations remain the sole history. The live UI, authenticated presence, deliberate reconnect and actual peer-safe browser undo remain disabled/unverified. Next connect the official BlockNote collaboration/comments UI, preserve explicit Save versus synchronized state, and pass the activation gates in ADR 0003 before enabling it in the retained demo.
+
+## Serialized comment delivery checkpoint (fa532a6)
 
 The isolated transport now applies server comment mutations under the same room mutex as inbound edits and joining. Core acceptance rechecks sender/recipient authority and commits the native thread/anchor state before applying it to the broadcasting room. Unknown persistence/commit errors close that cache for every peer; fresh connections load actual durable state. Shutdown tracks these server operations as well as socket acceptance. Permission-checked metadata carries only epoch, accepted sequence, document ETag and read/write status; current expiry/send guards still apply. Passive downgrade updates read-only status without requiring another keystroke.
 

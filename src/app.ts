@@ -17,6 +17,8 @@ import type { Publishing } from './capabilities/publishing/index.js';
 import { registerExportRoutes } from './http/export-routes.js';
 import type { Exporting } from './capabilities/exporting/index.js';
 import { registerFrontend } from './http/frontend.js';
+import { registerLiveRoutes } from './http/live-routes.js';
+import type { Collaboration } from './capabilities/collaboration/index.js';
 
 type BuildOptions = {
   config: AppConfig;
@@ -26,10 +28,11 @@ type BuildOptions = {
   frontendRoot?: string;
   exporting?: Exporting;
   publishing?: Publishing;
+  collaboration?: Collaboration;
 };
 
 /** Builds the HTTP application without opening a port or connecting a database. */
-export async function buildApp({ config, checkDatabase, logging = true, core, frontendRoot, exporting, publishing }: BuildOptions) {
+export async function buildApp({ config, checkDatabase, logging = true, core, frontendRoot, exporting, publishing, collaboration }: BuildOptions) {
   const app = Fastify({
     logger: logging ? {
       level: config.logLevel,
@@ -66,6 +69,15 @@ export async function buildApp({ config, checkDatabase, logging = true, core, fr
         const body = document.openapiObject.paths?.[`/api/v1/documents/{id}/${operation}`]?.post?.requestBody;
         if (body && !('$ref' in body)) body.required = false;
       }
+      const optionalLiveBodies = ['enrollLiveDocument', 'deleteLiveComment', 'deleteLiveCommentThread',
+        'resolveLiveCommentThread', 'unresolveLiveCommentThread', 'removeLiveCommentReaction'];
+      for (const path of Object.values(document.openapiObject.paths ?? {})) {
+        for (const method of ['post', 'delete'] as const) {
+          const operation = path?.[method];
+          const body = operation?.requestBody;
+          if (optionalLiveBodies.includes(operation?.operationId ?? '') && body && !('$ref' in body)) body.required = false;
+        }
+      }
       const upload = document.openapiObject.paths?.['/api/v1/documents/{id}/attachments']?.post?.requestBody;
       if (upload && !('$ref' in upload)) upload.content = { 'application/octet-stream': { schema: { type: 'string', format: 'binary' } } };
       return document.openapiObject;
@@ -90,11 +102,12 @@ export async function buildApp({ config, checkDatabase, logging = true, core, fr
   if (core) {
     registerAuthRoutes(app, core);
     registerCoreRoutes(app, core);
-    registerDocumentRoutes(app, core);
+    registerDocumentRoutes(app, core, collaboration);
     registerAttachmentRoutes(app, core);
     registerSearchRoutes(app, core);
   }
   if (exporting) registerExportRoutes(app, exporting);
+  if (collaboration && core) registerLiveRoutes(app, collaboration);
   if (publishing) registerPublishingRoutes(app, publishing);
   if (config.apiDocsEnabled) {
     app.get('/openapi.json', { schema: { hide: true } }, async () => app.swagger());

@@ -50,6 +50,10 @@ export function createSpaces(prisma: PrismaClient, identity: Identity) {
   return {
     access,
     authorize,
+    async memberIds(db: Prisma.TransactionClient, spaceId: string, userIds: readonly string[]) {
+      const members = await db.spaceMembership.findMany({ where: { spaceId, userId: { in: [...userIds] } }, select: { userId: true } });
+      return members.map(member => member.userId);
+    },
     async lockForRead(db: Prisma.TransactionClient, principal: Principal, spaceId: string) {
       // Membership changes take an exclusive lock on this same space row.
       await db.$queryRaw`SELECT "id" FROM "Space" WHERE "id" = ${spaceId}::uuid FOR SHARE`;
