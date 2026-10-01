@@ -32,8 +32,10 @@ function documentHeadings(blocks: NativeBlock[], depth = 0): Heading[] {
   });
 }
 
-export function Editor({ initialContent, editable, onChange, onValidationChange, uploadFile, uploadAvailable = false, resolveFileUrl, header, label = 'Document body', live, onCommentStateChange }: {
+export function Editor({ initialContent, editable, onChange, onValidationChange, uploadFile, uploadAvailable = false, resolveFileUrl, header, label = 'Document body', live, onCommentStateChange, sectionLinks = false, onSectionNavigate }: {
   initialContent: ContentEnvelope;
+  sectionLinks?: boolean;
+  onSectionNavigate?: (hash: string) => void;
   editable: boolean;
   onChange: (content: ContentEnvelope) => void;
   onValidationChange?: (error: string | null) => void;
@@ -47,6 +49,7 @@ export function Editor({ initialContent, editable, onChange, onValidationChange,
 }) {
   const identifier = `editor-${useId().replace(/[^a-zA-Z0-9_-]/g, '-')}`;
   const container = useRef<HTMLDivElement>(null);
+  const visitedSection = useRef<string | null>(null);
   const callbacks = useRef({ onChange, onValidationChange, uploadFile, resolveFileUrl });
   callbacks.current = { onChange, onValidationChange, uploadFile, resolveFileUrl };
   const [error, setError] = useState<string | null>(null);
@@ -93,6 +96,52 @@ export function Editor({ initialContent, editable, onChange, onValidationChange,
     return block?.querySelector<HTMLElement>('h1,h2,h3,h4,h5,h6') ?? null;
   }
 
+  function sectionId(id: string) { return sectionLinks ? `section-${id}` : `${identifier}-${id}`; }
+
+  function visitHeading(id: string) {
+    const target = headingElement(id);
+    if (!target) return;
+    let ancestor = target.closest('.bn-block-outer')?.parentElement?.closest('.bn-block-outer');
+    while (ancestor && container.current?.contains(ancestor)) {
+      ancestor.querySelector<HTMLButtonElement>(':scope > .bn-block > .bn-block-content .bn-toggle-wrapper[data-show-children="false"] > .bn-toggle-button')?.click();
+      ancestor = ancestor.parentElement?.closest('.bn-block-outer') ?? null;
+    }
+    requestAnimationFrame(() => {
+      const destination = headingElement(id);
+      if (!destination?.isConnected) return;
+      if (editor.isEditable) {
+        editor.setTextCursorPosition(id, 'start'); editor.focus();
+      } else if (destination) {
+        destination.tabIndex = -1; destination.focus({ preventScroll: true });
+      }
+      destination?.closest<HTMLElement>('.bn-block-content')?.scrollIntoView({ behavior: 'instant', block: 'start' });
+    });
+    setActiveHeading(id);
+  }
+
+  useEffect(() => {
+    for (const heading of headings) {
+      const element = headingElement(heading.id);
+      if (element) element.id = sectionId(heading.id);
+    }
+    if (!sectionLinks) return;
+    const documentLocation = location.pathname + location.search;
+    const follow = () => {
+      if (location.pathname + location.search !== documentLocation) return;
+      const hash = location.hash;
+      // Native updates and heading edits must not move the user's editing cursor.
+      if (hash === visitedSection.current) return;
+      visitedSection.current = hash;
+      let destination: string;
+      try { destination = decodeURIComponent(hash.slice(1)); } catch { return; }
+      const heading = headings.find(heading => sectionId(heading.id) === destination);
+      if (heading) visitHeading(heading.id);
+    };
+    follow();
+    window.addEventListener('hashchange', follow); window.addEventListener('popstate', follow);
+    return () => { window.removeEventListener('hashchange', follow); window.removeEventListener('popstate', follow); };
+  }, [headings, editor, sectionLinks]);
+
   useLayoutEffect(() => {
     // BlockNote 0.55 remounts the view when its editable prop changes. Its link
     // UI can then receive an update before the new view exists. The public
@@ -110,14 +159,22 @@ export function Editor({ initialContent, editable, onChange, onValidationChange,
   }, []);
   useEffect(() => {
     const update = () => {
-      let selected: string | null = null;
+      let selected: string | null = null, passedTop = false;
+      const atEnd = window.scrollY > 0 && Math.ceil(window.scrollY + innerHeight) >= document.documentElement.scrollHeight;
       for (const heading of headings) {
         const element = headingElement(heading.id);
         if (!element?.getClientRects().length) continue;
+        const top = element.getBoundingClientRect().top;
         selected ??= heading.id;
-        if (element.getBoundingClientRect().top < 160) selected = heading.id;
+        if (top < 160 || atEnd && top < innerHeight) { selected = heading.id; passedTop = true; }
       }
-      setActiveHeading(selected);
+      setActiveHeading(previous => {
+        // A short page cannot put every linked section near the viewport top.
+        // Keep the explicit destination while it is visible and no section
+        // has crossed the scroll threshold; the next scroll still updates it.
+        const target = previous ? headingElement(previous)?.getBoundingClientRect() : null;
+        return !passedTop && target && target.top >= 0 && target.bottom <= innerHeight ? previous : selected;
+      });
     };
     update(); window.addEventListener('scroll', update, { passive: true, capture: true });
     return () => window.removeEventListener('scroll', update, true);
@@ -158,32 +215,19 @@ export function Editor({ initialContent, editable, onChange, onValidationChange,
       <summary>On this page</summary>
       <nav aria-label="On this page">
         {headings.length ? headings.map(heading => <a key={heading.id}
-          href={`#${identifier}-${heading.id}`}
+          href={`#${encodeURIComponent(sectionId(heading.id))}`}
           className={heading.level > 2 || heading.depth > 0 ? 'outline-subheading' : undefined}
           aria-current={activeHeading === heading.id ? 'location' : undefined}
           onClick={event => {
+            if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
             event.preventDefault();
-            const target = headingElement(heading.id);
-            if (!target) return;
-            let ancestor = target.closest('.bn-block-outer')?.parentElement?.closest('.bn-block-outer');
-            while (ancestor && container.current?.contains(ancestor)) {
-              ancestor.querySelector<HTMLButtonElement>(':scope > .bn-block > .bn-block-content .bn-toggle-wrapper[data-show-children="false"] > .bn-toggle-button')?.click();
-              ancestor = ancestor.parentElement?.closest('.bn-block-outer') ?? null;
+            if (sectionLinks) {
+              const hash = `#${encodeURIComponent(sectionId(heading.id))}`;
+              visitedSection.current = hash;
+              if (onSectionNavigate) onSectionNavigate(hash);
+              else if (location.hash !== hash) location.hash = hash;
             }
-            requestAnimationFrame(() => {
-              const destination = headingElement(heading.id);
-              if (editor.isEditable) {
-                editor.setTextCursorPosition(heading.id, 'start');
-                editor.focus();
-              } else if (destination) {
-                // A read-only editor cannot accept a native editing cursor.
-                // Move keyboard focus to the actual section instead.
-                destination.tabIndex = -1; destination.focus({ preventScroll: true });
-              }
-              const section = destination?.closest<HTMLElement>('.bn-block-content');
-              section?.scrollIntoView({ behavior: 'instant', block: 'start' });
-            });
-            setActiveHeading(heading.id);
+            visitHeading(heading.id);
           }}>{heading.text}</a>) : <small>No headings in this document.</small>}
       </nav>
     </details>

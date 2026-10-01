@@ -26,7 +26,7 @@ export function PublicDocument({ publicId }: { publicId: string }) {
     <main className="main public-document">
       {state.status === 'loading' ? <p role="status">Loading published document…</p>
         : state.status === 'ready' ? <Editor key={`${publicId}-${retry}`} initialContent={state.snapshot.content}
-          label="Published document content" editable={false} onChange={() => {}}
+          label="Published document content" editable={false} sectionLinks onChange={() => {}}
           header={<><p className="meta">Published {new Date(state.snapshot.publishedAt).toLocaleDateString()}</p><h1 className="public-title">{state.snapshot.title}</h1></>} />
           : <section className="state"><h1>{state.status === 'unavailable' ? 'Published document unavailable' : 'Could not load this document'}</h1>
             <p role={state.status === 'error' ? 'alert' : undefined}>{state.status === 'unavailable' ? 'This link is not available.' : 'The request could not complete.'}</p>

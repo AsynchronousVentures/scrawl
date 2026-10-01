@@ -781,6 +781,11 @@ test('explicit publication selects immutable history, preserves dirty work and u
     await outline.getByRole('link', { name: 'Before you start', exact: true }).click();
     await expect(publicBody.getByRole('heading', { name: 'Before you start', exact: true })).toBeFocused();
     await expect(outline.getByRole('link', { name: 'Before you start', exact: true })).toHaveAttribute('aria-current', 'location');
+    const publicSection = publicPage.url();
+    expect(new URL(publicSection).hash).toMatch(/^#section-/);
+    await publicPage.reload();
+    await expect(publicBody.getByRole('heading', { name: 'Before you start', exact: true })).toBeFocused();
+    expect(publicPage.url()).toBe(publicSection);
     await expect(publicPage.getByRole('button', { name: 'Save', exact: true })).toHaveCount(0);
     await expect(publicPage.getByRole('button', { name: 'Log in', exact: true })).toHaveCount(0);
     await expect(publicPage.getByRole('complementary', { name: 'Workspace navigation', exact: true })).toHaveCount(0);
@@ -1600,7 +1605,7 @@ test('failed recovery reads and their explicit retry preserve a dirty draft unti
   expect(await demo.database.prisma.documentRevision.count({ where: { documentId: seeded.documentId } })).toBe(2);
 });
 
-test('the outline follows actual document headings, scrolls and focuses sections, and updates after an edit', async ({ page, context }) => {
+test('the outline follows actual document headings with reloadable section links and retains dirty work through Back and Forward', async ({ page, context, browser }) => {
   await login(page);
   await expect(title(page)).toHaveValue('Release checklist');
   const headings = body(page).locator('h1, h2, h3, h4, h5, h6');
@@ -1611,6 +1616,8 @@ test('the outline follows actual document headings, scrolls and focuses sections
   for (const name of sectionNames) await expect(outline.getByRole('link', { name, exact: true })).toBeVisible();
   await expect(outline.getByRole('link', { name: sectionNames[0]!, exact: true })).toHaveAttribute('aria-current', 'location');
   await evidence(page, 'editing');
+  const baseline = await readDocument(context);
+  await title(page).fill('Complete unsaved title during section navigation');
   const lastName = sectionNames.at(-1)!;
   const lastLink = outline.getByRole('link', { name: lastName, exact: true });
   await lastLink.focus();
@@ -1619,11 +1626,34 @@ test('the outline follows actual document headings, scrolls and focuses sections
   await expect(body(page)).toBeFocused();
   const headingId = await heading.evaluate(element => element.closest('[data-id]')?.getAttribute('data-id'));
   expect(headingId).toBeTruthy();
+  const fragment = `#${encodeURIComponent(`section-${headingId}`)}`;
+  await expect(lastLink).toHaveAttribute('href', fragment);
+  await expect.poll(() => new URL(page.url()).hash).toBe(fragment);
   await expect.poll(() => selectedBlockId(page)).toBe(headingId);
   expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
   const position = await heading.boundingBox();
   expect(position?.y).toBeGreaterThanOrEqual(-1);
   expect(position?.y).toBeLessThan(844);
+  await outline.getByRole('link', { name: sectionNames[0]!, exact: true }).click();
+  await expect.poll(() => new URL(page.url()).hash).not.toBe(fragment);
+  await page.goBack();
+  await expect.poll(() => new URL(page.url()).hash).toBe(fragment);
+  await expect.poll(() => selectedBlockId(page)).toBe(headingId);
+  await page.goForward();
+  await expect.poll(() => new URL(page.url()).hash).not.toBe(fragment);
+  await expect(page.getByRole('dialog', { name: 'Discard unsaved changes?', exact: true })).toHaveCount(0);
+  await expect(title(page)).toHaveValue('Complete unsaved title during section navigation');
+  expect(await readDocument(context)).toEqual(baseline);
+  await lastLink.click();
+  await expect.poll(() => new URL(page.url()).hash).toBe(fragment);
+  const [opened] = await Promise.all([context.waitForEvent('page'), lastLink.click({ modifiers: ['ControlOrMeta'] })]);
+  try {
+    await expect(title(opened)).toHaveValue(baseline.data.revision.title);
+    await expect.poll(() => new URL(opened.url()).hash).toBe(fragment);
+    await expect.poll(() => selectedBlockId(opened)).toBe(headingId);
+    await expect(title(page)).toHaveValue('Complete unsaved title during section navigation');
+    expect(await readDocument(context)).toEqual(baseline);
+  } finally { await opened.close(); }
   await heading.selectText();
   await page.keyboard.insertText('Updated synthetic section');
   await expect(outline.getByRole('link', { name: 'Updated synthetic section', exact: true })).toBeVisible();
@@ -1634,6 +1664,91 @@ test('the outline follows actual document headings, scrolls and focuses sections
   const updated = await readDocument(context);
   expect(updated.data.currentRevisionNumber).toBe(2);
   expect(updated.data.revision.plainText).toContain('Updated synthetic section');
+  await expect.poll(() => new URL(page.url()).hash).toBe(fragment);
+  await expect(outline.getByRole('link', { name: 'Updated synthetic section', exact: true })).toHaveAttribute('href', fragment);
+  const sectionUrl = page.url();
+  await page.reload();
+  await expect(body(page).getByRole('heading', { name: 'Updated synthetic section', exact: true })).toBeVisible();
+  await expect.poll(() => selectedBlockId(page)).toBe(headingId);
+  await expect(save(page)).toBeDisabled();
+  await page.getByRole('button', { name: 'History', exact: true }).click();
+  const history = page.getByRole('complementary', { name: 'Revision history', exact: true });
+  await history.getByRole('button', { name: 'Revision 1', exact: true }).click();
+  const historicalHeading = page.getByRole('textbox', { name: 'Revision content', exact: true }).getByRole('heading', { name: lastName, exact: true });
+  await expect(historicalHeading).toBeVisible();
+  expect(await historicalHeading.getAttribute('id')).not.toBe(`section-${headingId}`);
+  expect(await historicalHeading.getAttribute('id')).toMatch(/^editor-/);
+  expect(page.url()).toBe(sectionUrl);
+  const reader = await browser.newContext(), outsider = await browser.newContext();
+  try {
+    const reading = await reader.newPage(); await login(reading, 'reader', sectionUrl);
+    await expect(body(reading)).not.toBeEditable();
+    await expect(body(reading).getByRole('heading', { name: 'Updated synthetic section', exact: true })).toBeFocused();
+    expect(new URL(reading.url()).hash).toBe(fragment);
+    const isolated = await outsider.newPage(); await login(isolated, 'outsider', sectionUrl);
+    await expect(body(isolated)).toHaveCount(0);
+    await expect(isolated.getByRole('navigation', { name: 'On this page', exact: true })).toHaveCount(0);
+    await expect(isolated.getByRole('complementary', { name: 'Workspace navigation', exact: true })).not.toContainText(updated.data.revision.title);
+  } finally { await reader.close(); await outsider.close(); }
+  expect(await readDocument(context)).toEqual(updated);
+});
+
+test('short documents with repeated headings keep distinct section links and the chosen outline item', async ({ page, context }) => {
+  await page.setViewportSize({ width: 1440, height: 1200 });
+  await login(page);
+  const content = nativeContent(['short-first', 'short-second'].flatMap(id => [
+    { id, type: 'heading' as const, props: { ...textProps, level: 2 as const }, content: [text('Repeated section')], children: [] },
+    paragraph(`${id}-body`, 'A short synthetic section.'),
+  ]));
+  const created = await apiRequest(context, `/api/v1/spaces/${seeded.spaceId}/documents`, {
+    method: 'POST', headers: { Origin: demo.origin }, data: { title: 'Short sections', content },
+  });
+  expect(created.status()).toBe(201);
+  const document: unknown = await created.json();
+  if (!document || typeof document !== 'object' || !('id' in document) || typeof document.id !== 'string') throw new Error('Missing native document identity');
+  const original = await readDocument(context, document.id);
+  await page.goto(`${demo.origin}/spaces/${original.data.spaceSlug}/documents/${original.data.slug}`);
+  await expect(title(page)).toHaveValue('Short sections');
+  const links = page.getByRole('navigation', { name: 'On this page', exact: true }).getByRole('link', { name: 'Repeated section', exact: true });
+  await expect(links).toHaveCount(2);
+  await expect(links.first()).toHaveAttribute('href', '#section-short-first');
+  await expect(links.last()).toHaveAttribute('href', '#section-short-second');
+  await expect(links.first()).toHaveAttribute('aria-current', 'location');
+  await links.last().click();
+  await expect.poll(() => selectedBlockId(page)).toBe('short-second');
+  await expect(links.last()).toHaveAttribute('aria-current', 'location');
+  await expect(links.first()).not.toHaveAttribute('aria-current', 'location');
+  expect(new URL(page.url()).hash).toBe('#section-short-second');
+  await page.reload();
+  await expect.poll(() => selectedBlockId(page)).toBe('short-second');
+  await expect(links.last()).toHaveAttribute('aria-current', 'location');
+  await expect(body(page).getByRole('heading', { name: 'Repeated section', exact: true }).last()).toBeInViewport({ ratio: 1 });
+  await expect(save(page)).toBeDisabled();
+  expect(await readDocument(context, document.id)).toEqual(original);
+});
+
+test('a direct section link waits for the initial permission check before placing the editing cursor', async ({ page, context }) => {
+  await login(page);
+  const original = await readDocument(context);
+  const heading = body(page).getByRole('heading', { name: 'Nested review notes', exact: true, includeHidden: true });
+  const id = await heading.evaluate(element => element.closest('[data-id]')?.getAttribute('data-id'));
+  expect(id).toBeTruthy();
+  let release: (() => void) | undefined;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  await page.route('**/api/v1/collaboration', async route => { await gate; await route.continue(); });
+  try {
+    await page.goto(`${demo.origin}/spaces/${original.data.spaceSlug}/documents/${original.data.slug}#section-${encodeURIComponent(id!)}`);
+    await page.reload();
+    await expect(title(page)).toHaveValue(original.data.revision.title);
+    await expect(body(page)).not.toBeEditable();
+    release?.();
+    await expect(body(page)).toBeEditable();
+    await expect.poll(() => selectedBlockId(page)).toBe(id);
+    await expect(heading).toBeInViewport({ ratio: 1 });
+    await expect(page.getByRole('navigation', { name: 'On this page', exact: true }).getByRole('link', { name: 'Nested review notes', exact: true })).toHaveAttribute('aria-current', 'location');
+    await expect(save(page)).toBeDisabled();
+    expect(await readDocument(context)).toEqual(original);
+  } finally { release?.(); }
 });
 
 test('nested native heading navigation opens its toggle ancestors without changing saved content', async ({ page, context }) => {

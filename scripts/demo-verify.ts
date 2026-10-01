@@ -66,6 +66,25 @@ async function main() {
           const image = body.locator('img').first();
           await expect(image).toBeVisible();
           await expect.poll(() => image.evaluate(element => element instanceof HTMLImageElement && element.complete && element.naturalWidth > 0)).toBe(true);
+          stage = `${role} authorized section link and reload`;
+          await page.getByRole('navigation', { name: 'On this page', exact: true }).getByRole('link', { name: 'What Save commits', exact: true }).click();
+          assert.match(new URL(page.url()).hash, /^#section-/);
+          const sectionUrl = page.url();
+          await page.reload();
+          await expect(title).toHaveValue('Start here');
+          await expect(body.getByRole('heading', { name: 'What Save commits', exact: true })).toBeInViewport({ ratio: 1 });
+          if (role !== 'reader') {
+            await expect.poll(() => body.getByRole('heading', { name: 'What Save commits', exact: true }).evaluate(element => {
+              const selected = document.getSelection()?.anchorNode;
+              const selectedElement = selected instanceof Element ? selected : selected?.parentElement;
+              return selectedElement?.closest('[data-id]') === element.closest('[data-id]');
+            })).toBe(true);
+          }
+          await expect(page.getByRole('navigation', { name: 'On this page', exact: true }).getByRole('link', { name: 'What Save commits', exact: true })).toHaveAttribute('aria-current', 'location');
+          assert.equal(page.url(), sectionUrl);
+          if (role === 'reader') await expect(body.getByRole('heading', { name: 'What Save commits', exact: true })).toBeFocused();
+          if (role === 'administrator') await page.screenshot({ path: `${evidenceDirectory}/section-link.png`, mask: [page.locator('.account')], maskColor: '#1b1e20' });
+          await page.evaluate(() => window.scrollTo(0, 0));
           if (role === 'reader') {
             await expect(page.getByRole('button', { name: 'New space', exact: true })).toHaveCount(0);
             await expect(title).toHaveAttribute('readonly', '');
@@ -217,6 +236,11 @@ async function main() {
         await page.screenshot({ path: `${evidenceDirectory}/publication.png` });
         await page.getByRole('link', { name: 'What Save commits', exact: true }).click();
         await expect(body.getByRole('heading', { name: 'What Save commits', exact: true })).toBeFocused();
+        assert.match(new URL(page.url()).hash, /^#section-/);
+        const sectionUrl = page.url(); await page.reload();
+        await expect(body.getByRole('heading', { name: 'What Save commits', exact: true })).toBeFocused();
+        assert.equal(page.url(), sectionUrl);
+        await page.screenshot({ path: `${evidenceDirectory}/publication-section.png` });
         console.log('Verified anonymous selected publication and scoped image in a fresh browser session.');
       } finally { await context.close(); }
     }

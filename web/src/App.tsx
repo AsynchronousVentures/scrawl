@@ -159,15 +159,15 @@ export function App() {
     return currentLocation.pathname + currentLocation.search !== next && (dirtyRef.current || blocked);
   });
 
-  function rememberSelection(selectedSpace: string | null, selectedDocument: string | null, replace = true) {
+  function rememberSelection(selectedSpace: string | null, selectedDocument: string | null, replace = true, preserveSection = false) {
     const url = new URL(location.href);
     url.searchParams.delete('space'); url.searchParams.delete('document');
     url.pathname = selectedSpace ? `/spaces/${selectedSpace}${selectedDocument ? `/documents/${selectedDocument}` : ''}` : '/';
-    url.hash = '';
-    const href = url.pathname + url.search;
-    handledHref.current = href;
-    if (href === location.pathname + location.search && !location.hash) return;
-    canonicalTarget.current = href;
+    if (!preserveSection) url.hash = '';
+    const href = url.pathname + url.search + url.hash;
+    handledHref.current = url.pathname + url.search;
+    if (href === location.pathname + location.search + location.hash) return;
+    canonicalTarget.current = url.pathname + url.search;
     // The local draft and its URL must commit together. A deferred router
     // render can otherwise treat an earlier canonical URL as user navigation.
     void navigate(href, { replace, flushSync: true });
@@ -197,7 +197,10 @@ export function App() {
     if (!preserveEditor) setEditorKey(key => key + 1);
     dirtyRef.current = false; setContentError(null); setSaveError(''); setConflict(null);
     setUploadError(''); setUploadMessage('');
-    rememberSelection(loaded.document.spaceSlug, loaded.document.slug);
+    const canonicalPath = `/spaces/${loaded.document.spaceSlug}/documents/${loaded.document.slug}`;
+    const sameDocument = location.pathname.replace(/\/$/, '') === canonicalPath
+      || new URLSearchParams(location.search).get('document') === loaded.document.id;
+    rememberSelection(loaded.document.spaceSlug, loaded.document.slug, true, sameDocument);
   }
   function joinLive(metadata: LiveMetadata, account: User) {
     liveRef.current?.destroy();
@@ -784,7 +787,8 @@ export function App() {
               ? <>Published revision {publication.publication.revisionNumber} · <a href={`/publications/${publication.publication.publicId}`} target="_blank" rel="noopener noreferrer">View public document</a></>
               : 'Publication inactive. Publishing again requires explicit approval.'}</p>}
             {loadingDocument ? <p role="status">Loading document…</p> : draft ? <div className={`document-grid${historyOpen || conflict ? ' with-panel' : ''}`}>
-              {liveState && !liveState.initialized && liveState.phase === 'connecting' ? <p role="status">Connecting shared document…</p> : <Editor key={editorKey} initialContent={draft.content} editable={mayEdit && !busy} {...(liveState?.initialized && live ? { live, onCommentStateChange: setCommentState } : {})}
+              {liveState && !liveState.initialized && liveState.phase === 'connecting' ? <p role="status">Connecting shared document…</p> : <Editor key={editorKey} initialContent={draft.content} editable={mayEdit && !busy}
+                sectionLinks={Boolean(base && !accessIssue && collaborationKnown && !liveChecking && !liveCheckError)} onSectionNavigate={hash => { void navigate(location.pathname + location.search + hash, { preventScrollReset: true }); }} {...(liveState?.initialized && live ? { live, onCommentStateChange: setCommentState } : {})}
                 {...(mayEdit ? { uploadFile: uploadAttachment } : {})} uploadAvailable={Boolean(base && mayEdit && !busy && !conflict)}
                 resolveFileUrl={api.resolveFileUrl} onValidationChange={setContentError} onChange={content => { setDraft(previous => previous ? { ...previous, content } : previous); if (!live) { setSaveError(''); setNotice(''); } }} header={<>
                 {space && !accessIssue && <DocumentPath space={space} parentId={base ? base.document.parentDocumentId : draftParentId} documents={documents} blocked={blocked} />}
