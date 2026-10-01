@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Asynchronous Ventures and contributors
 
 import { randomUUID } from 'node:crypto';
+import type { Socket } from 'node:net';
 import Fastify from 'fastify';
 import swagger from '@fastify/swagger';
 import type { AppConfig } from './config.js';
@@ -53,6 +54,35 @@ export async function buildApp({ config, checkDatabase, logging = true, core, fr
     bodyLimit: 1024 * 1024,
     requestTimeout: 30_000,
     ajv: { customOptions: { removeAdditional: false } },
+  });
+
+  // Track accepted work separately from TCP connections. Node's idle sweep
+  // misses partial first headers and connections becoming idle during drain.
+  const connections = new Map<Socket, { active: number }>();
+  let closing = false;
+  app.server.on('connection', socket => {
+    if (closing) { socket.destroy(); return; }
+    connections.set(socket, { active: 0 });
+    socket.once('close', () => connections.delete(socket));
+  });
+  app.server.prependListener('request', (request, response) => {
+    const socket = request.socket, state = connections.get(socket);
+    if (!state) return;
+    state.active++;
+    let finished = false;
+    const complete = () => {
+      if (finished) return;
+      finished = true; state.active--;
+      // Every pipelined response must finish before flushing and closing.
+      if (closing && state.active === 0 && connections.get(socket) === state && !socket.destroyed) socket.destroySoon();
+    };
+    response.once('finish', complete); response.once('close', complete);
+  });
+  // Accepted upgrades belong to the collaboration transport's drain path.
+  app.server.on('upgrade', request => connections.delete(request.socket));
+  app.addHook('preClose', async () => {
+    closing = true;
+    for (const [socket, state] of connections) if (state.active === 0) socket.destroySoon();
   });
 
   registerProblemHandlers(app);
