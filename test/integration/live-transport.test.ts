@@ -616,6 +616,51 @@ test('prepared same-origin live transport commits before actual socket delivery 
     assert.equal(forbidden.document.getXmlFragment('document').length, 0);
     observer = await connect(admin); await until(() => observer.provider.isSynced, 'Remaining authorized administrator connects');
   });
+  await t.test('graceful shutdown drains a SQL-gated write before ownership handoff without acknowledgements or new history', async () => {
+    await until(() => observer.provider.isSynced && observer.provider.unsyncedChanges === 0, 'The writer finishes initial synchronization');
+    const recipient = await connect(admin);
+    await until(() => recipient.provider.isSynced && recipient.provider.unsyncedChanges === 0, 'The recipient finishes initial synchronization');
+    const beforeRoom = await core.documents.live.read(admin, saved.id);
+    const beforeTitle = title(recipient.document).toString();
+    const beforeAck = observer.frames.filter(type => type === 8).length;
+    const revisions = await database.prisma.documentRevision.count({ where: { documentId: saved.id } });
+    const gate = await database.pool.connect();
+    let closing: Promise<void> | undefined;
+    await database.pool.query(`CREATE FUNCTION pause_shutdown_write() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+      PERFORM pg_advisory_xact_lock(7242035,hashtext('${schema}')); RETURN NEW; END $$;
+      CREATE TRIGGER shutdown_gate BEFORE UPDATE ON "DocumentLive" FOR EACH ROW EXECUTE FUNCTION pause_shutdown_write()`);
+    try {
+      await gate.query('SELECT pg_advisory_lock(7242035,hashtext($1))', [schema]);
+      title(observer.document).insert(0, 'Accepted during shutdown ');
+      await until(writeIsPaused, 'The actual write is paused inside PostgreSQL');
+      let closed = false;
+      closing = transport.close(app.server).then(() => { closed = true; });
+      await until(() => clients.every(client => client.socket?.readyState === WebSocket.CLOSED), 'Shutdown closes every real socket');
+      assert.equal(closed, false, 'Shutdown cannot finish while acceptance is still in flight');
+      lease.assertHeld();
+      assert.equal(observer.frames.filter(type => type === 8).length, beforeAck);
+      assert.equal(title(recipient.document).toString(), beforeTitle);
+      await gate.query('SELECT pg_advisory_unlock(7242035,hashtext($1))', [schema]);
+      await closing;
+      const durable = await core.documents.live.read(admin, saved.id);
+      assert.equal(BigInt(durable.sequence), BigInt(beforeRoom.sequence) + 1n);
+      assert.equal(readLiveState(durable.state).title, title(observer.document).toString());
+      assert.equal(observer.frames.filter(type => type === 8).length, beforeAck);
+      assert.equal(title(recipient.document).toString(), beforeTitle);
+      assert.equal(await database.prisma.documentRevision.count({ where: { documentId: saved.id } }), revisions);
+    } finally {
+      await gate.query('SELECT pg_advisory_unlock(7242035,hashtext($1))', [schema]);
+      gate.release();
+      await closing;
+      await database.pool.query('DROP TRIGGER shutdown_gate ON "DocumentLive"; DROP FUNCTION pause_shutdown_write()');
+    }
+    await lease.close();
+    lease = await claimLiveOwner(database.pool);
+    transport = createCollaboration(core, lease, identityConfig.origin); transport.attach(app.server);
+    observer = await connect(admin);
+    await until(() => observer.provider.isSynced && observer.provider.unsyncedChanges === 0, 'The new owner reloads accepted content');
+    assert.equal(title(observer.document).toString(), readLiveState((await core.documents.live.read(admin, saved.id)).state).title);
+  });
   await t.test('ownership loss during a SQL-gated write emits no acknowledgement; a new owner reloads committed state', async () => {
     await until(() => observer.provider.unsyncedChanges === 0, 'Administrator initially has no pending frames');
     const recipient = await connect(admin); await until(() => recipient.provider.isSynced && recipient.provider.unsyncedChanges === 0, 'A second authorized recipient connects');

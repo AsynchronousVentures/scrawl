@@ -1,5 +1,17 @@
 # Validation
 
+## Shutdown acceptance draining and hosted follow-up
+
+The real-socket suite now gates a native write inside PostgreSQL while closing the transport. Every actual socket closes, but transport shutdown remains pending and the process still holds its ownership lease until SQL acceptance finishes. Releasing the gate commits exactly one live sequence increment, with no acknowledgement, peer delivery or new revision. Releasing ownership and connecting through a fresh owner reloads that exact accepted state.
+
+The focused socket suite passed 23/23 (`artifacts/live-shutdown-sql-gate.log`). Complete checks passed all 91 cases, types, boundaries, builds and generated API (`artifacts/live-shutdown-complete-check.log`). The complete PostgreSQL 18 regression passed 138/138 in 65.9 seconds, zero skips, retaining migration preservation, rollback, concurrency, genuine sessions and guarded Demo A (`artifacts/live-shutdown-full-database.log`). No production code, migration, dependency or retained-data change is required.
+
+Both complete single-target hosted pipelines on `072d9bd` passed: [PR](https://github.com/AsynchronousVentures/scrawl/actions/runs/36893802249), [push](https://github.com/AsynchronousVentures/scrawl/actions/runs/36893794802). Those ran the preceding 137-case database suite and full 71-case browser suite; they do not claim hosted verification of the new shutdown-drain test or establish the earlier process-shutdown failure's cause.
+
+Additional ordinary restart repetitions passed 4/5; one failed before shutdown because Add comment was absent (`artifacts/live-shutdown-repetitions.log`). Passive native selection tracing passed 8/10 and failed twice at the same setup (`artifacts/live-selection-event-probe.log`): the DOM selected 27 characters while the actual mounted ProseMirror selection remained collapsed, then the DOM range collapsed too. This is not explained by the earlier transient tab target. Native focus recovery is a candidate, not a proven cause. Guard/transaction/immediate-focus diagnostic runs passed 5/5, 10/10 and 5/5; instrumented passes do not establish a fix. Their logs are `artifacts/live-selection-observer-guard.log`, `artifacts/live-selection-transaction-probe.log`, `artifacts/live-selection-immediate-focus-control.log`.
+
+All temporary probes and native-internal introspection were removed from the test source. No new retries, skipped assertions, fake native selections or sleeps were adopted. The retained preview remains solo; finish initial native selection readiness before enabling it. The new transport test proves its acceptance/ownership boundary, not every application-process shutdown path.
+
 ## Native browser input and document-tab verification
 
 The slow-renderer reproduction distinguished the browser's native tab from Playwright's page tracking. With the previous headless shell, Chromium reported an attached tab at the expected document URL and its DOM contained the expected title input, while Playwright sometimes reported an empty URL or omitted the page. Ctrl-click reached the correct enabled anchor without prevention. Opener isolation remains unchanged.
