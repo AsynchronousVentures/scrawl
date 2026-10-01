@@ -104,7 +104,19 @@ export class LiveSession {
       const title = session.title(); if (!title) throw new Error('Connect before mounting the editor');
       const protectedNodes = new Set<string>();
       const manager = new Y.UndoManager([session.fragment, title], { trackedOrigins: new Set([ySyncPluginKey, session.titleOrigin]),
-        ignoreRemoteMapChanges: false, deleteFilter: item => protectedNodes.size > 0 && defaultDeleteFilter(item, protectedNodes),
+        ignoreRemoteMapChanges: false, deleteFilter: item => {
+          if (protectedNodes.size === 0 || !defaultDeleteFilter(item, protectedNodes)) return false;
+          // Retained containers also need their native ID for server validation.
+          if (item.parentSub === 'id' && item.parent instanceof Y.XmlElement
+            && item.parent.nodeName === 'blockContainer' && item.parent.length > 0) return false;
+          // A surviving nested group still needs its parent's block content,
+          // even after undo removes all locally typed text from that content.
+          // Otherwise PM drops the invalid container and its peer-owned child.
+          return !(item.content instanceof Y.ContentType && item.content.type instanceof Y.XmlElement
+            && item.content.type.nodeName !== 'blockGroup' && item.parent instanceof Y.XmlElement
+            && item.parent.nodeName === 'blockContainer' && item.parent.toArray().some(child =>
+              child instanceof Y.XmlElement && child.nodeName === 'blockGroup' && child.length > 0));
+        },
         captureTransaction: transaction => transaction.meta.get('addToHistory') !== false });
       session.manager = manager;
       let refreshingUndo = false;

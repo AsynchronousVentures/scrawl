@@ -755,3 +755,44 @@ test('live-only title, body and comments stay out of native/PDF/DOCX snapshots, 
     expect(runtimeErrors).toEqual([]); expect(await page.evaluate(() => localStorage.length + sessionStorage.length)).toBe(0);
   } finally { await administrator.close(); await anonymous.close(); }
 });
+
+test('nested native list undo/redo preserves another account\'s child and checkpoints the complete hierarchy', async ({ page, context, browser }) => {
+  await login(page); await expect(title(page)).toBeVisible(); await enroll(page);
+  const administrator = await browser.newContext();
+  try {
+    const peer = await administrator.newPage(); await login(peer, 'administrator'); await expect(body(peer)).toBeEditable();
+    await body(page).fill('Native nested list checkpoint');
+    await slashBlock(page, 'bullet', 'Bullet List'); await page.keyboard.insertText('Local parent');
+    await page.keyboard.press('Enter'); await page.keyboard.press('Tab'); await page.keyboard.insertText('Local child');
+    const peerChild = body(peer).getByText('Local child', { exact: true });
+    await expect(peerChild).toBeVisible(); await peerChild.click(); await peer.keyboard.press('End'); await peer.keyboard.insertText(' with administrator contribution');
+    for (const tab of [page, peer]) await expect(body(tab)).toContainText('Local child with administrator contribution');
+    await page.getByRole('button', { name: 'Undo my changes', exact: true }).click();
+    for (const tab of [page, peer]) {
+      await expect(body(tab)).toContainText('administrator contribution');
+      await expect(tab.getByText('Connection closed · local work retained', { exact: true })).toHaveCount(0);
+    }
+    expect((await latest(context)).currentRevisionNumber).toBe(1);
+    await expect(page.getByRole('button', { name: 'Redo my changes', exact: true })).toBeEnabled();
+    await page.getByRole('button', { name: 'Redo my changes', exact: true }).click();
+    for (const tab of [page, peer]) {
+      await expect(body(tab)).toContainText('Local parent');
+      await expect(body(tab)).toContainText('Local child with administrator contribution');
+    }
+    await body(page).focus(); await page.keyboard.press('ControlOrMeta+z');
+    for (const tab of [page, peer]) await expect(body(tab)).toContainText('administrator contribution');
+    await page.keyboard.press('ControlOrMeta+Shift+z');
+    await expect(body(peer)).toContainText('Local child with administrator contribution');
+    await expect(save(page)).toBeEnabled(); await save(page).click();
+    await expect(page.getByText('Saved revision 2.', { exact: true })).toBeVisible();
+    const saved = await latest(context); const parsed = validateContent(saved.revision.content);
+    expect(saved.currentRevisionNumber).toBe(2);
+    const parent = parsed.content.document.find(block => block.type === 'bulletListItem' && JSON.stringify(block.content).includes('Local parent'));
+    expect(parent).toBeDefined(); expect(parent!.children).toHaveLength(1);
+    expect(parent!.children[0]!.type).toBe('bulletListItem');
+    expect(JSON.stringify(parent!.children[0]!.content)).toContain('Local child with administrator contribution');
+    expect(await demo.database.prisma.documentRevision.count({ where: { documentId: seeded.documentId } })).toBe(2);
+    await page.reload(); await expect(body(page)).toContainText('Local child with administrator contribution');
+    expect(await page.evaluate(() => localStorage.length + sessionStorage.length)).toBe(0);
+  } finally { await administrator.close(); }
+});
