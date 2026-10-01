@@ -10,7 +10,7 @@ Links now use stable readable names, for example [the Demo Handbook release chec
 
 Document navigation uses normal links: Ctrl/Cmd-click or the browser context menu can open another tab, leaving this tab's draft intact. Move between two documents, then try Back/Forward. Unsaved title/body changes require either Keep editing or deliberate discard; navigation never creates a revision. Leaving during a Save/upload is blocked until its request finishes. Saved documents opened through search also participate in browser history.
 
-Private live-state storage is prepared in migration eight, with existing content, history and versions preserved. The running documents remain in solo mode. There are no collaborative connections or comments yet; Save, discard, history, export and selected publishing retain their established behavior. Isolated transport, serialized server comments and recipient authorization pass real socket tests. HTTP adapters, application startup and the official comment/live editor UI with peer-safe browser undo still need integration before activation.
+Private live-state storage uses migration eight, with existing content, history and versions preserved. The running preview documents remain in solo mode and its collaboration flag stays false. Experimental opt-in startup and the official live editor/comments UI are implemented and tested in a separate disposable browser fixture. Remaining activation checks are listed in ADR 0003 and validation. Save, discard, history, export and selected publishing retain their established solo behavior here.
 
 Retrieve credentials locally, without copying them into issues, screenshots or chat:
 
@@ -36,6 +36,28 @@ The five useful documents are "Start here", "Your first week", "Service runbook"
 9. Log in as reader and outsider. Readers can read, inspect history and export but cannot mutate. Outsiders receive no private titles/content/history/versions. Temporary save failure retains editable unsaved work; expiry/lost access clears unrelated navigation and server actions, retaining the draft read-only in the tab. Re-login as the draft's account rechecks access and requires deliberate reconciliation. Nothing is reported as saved after a failed write.
 
 Private draft title/body live only in memory. Closing/reloading can discard them after the browser warning. There is no persistent content cache, IndexedDB or service worker. Native toggle expansion booleans may use localStorage; document content does not. Collaboration/comments are not enabled.
+
+## Exercise experimental shared documents locally
+
+Do not enroll retained preview documents while activation work is incomplete. The owned browser harness initializes, migrates and enables collaboration only in its guarded disposable target, uses genuine cookie sessions, then removes that target:
+
+```sh
+npm run check
+npm run test:db
+npm run test:browser -- test/browser/live.spec.ts
+```
+
+Run database and browser suites sequentially; Demo A and the browser harness reserve the same explicit disposable database name. Normal application configuration uses `COLLABORATION_ENABLED=false`. Setting it true requires one owner process per database/schema and `DB_POOL_MAX >= 2`; it does not enroll documents automatically. Authenticated `/api/v1/collaboration` reports actual availability.
+
+In an explicitly enabled local synthetic workspace, open a clean saved document and choose Document actions, Enable shared editing. Open it in another tab. The supplied editor synchronizes authorized title/body changes, while Save creates immutable history. "Syncing" and "Shared changes" are not successful checkpoints. Undo/Redo affect this tab's changes and retain peer contributions; a whole-document baseline discard is unavailable in shared mode.
+
+A stale checkpoint retains the complete shared document and shows the latest saved checkpoint separately. Use current shared content deliberately changes the comparison baseline, then explicitly Save. It never replaces peers' content. Restore is available only for a clean checkpoint and starts a new epoch; other old connections close.
+
+Select text and use the supplied Add comment control. The native composer, private thread list and server commands share the authorized document session. Readers can inspect threads, including focusing them, while reply composers remain read-only. Failed mouse/keyboard submissions retain pending text and report failure. Private comments never enter immutable content snapshots, indexed search, native export or public publishing.
+
+When a connection closes, the complete current title/body remains read-only in the tab. Reconnect and compare creates a fresh authenticated document without replaying rejected updates. The former complete draft remains separately visible and can be downloaded as native draft JSON. It participates in navigation warnings and cannot be overwritten by another reconnect or restore until deliberately discarded. Keep editing cancels discard. Neither documents nor drafts are cached in browser storage. Cursor presence remains disabled.
+
+Actual disposable-fixture screenshots: [desktop comments](https://uwvqig7mu5.ufs.sh/f/tJOw1mn9psOEgAEyjSG6nTZ58BAEcqQGjoRhfsD64JizmxrI), [mobile comments](https://uwvqig7mu5.ufs.sh/f/tJOw1mn9psOEKyuoWnC3Bjv1YwCrM4JkcGPpy6E8TQIxhfOK). These show the running application in its authorized acceptance fixture, not an enabled collaboration feature in the retained preview.
 
 ## Restart the current demo
 

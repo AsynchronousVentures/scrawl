@@ -1,6 +1,29 @@
 # Validation
 
-## Prepared authenticated collaboration HTTP integration
+## Opt-in native collaboration client checkpoint
+
+Application runtime `3c8b923` and supplied-client integration `9668e01` connect native BlockNote/Yjs editing and the official shadcn comment UI. `COLLABORATION_ENABLED` defaults to `false`; the retained preview is still a solo saved-document workspace. Enabling the experimental capability requires one database/schema owner and `DB_POOL_MAX >= 2`. Enrollment is an explicit action on a clean saved document, never a startup conversion.
+
+Observed results on this checkpoint, without retries or skips:
+
+- `npm run check` passed 91 unit/config/HTTP/CLI cases, strict backend/frontend types, import boundaries, both builds and generated OpenAPI drift. Log: `artifacts/live-ui-final-check.log`.
+- `npm run test:db` passed 136/136 on PostgreSQL 18, retaining transaction rollback, concurrency, migration preservation, genuine sessions, sockets and guarded Demo A. Log: `artifacts/live-ui-final-db18.log`.
+- The same complete database suite passed 136/136 on a separately owned disposable PostgreSQL 17 container. Logs: `artifacts/live-ui-final-db17.log` and `artifacts/live-ui-17-run.log`. Its container/configuration were removed; retained 17 and 18 resources were not reset.
+- `npm run test:browser` passed 56/56 against the real application/API/PostgreSQL. It preserves all 47 existing workflows and adds nine enabled-capability scenarios. Log: `artifacts/live-ui-final-full-browser.log`. The earlier complete 55-case run and final focused comment/mobile run also passed.
+
+New browser assertions cover native title/body convergence, peer-safe title/heading/table undo and redo, explicit immutable checkpoints, stale reconciliation, epoch-changing restore, archive/unarchive, native export isolation, private comments, reader/outsider denial, failed comment submission, failed checkpoint retention, actual membership revocation, deliberate reconnect without replay, retained-draft download/navigation protection, mobile overflow and enrollment/read failures. Initial synchronization creates no accepted update or revision. Neither local nor session storage receives private content. Shared synchronization is visibly distinct from a saved revision, and local undo never resets the complete shared baseline.
+
+Actual synthetic enabled-fixture screenshots: [desktop comments](https://uwvqig7mu5.ufs.sh/f/tJOw1mn9psOEgAEyjSG6nTZ58BAEcqQGjoRhfsD64JizmxrI), [mobile comments](https://uwvqig7mu5.ufs.sh/f/tJOw1mn9psOEKyuoWnC3Bjv1YwCrM4JkcGPpy6E8TQIxhfOK). These show a real disposable acceptance application, not collaboration enabled in the retained preview. T3 `preview_status`/`preview_open` reported no connected desktop automation host; the authored real-browser runners supplied verification and captures.
+
+No migration was added: deploy the existing eight-migration history and regenerate Prisma as documented below. Four exact frontend workspace dependencies promote existing pinned packages; all 616 preexisting dependency versions and integrity hashes remain unchanged. Existing license notices cover them. There was no retained reset, live enrollment, credential change or public-access change.
+
+Initial verification caught and corrected a native undo factory accessing its schema before mount, shutdown releasing the pool before the owner lease, reader reply-composer editability, post-enrollment/read failure falling back to solo editing, and comment anchoring after an asynchronous selection change. Comment selection now uses native relative positions captured before the create request. Create and anchor are still separate official REST operations; anchor failure can leave a private unanchored thread and is a remaining usability case. Failed and intermediate runs are not counted as passing.
+
+Remaining activation gates are authenticated presence, separate-account concurrent title/body edits, nested-block peer undo, comment reply/reaction/resolve and their failed-action states, pending comment draft navigation, browser downgrade/expiry/recovery/process restart, default-off handling of previously enrolled documents, and rendered export/publication isolation of live-only changes. The isolated backend guarantees remain verified, but do not replace these application checks. Keep the retained flag off until this handoff is complete; see [ADR 0003](docs/adr/0003-collaboration-checkpoints.md) and [the backlog](docs/integration-backlog.md).
+
+Prior hosted checkpoint `6d8d19f` passed both complete 17/18 matrices. The PR matrices for `1bae82a` and `61f4f13` passed; their push matrices each failed one existing browser interaction (external-link toolbar or in-flight-save navigation). Both interactions pass in the complete current local run. The intermittent cause remains unverified, with no assertion weakened. New hosted results remain unverified until recorded.
+
+## Prepared authenticated collaboration HTTP integration, prior checkpoint
 
 Optional implemented routes now expose enrollment/metadata, explicit checkpoints, epoch-changing restore, document-scoped author names and the pinned BlockNote REST comment contract. The running application does not mount this capability yet. Core transactions continue to check access and session lifetime; checkpoint/restore include current recipient receipts. A single document mutex serializes socket acceptance, joins, comments, enrollment and lifecycle changes across old/new epochs. Restore and archive close old connections only after commit. Unknown lifecycle failure invalidates every cached epoch for that document.
 
