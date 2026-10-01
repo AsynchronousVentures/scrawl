@@ -874,3 +874,7 @@ Stop after P0 for review. The next bounded assignment is [P1: identity, Prisma a
 ## Space access continuation
 
 Code checkpoint `8db5326` is pushed to `integration/blocknote-demo`; draft PR #6 and issue #1 record implementation and verification. The full 83-case browser run remains active in `artifacts/space-access-full-browser.log`. Observe that process/log to completion before starting another database or browser fixture run. Do not call it passing from intermediate output. After completion, update the results here and in tracking. Diagnose the recorded native selection/caret failures and the retained-preview intermittent fresh-login failure without removing assertions or enabling retained collaboration. No migration or reset is needed for this checkpoint. All development/test targets remain the existing PostgreSQL 18 instances; legacy 17 resources are preserved.
+
+## Hosted run concurrency
+
+The foundation workflow now replaces superseded runs within the same workflow/event/ref group. Latest push and PR checks remain separate, and PostgreSQL 18, permissions, test steps and timeouts are unchanged. YAML parsing and comparison verified that only concurrency configuration changed. This affects future workflow runs; cancellation behavior has not yet been observed. It does not cancel or restart the existing local 83-case browser run. [GitHub workflow concurrency](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#concurrency).
