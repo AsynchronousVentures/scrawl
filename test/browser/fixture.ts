@@ -10,7 +10,8 @@ import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { parseEnv } from 'node:util';
 import type { Locator } from '@playwright/test';
-import { readConfig } from '../../src/config.js';
+import { readConfig, readIdentityConfig } from '../../src/config.js';
+import { createOperator } from '../../src/core/identity/operator.js';
 import { createDatabase } from '../../src/db/client.js';
 import { DEMO_DATABASE, readDemoCredentials, readPrivateDemoFile } from '../../scripts/demo-config.js';
 import type { DemoCredentials, DemoRole } from '../../scripts/demo-config.js';
@@ -142,7 +143,7 @@ export async function createBrowserDemo(options: { collaboration?: boolean } = {
     await writeFile(environmentPath, Object.entries(values).map(([name, value]) => `${name}=${value}`).join('\n') + '\n', { mode: 0o600 });
     setupStage = 'migrations and account provisioning';
     await command('demo-fixtures.ts', ['setup', '--database', DEMO_DATABASE]);
-    const accounts: DemoCredentials = await readDemoCredentials(join(cwd, 'artifacts/demo/credentials.json'));
+    let accounts: DemoCredentials = await readDemoCredentials(join(cwd, 'artifacts/demo/credentials.json'));
     secrets.push(...Object.values(accounts.accounts).map((account) => account.password));
     if ((await stat(join(repository, 'web/dist/index.html'))).isFile() !== true) throw new Error('Build the frontend before browser acceptance');
 
@@ -225,6 +226,16 @@ export async function createBrowserDemo(options: { collaboration?: boolean } = {
         values.COLLABORATION_ENABLED = String(collaboration);
         await writeFile(environmentPath, Object.entries(values).map(([name, value]) => `${name}=${value}`).join('\n') + '\n', { mode: 0o600 });
         await startServer();
+      },
+      async recoverAccount(role: DemoRole) {
+        if (!database || !ownsDatabase || !cwd) throw new Error('Disposable account recovery is unavailable');
+        const account = accounts.accounts[role], password = randomBytes(24).toString('base64url');
+        secrets.push(password);
+        try {
+          await createOperator(database.prisma, readIdentityConfig(values, readConfig(values))).recover(account.email, password);
+          accounts = { ...accounts, accounts: { ...accounts.accounts, [role]: { ...account, password } } };
+          await writeFile(join(cwd, 'artifacts/demo/credentials.json'), JSON.stringify(accounts) + '\n', { mode: 0o600 });
+        } catch { throw new Error('Disposable account recovery failed'); }
       },
       async crashAndRestart() {
         // Kill only the child created by this disposable fixture. Do not reset

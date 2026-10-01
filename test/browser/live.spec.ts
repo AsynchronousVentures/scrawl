@@ -911,3 +911,54 @@ test('abrupt process death preserves acknowledged native content and comments ac
     } finally { await recovered.close(); await recoveredPeer.close(); }
   } finally { await administrator.close(); }
 });
+
+test('operator account recovery revokes every live session while preserving an unsent native reply and other accounts', async ({ page, context, browser }) => {
+  const secondary = await browser.newContext(), administrator = await browser.newContext();
+  const runtimeErrors: string[] = []; page.on('pageerror', error => runtimeErrors.push(error.message));
+  try {
+    await login(page); await expect(title(page)).toBeVisible(); await enroll(page);
+    const otherSession = await secondary.newPage(); await login(otherSession); await expect(body(otherSession)).toBeEditable();
+    const peer = await administrator.newPage(); await login(peer, 'administrator'); await expect(body(peer)).toBeEditable();
+    await body(page).focus(); await page.keyboard.press('ControlOrMeta+Home'); await page.keyboard.press('Shift+End');
+    await page.getByRole('button', { name: 'Add comment', exact: true }).click();
+    await page.locator('.bn-comment-editor [contenteditable="true"]').fill('Saved thread before operator account recovery.');
+    const anchored = page.waitForResponse(response => response.request().method() === 'POST'
+      && new URL(response.url()).pathname.endsWith('/addToDocument'));
+    await page.locator('.bn-thread').getByRole('button', { name: 'Save', exact: true }).click(); expect((await anchored).status()).toBe(200);
+    const sidebar = page.locator('.document-comments'); await sidebar.locator('summary').click();
+    const card = sidebar.locator('.bn-thread'); await card.focus();
+    const composer = card.locator('.bn-thread-composer .bn-comment-editor .bn-editor');
+    await composer.fill('Complete unsent reply retained across operator recovery.');
+    await expect(page.getByRole('status').filter({ hasText: 'Unsaved comment text.' })).toBeVisible();
+    const before = await demo.database.prisma.documentLive.findFirstOrThrow({ where: { documentId: seeded.documentId } });
+    expect(await demo.database.prisma.session.count({ where: { userId: demo.accountId('editor') } })).toBeGreaterThanOrEqual(2);
+    await demo.recoverAccount('editor');
+    expect(await demo.database.prisma.session.count({ where: { userId: demo.accountId('editor') } })).toBe(0);
+    for (const tab of [page, otherSession]) await expect(tab.getByText('The shared connection closed.', { exact: true })).toBeVisible();
+    await expect(body(peer)).toBeEditable();
+    for (const expired of [context, secondary]) {
+      const denied = await expired.request.get(`${demo.origin}/api/v1/documents/${seeded.documentId}`); expect(denied.status()).toBe(401);
+      expect((await denied.text())).not.toContain('Release checklist');
+    }
+    const lost = page.waitForResponse(response => new URL(response.url()).pathname.endsWith('/revisions'));
+    await page.getByRole('button', { name: 'History', exact: true }).click(); expect((await lost).status()).toBe(401);
+    await expect(page.getByRole('button', { name: 'Log in', exact: true })).toBeVisible();
+    await expect(composer).toHaveText('Complete unsent reply retained across operator recovery.');
+    await expect(sidebar.locator('[contenteditable="true"]')).toHaveCount(0);
+    await expect(sidebar.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
+    await expect(page.getByRole('combobox', { name: 'Space', exact: true })).toHaveCount(0);
+    expect(await demo.database.prisma.documentLive.findFirstOrThrow({ where: { documentId: seeded.documentId } })).toEqual(before);
+    await title(peer).fill('Other account remains authorized after recovery'); await expect(save(peer)).toBeEnabled();
+    await expect(title(otherSession)).not.toHaveValue('Other account remains authorized after recovery');
+    await demo.fillCredentials(page.getByLabel('Email', { exact: true }), page.getByLabel('Password', { exact: true }), 'editor');
+    await page.getByRole('button', { name: 'Log in', exact: true }).click(); demo.authenticationCompleted();
+    await expect(page.getByRole('button', { name: 'Log out', exact: true })).toBeVisible();
+    await expect(composer).toHaveText('Complete unsent reply retained across operator recovery.');
+    await page.getByRole('button', { name: 'Reconnect and compare', exact: true }).click();
+    const guard = page.getByRole('dialog', { name: 'Unsaved changes', exact: true }); await expect(guard).toContainText('unsent comment text');
+    await guard.getByRole('button', { name: 'Keep editing', exact: true }).click();
+    await expect(composer).toHaveText('Complete unsent reply retained across operator recovery.');
+    expect((await latest(administrator)).currentRevisionNumber).toBe(1); expect(runtimeErrors).toEqual([]);
+    expect(await page.evaluate(() => localStorage.length + sessionStorage.length)).toBe(0);
+  } finally { await secondary.close(); await administrator.close(); }
+});

@@ -53,6 +53,8 @@ In an explicitly enabled local synthetic workspace, open a clean saved document 
 
 A stale checkpoint retains the complete shared document and shows the latest saved checkpoint separately. Use current shared content deliberately changes the comparison baseline, then explicitly Save. It never replaces peers' content. Restore is available only for a clean checkpoint and starts a new epoch; other old connections close.
 
+Operator recovery invalidates every session for the recovered account, including other open tabs. Pending comment text stays read-only in its original tab. Sign in with the recovered account credentials, then review before reconnecting; Keep editing cancels a discard. Recovery is tested only against owned synthetic accounts, leaving preview credentials unchanged.
+
 The disposable acceptance harness verifies both graceful and abrupt process restart. Acknowledged live content/comments survive without becoming revisions; fresh authenticated tabs recover them, while old closed tabs retain local work read-only. Do not terminate the retained preview to reproduce the test.
 
 Use the supplied Add reaction picker and reaction badges in Comments. Failed add/remove actions show an error and leave accepted reactions unchanged; retry deliberately. Pending requests must finish before leaving. Emoji recents contain only IDs/counts, never private document or comment text.
