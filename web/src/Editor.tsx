@@ -69,12 +69,13 @@ export function Editor({ initialContent, editable, onChange, onValidationChange,
     links: { isValidLink: isSafeLinkUrl },
     tables: { splitCells: true, cellBackgroundColor: true, cellTextColor: true, headers: true },
     // The supplied hook is readonly after creation. Its stable adapter consults
-    // current authority after first Save without rebuilding native undo history.
-    ...(uploadFile ? { uploadFile: async (file: File) => {
+    // current authority after loading permissions or first Save without
+    // rebuilding native undo history. It must exist even on a readonly mount.
+    uploadFile: async (file: File) => {
       const upload = callbacks.current.uploadFile;
       if (!upload) throw new Error('Attachment upload is unavailable');
       return upload(file);
-    } } : {}),
+    },
     resolveFileUrl: async url => callbacks.current.resolveFileUrl?.(url) ?? url,
   } satisfies Partial<BlockNoteEditorOptions<NativeBlockSchema, DefaultInlineContentSchema, DefaultStyleSchema>>;
   const editor = useCreateBlockNote(live ? withCollaboration({ ...options, extensions,

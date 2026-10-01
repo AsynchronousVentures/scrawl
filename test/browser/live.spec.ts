@@ -6,7 +6,8 @@ import { createBrowserDemo, type BrowserDemo } from './fixture.js';
 import type { DemoBResult } from '../../scripts/demo-b.js';
 import { readFile } from 'node:fs/promises';
 import JSZip from 'jszip';
-import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
+import { getDocument, OPS } from 'pdfjs-dist/legacy/build/pdf.mjs';
+import sharp from 'sharp';
 import { validateContent } from '../../src/shared/content.js';
 import type { operations } from '../../web/src/api/schema.js';
 
@@ -801,6 +802,129 @@ test('live-only title, body and comments stay out of native/PDF/DOCX snapshots, 
     expect(await demo.database.prisma.documentRevision.count({ where: { documentId: seeded.documentId } })).toBe(2);
     expect(runtimeErrors).toEqual([]); expect(await page.evaluate(() => localStorage.length + sessionStorage.length)).toBe(0);
   } finally { await administrator.close(); await anonymous.close(); }
+});
+
+test('native live uploads require a checkpoint for saved exports and never advance selected public attachments', async ({ page, context, browser }) => {
+  const runtimeErrors: string[] = []; page.on('pageerror', error => runtimeErrors.push(error.message));
+  const savedPng = await sharp({ create: { width: 13, height: 7, channels: 3, background: '#316348' } }).png().toBuffer();
+  const livePng = await sharp({ create: { width: 29, height: 11, channels: 3, background: '#793f61' } }).png().toBuffer();
+  let allowAvailability: (() => void) | undefined;
+  const availability = new Promise<void>(resolve => { allowAvailability = resolve; });
+  await page.route('**/api/v1/collaboration', async route => { await availability; await route.continue(); });
+  try {
+    await login(page, 'administrator'); await expect(body(page)).toBeVisible();
+    await expect(body(page)).not.toBeEditable();
+    const checked = page.waitForResponse(response => response.request().method() === 'GET'
+      && new URL(response.url()).pathname === `/api/v1/documents/${seeded.documentId}/live`);
+    allowAvailability?.();
+    const response = await checked; expect(response.status()).toBe(409); await response.finished();
+    await expect(body(page)).toBeEditable();
+  } finally { allowAvailability?.(); }
+  await page.unroute('**/api/v1/collaboration');
+  await body(page).fill('Synthetic saved image and later shared upload.');
+  async function upload(name: string, bytes: Buffer) {
+    await slashBlock(page, 'image', 'Image');
+    await expect(page.getByRole('tab', { name: 'Upload', exact: true })).toBeVisible();
+    const uploaded = page.waitForResponse(response => response.request().method() === 'POST'
+      && new URL(response.url()).pathname === `/api/v1/documents/${seeded.documentId}/attachments`);
+    await page.locator('.bn-panel input[type="file"]').setInputFiles({ name, mimeType: 'image/png', buffer: bytes });
+    const response = await uploaded; expect(response.status()).toBe(201);
+    const attachment: unknown = await response.json();
+    if (!attachment || typeof attachment !== 'object' || !('id' in attachment) || typeof attachment.id !== 'string'
+      || !('url' in attachment) || typeof attachment.url !== 'string') throw new Error('Missing native attachment identity');
+    const image = body(page).getByRole('img', { name, exact: true }); await expect(image).toBeVisible();
+    await expect.poll(() => image.evaluate(element => element instanceof HTMLImageElement && element.naturalWidth > 0)).toBe(true);
+    return { id: attachment.id, url: attachment.url };
+  }
+  const approved = await upload('Saved synthetic image.png', savedPng);
+  await save(page).click(); await expect(page.getByRole('status').filter({ hasText: 'Saved · revision 2' })).toBeVisible();
+  const saved = await latest(context); expect(saved.currentRevisionNumber).toBe(2);
+  await page.getByLabel('Document actions', { exact: true }).click();
+  await page.getByRole('button', { name: 'Publish saved revision', exact: true }).click();
+  const published = page.waitForResponse(response => response.request().method() === 'POST'
+    && new URL(response.url()).pathname === `/api/v1/documents/${seeded.documentId}/publication`);
+  await page.getByRole('dialog', { name: 'Publish revision 2?', exact: true }).getByRole('button', { name: 'Publish revision 2', exact: true }).click();
+  expect((await published).status()).toBe(200);
+  const link = page.getByRole('link', { name: 'View public document', exact: true }); await expect(link).toBeVisible();
+  const path = await link.getAttribute('href'), publicId = path?.split('/').at(-1);
+  if (!path || !publicId) throw new Error('Missing selected image publication');
+  await enroll(page);
+  const editor = await browser.newContext(), anonymous = await browser.newContext(), outsider = await browser.newContext();
+  try {
+    const peer = await editor.newPage(); await login(peer); await expect(body(peer)).toBeEditable();
+    const pending = await upload('Live-only synthetic image.png', livePng);
+    await expect(body(peer).getByRole('img', { name: 'Live-only synthetic image.png', exact: true })).toBeVisible();
+    const stored = await demo.database.prisma.documentLive.findFirstOrThrow({ where: { documentId: seeded.documentId } });
+    const native = await context.request.get(`${demo.origin}/api/v1/documents/${seeded.documentId}/export`); expect(native.status()).toBe(200);
+    const exported = await native.json() as operations['exportNativeDocument']['responses'][200]['content']['application/json'];
+    expect(validateContent(exported.content).content).toEqual(saved.revision.content);
+    expect(JSON.stringify(exported)).toContain(approved.url); expect(JSON.stringify(exported)).not.toContain(pending.url);
+    async function exportImages(format: 'pdf' | 'docx', historical = false) {
+      const download = page.waitForEvent('download');
+      if (historical) {
+        await page.getByRole('complementary', { name: 'Revision history', exact: true }).getByRole('button', { name: `Export ${format.toUpperCase()}`, exact: true }).click();
+      } else {
+        await page.getByLabel('Document actions', { exact: true }).click();
+        await page.getByRole('button', { name: `Export ${format.toUpperCase()}`, exact: true }).click();
+      }
+      const file = await (await download).path(); if (!file) throw new Error('Missing binary snapshot download');
+      const bytes = await readFile(file), dimensions: string[] = [];
+      if (format === 'docx') {
+        const archive = await JSZip.loadAsync(bytes);
+        for (const image of archive.file(/^word\/media\/[^/]+$/)) {
+          const decoded = await sharp(await image.async('nodebuffer')).raw().toBuffer({ resolveWithObject: true });
+          dimensions.push(`${decoded.info.width}x${decoded.info.height}`);
+          const original = decoded.info.width === 13 ? savedPng : livePng;
+          expect(decoded.data).toEqual(await sharp(original).raw().toBuffer());
+        }
+      } else {
+        const loading = getDocument({ data: new Uint8Array(bytes), useSystemFonts: false });
+        try {
+          const document = await loading.promise;
+          for (let number = 1; number <= document.numPages; number++) {
+            const operators = await (await document.getPage(number)).getOperatorList();
+            operators.fnArray.forEach((operation, index) => {
+              if (operation === OPS.paintImageXObject) {
+                const args: unknown = operators.argsArray[index];
+                if (!Array.isArray(args) || typeof args[1] !== 'number' || typeof args[2] !== 'number') throw new Error('Invalid PDF image dimensions');
+                dimensions.push(`${args[1]}x${args[2]}`);
+              } else if (operation === OPS.paintInlineImageXObject) {
+                const args: unknown = operators.argsArray[index];
+                const image: unknown = Array.isArray(args) ? args[0] : undefined;
+                if (!image || typeof image !== 'object' || !('width' in image) || typeof image.width !== 'number'
+                  || !('height' in image) || typeof image.height !== 'number') throw new Error('Invalid inline PDF image dimensions');
+                dimensions.push(`${image.width}x${image.height}`);
+              }
+            });
+          }
+        } finally { await loading.destroy(); }
+      }
+      return dimensions.sort();
+    }
+    for (const format of ['pdf', 'docx'] as const) expect(await exportImages(format)).toEqual(['13x7']);
+    expect(await demo.database.prisma.documentLive.findFirstOrThrow({ where: { documentId: seeded.documentId } })).toEqual(stored);
+    expect((await latest(context)).currentRevisionNumber).toBe(2);
+    const publicPage = await anonymous.newPage(); await publicPage.goto(demo.origin + path);
+    const image = publicPage.getByRole('img', { name: 'Saved synthetic image.png', exact: true }); await expect(image).toBeVisible();
+    await expect.poll(() => image.evaluate(element => element instanceof HTMLImageElement ? element.naturalWidth : 0)).toBe(13);
+    const publicImage = await anonymous.request.get(`${demo.origin}/api/public/publications/${publicId}/attachments/${approved.id}`);
+    expect(publicImage.status()).toBe(200); expect(await publicImage.body()).toEqual(savedPng);
+    expect((await anonymous.request.get(`${demo.origin}/api/public/publications/${publicId}/attachments/${pending.id}`)).status()).toBe(404);
+    expect((await anonymous.request.get(demo.origin + pending.url)).status()).toBe(401);
+    const outsiderPage = await outsider.newPage(); await login(outsiderPage, 'outsider');
+    expect((await outsider.request.get(demo.origin + approved.url)).status()).toBe(404);
+    expect((await outsider.request.get(demo.origin + pending.url)).status()).toBe(404);
+    await page.bringToFront(); await save(page).click(); await expect(page.getByText('Saved revision 3.', { exact: true })).toBeVisible();
+    for (const format of ['pdf', 'docx'] as const) expect(await exportImages(format)).toEqual(['13x7', '29x11']);
+    await page.getByRole('button', { name: 'History', exact: true }).click();
+    await page.getByRole('button', { name: /^Revision 2\b/ }).click();
+    for (const format of ['pdf', 'docx'] as const) expect(await exportImages(format, true)).toEqual(['13x7']);
+    await publicPage.reload(); await expect(image).toBeVisible();
+    await expect(publicPage.getByRole('img', { name: 'Live-only synthetic image.png', exact: true })).toHaveCount(0);
+    expect((await anonymous.request.get(`${demo.origin}/api/public/publications/${publicId}/attachments/${pending.id}`)).status()).toBe(404);
+    expect(await demo.database.prisma.documentRevision.count({ where: { documentId: seeded.documentId } })).toBe(3);
+    expect(runtimeErrors).toEqual([]); expect(await page.evaluate(() => localStorage.length + sessionStorage.length)).toBe(0);
+  } finally { await editor.close(); await anonymous.close(); await outsider.close(); }
 });
 
 test('nested native list undo/redo preserves another account\'s child and checkpoints the complete hierarchy', async ({ page, context, browser }) => {
