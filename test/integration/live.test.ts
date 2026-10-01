@@ -489,7 +489,7 @@ test('live migration preserves populated solo documents, immutable revisions and
   await database.pool.query(await readFile(`prisma/migrations/${liveMigration}/migration.sql`, 'utf8'));
   assert.deepEqual(await fingerprint(), before);
   assert.equal(await database.prisma.documentLive.count(), 0);
-  assert.equal((await database.prisma.document.findUniqueOrThrow({ where: { id: documentId } })).liveEpoch, null);
+  assert.equal((await database.prisma.document.findUniqueOrThrow({ where: { id: documentId }, select: { liveEpoch: true } })).liveEpoch, null);
   const constraint = await database.pool.query(`SELECT condeferrable, condeferred FROM pg_constraint WHERE conrelid=$1::regclass AND conname='Document_id_liveEpoch_fkey'`, [`"${schema}"."Document"`]);
   assert.deepEqual(constraint.rows, [{ condeferrable: true, condeferred: true }]);
 });

@@ -170,7 +170,7 @@ test('P2 documents and immutable history against PostgreSQL and authenticated HT
     assert.equal(result.headers.location, documentPath());
     assert.equal(etag, `"doc-${documentId}-bn1-v1"`);
     assert.equal(result.data.editingMode, 'solo');
-    assert.deepEqual(Object.keys(result.data).sort(), ['id', 'slug', 'spaceId', 'spaceSlug', 'editingMode', 'currentRevisionNumber', 'lockVersion',
+    assert.deepEqual(Object.keys(result.data).sort(), ['id', 'slug', 'spaceId', 'spaceSlug', 'parentDocumentId', 'editingMode', 'currentRevisionNumber', 'lockVersion',
       'createdAt', 'createdBy', 'updatedAt', 'archivedAt', 'archivedBy', 'revision'].sort());
     assert.deepEqual(Object.keys(result.data.revision).sort(), ['id', 'documentId', 'revisionNumber', 'title',
       'content', 'plainText', 'authorId', 'createdAt', 'changeNote'].sort());
@@ -669,4 +669,136 @@ test('P2 documents and immutable history against PostgreSQL and authenticated HT
     assert.equal(grant.status, 200);
     assert.equal((await editor.send('GET', documentPath())).status, 200);
   });
+
+  await t.test('same-space organization requires current grants and ETags without rewriting content history', async () => {
+    const first = await editor.send('POST', `/api/v1/spaces/${spaceId}/documents`, { title: 'Organization parent A', content: content('Parent A') });
+    const second = await editor.send('POST', `/api/v1/spaces/${spaceId}/documents`, { title: 'Organization parent B', content: content('Parent B') });
+    assert.equal(first.status, 201); assert.equal(second.status, 201); assert.equal(first.data.parentDocumentId, null);
+    const child = await editor.send('POST', `/api/v1/spaces/${spaceId}/documents`, {
+      title: 'Organization child', content: content('Complete native child'), parentDocumentId: first.data.id,
+    });
+    assert.equal(child.status, 201); assert.equal(child.data.parentDocumentId, first.data.id);
+    const path = `/api/v1/documents/${child.data.id}`, condition = { 'if-match': String(child.headers.etag) };
+    expectProblem(await editor.send('POST', path + '/move', { parentDocumentId: second.data.id }), 428);
+    expectProblem(await reader.send('POST', path + '/move', { parentDocumentId: null }, condition), 404);
+    expectProblem(await outsider.send('GET', path), 404);
+    expectProblem(await outsider.send('GET', `/api/v1/spaces/${spaceId}/documents`), 404);
+    const foreign = await admin.send('POST', `/api/v1/spaces/${privateSpaceId}/documents`, { title: 'Private parent', content: content('Private') });
+    assert.equal(foreign.status, 201);
+    expectProblem(await editor.send('POST', path + '/move', { parentDocumentId: foreign.data.id }, condition), 404);
+    expectProblem(await admin.send('POST', path + '/move', { parentDocumentId: foreign.data.id }, condition), 404);
+    expectProblem(await editor.send('POST', path + '/move', {}, condition), 400);
+    const self = await editor.send('POST', path + '/move', { parentDocumentId: child.data.id }, condition);
+    expectProblem(self, 409); assert.equal(self.data.code, 'DOCUMENT_HIERARCHY_CYCLE');
+    expectProblem(await admin.send('POST', `/api/v1/spaces/${spaceId}/documents`, {
+      title: 'Denied cross-space child', content: content('Denied'), parentDocumentId: foreign.data.id,
+    }), 404);
+    await assert.rejects(core.documents.move(new Headers({ cookie: reader.cookie }), child.data.id,
+      { parentDocumentId: null }, String(child.headers.etag)), error => error instanceof HttpProblem && error.status === 404);
+    const originalRevision = await database.prisma.documentRevision.findFirstOrThrow({ where: { documentId: child.data.id } });
+    const moved = await editor.send('POST', path + '/move', { parentDocumentId: second.data.id }, condition);
+    assert.equal(moved.status, 200); assert.equal(moved.data.parentDocumentId, second.data.id);
+    assert.equal(moved.data.lockVersion, child.data.lockVersion + 1); assert.equal(moved.data.currentRevisionNumber, 1);
+    assert.equal(moved.data.slug, child.data.slug); assert.deepEqual(moved.data.revision, child.data.revision);
+    expectProblem(await editor.send('PATCH', path, { title: 'Stale structural baseline' }, condition), 412);
+    expectProblem(await editor.send('POST', path + '/move', { parentDocumentId: null }, condition), 412);
+    const noop = await editor.send('POST', path + '/move', { parentDocumentId: second.data.id }, { 'if-match': String(moved.headers.etag) });
+    assert.equal(noop.status, 200); assert.equal(noop.headers.etag, moved.headers.etag);
+    assert.deepEqual(await database.prisma.documentRevision.findFirstOrThrow({ where: { documentId: child.data.id } }), originalRevision);
+    assert.equal(await database.prisma.documentRevision.count({ where: { documentId: child.data.id } }), 1);
+    const root = await editor.send('POST', path + '/move', { parentDocumentId: null }, { 'if-match': String(noop.headers.etag) });
+    assert.equal(root.status, 200); assert.equal(root.data.parentDocumentId, null);
+    const read = await reader.send('GET', path); assert.equal(read.status, 200); assert.equal(read.data.parentDocumentId, null);
+    await assert.rejects(database.pool.query('UPDATE "Document" SET "parentDocumentId" = $1 WHERE "id" = $2', [foreign.data.id, child.data.id]),
+      error => error instanceof Error && 'code' in error && error.code === '23503');
+    await assert.rejects(database.pool.query('UPDATE "Document" SET "parentDocumentId" = $1 WHERE "id" = $2', [child.data.id, child.data.id]),
+      error => error instanceof Error && 'code' in error && error.code === '23514');
+    assert.equal((await editor.send('GET', path)).data.parentDocumentId, null);
+  });
+
+  await t.test('reciprocal and stale concurrent moves cannot create cycles or extra revisions', async () => {
+    const a = await editor.send('POST', `/api/v1/spaces/${spaceId}/documents`, { title: 'Concurrent parent A', content: content('A') });
+    const b = await editor.send('POST', `/api/v1/spaces/${spaceId}/documents`, { title: 'Concurrent parent B', content: content('B') });
+    const results = await Promise.all([
+      editor.send('POST', `/api/v1/documents/${a.data.id}/move`, { parentDocumentId: b.data.id }, { 'if-match': String(a.headers.etag) }),
+      editor.send('POST', `/api/v1/documents/${b.data.id}/move`, { parentDocumentId: a.data.id }, { 'if-match': String(b.headers.etag) }),
+    ]);
+    assert.deepEqual(results.map(result => result.status).sort(), [200, 409]);
+    assert.equal(results.find(result => result.status === 409)!.data.code, 'DOCUMENT_HIERARCHY_CYCLE');
+    const child = await editor.send('POST', `/api/v1/spaces/${spaceId}/documents`, { title: 'Concurrent moving child', content: content('Unchanged child') });
+    const writes = await Promise.all([
+      editor.send('POST', `/api/v1/documents/${child.data.id}/move`, { parentDocumentId: a.data.id }, { 'if-match': String(child.headers.etag) }),
+      editor.send('POST', `/api/v1/documents/${child.data.id}/move`, { parentDocumentId: b.data.id }, { 'if-match': String(child.headers.etag) }),
+    ]);
+    assert.deepEqual(writes.map(result => result.status).sort(), [200, 412]);
+    const saved = await editor.send('GET', `/api/v1/documents/${child.data.id}`);
+    assert.equal(saved.data.lockVersion, 2); assert.equal(saved.data.currentRevisionNumber, 1);
+    assert.equal(await database.prisma.documentRevision.count({ where: { documentId: child.data.id } }), 1);
+  });
+
+  await t.test('archive never cascades or leaves an active child below an archived parent', async () => {
+    const parent = await editor.send('POST', `/api/v1/spaces/${spaceId}/documents`, { title: 'Archive parent', content: content('Parent') });
+    const child = await editor.send('POST', `/api/v1/spaces/${spaceId}/documents`, { title: 'Archive child', content: content('Child'), parentDocumentId: parent.data.id });
+    const parentPath = `/api/v1/documents/${parent.data.id}`, childPath = `/api/v1/documents/${child.data.id}`;
+    const denied = await editor.send('POST', parentPath + '/archive', {}, { 'if-match': String(parent.headers.etag) });
+    expectProblem(denied, 409); assert.equal(denied.data.code, 'DOCUMENT_HAS_ACTIVE_CHILDREN');
+    assert.equal((await editor.send('GET', parentPath)).headers.etag, parent.headers.etag);
+    const archivedChild = await editor.send('POST', childPath + '/archive', {}, { 'if-match': String(child.headers.etag) }); assert.equal(archivedChild.status, 200);
+    const archivedParent = await editor.send('POST', parentPath + '/archive', {}, { 'if-match': String(parent.headers.etag) }); assert.equal(archivedParent.status, 200);
+    expectProblem(await editor.send('POST', childPath + '/unarchive', {}, { 'if-match': String(archivedChild.headers.etag) }), 409);
+    expectProblem(await editor.send('POST', `/api/v1/spaces/${spaceId}/documents`, { title: 'Denied archived parent', content: content('Denied'), parentDocumentId: parent.data.id }), 409);
+    const moved = await editor.send('POST', childPath + '/move', { parentDocumentId: null }, { 'if-match': String(archivedChild.headers.etag) }); assert.equal(moved.status, 200);
+    const active = await editor.send('POST', childPath + '/unarchive', {}, { 'if-match': String(moved.headers.etag) }); assert.equal(active.status, 200);
+    assert.equal(active.data.parentDocumentId, null); assert.equal(active.data.currentRevisionNumber, 1);
+    assert.equal(await database.prisma.documentRevision.count({ where: { documentId: parent.data.id } }), 1);
+    assert.equal(await database.prisma.documentRevision.count({ where: { documentId: child.data.id } }), 1);
+    assert((await editor.send('GET', parentPath)).data.archivedAt);
+  });
+
+  await t.test('hierarchy depth includes the entire moved subtree and live storage remains unchanged', async () => {
+    let last: string | null = null, depth31: string | null = null;
+    for (let depth = 1; depth <= 32; depth++) {
+      const created = await editor.send('POST', `/api/v1/spaces/${spaceId}/documents`, { title: `Depth ${depth}`, content: content('Bounded depth'), parentDocumentId: last });
+      assert.equal(created.status, 201); last = created.data.id; if (depth === 31) depth31 = created.data.id;
+    }
+    const deep = await editor.send('POST', `/api/v1/spaces/${spaceId}/documents`, { title: 'Too deep', content: content('Rejected'), parentDocumentId: last });
+    expectProblem(deep, 409); assert.equal(deep.data.code, 'DOCUMENT_HIERARCHY_TOO_DEEP');
+    const root = await editor.send('POST', `/api/v1/spaces/${spaceId}/documents`, { title: 'Moving subtree root', content: content('Native root') });
+    const child = await editor.send('POST', `/api/v1/spaces/${spaceId}/documents`, { title: 'Moving subtree child', content: content('Native child'), parentDocumentId: root.data.id });
+    assert.equal(child.status, 201);
+    const denied = await editor.send('POST', `/api/v1/documents/${root.data.id}/move`, { parentDocumentId: depth31 }, { 'if-match': String(root.headers.etag) });
+    expectProblem(denied, 409); assert.equal(denied.data.code, 'DOCUMENT_HIERARCHY_TOO_DEEP');
+    const enrolled = await core.documents.live.enroll(new Headers({ cookie: editor.cookie }), root.data.id, String(root.headers.etag));
+    const before = await database.prisma.documentLive.findFirstOrThrow({ where: { documentId: root.data.id } });
+    const liveParent = await editor.send('POST', `/api/v1/spaces/${spaceId}/documents`, { title: 'Live organization parent', content: content('Parent') });
+    assert.equal(liveParent.status, 201);
+    const moved = await editor.send('POST', `/api/v1/documents/${root.data.id}/move`, { parentDocumentId: liveParent.data.id }, { 'if-match': enrolled.documentEtag });
+    assert.equal(moved.status, 200); assert.equal(moved.data.editingMode, 'live');
+    assert.deepEqual(await database.prisma.documentLive.findFirstOrThrow({ where: { documentId: root.data.id } }), before);
+    assert.equal(moved.data.currentRevisionNumber, 1);
+  });
+
+
+  await t.test('a queued move rechecks a revoked grant without changing hierarchy, versions or history', async () => {
+    const parent = await editor.send('POST', `/api/v1/spaces/${spaceId}/documents`, { title: 'Revocation target', content: content('Target') });
+    const child = await editor.send('POST', `/api/v1/spaces/${spaceId}/documents`, { title: 'Revoked moving document', content: content('Complete retained body') });
+    assert.equal(parent.status, 201); assert.equal(child.status, 201);
+    const before = await database.prisma.document.findUniqueOrThrow({ where: { id: child.data.id } });
+    const lock = await database.pool.connect(); await lock.query('BEGIN');
+    let pending: ReturnType<typeof editor.send> | undefined;
+    try {
+      await lock.query('SELECT "id" FROM "Space" WHERE "id" = $1 FOR UPDATE', [spaceId]);
+      pending = editor.send('POST', `/api/v1/documents/${child.data.id}/move`, { parentDocumentId: parent.data.id }, { 'if-match': String(child.headers.etag) });
+      let blocked = false;
+      for (let i = 0; i < 100; i++) { if (await blockedSpaceWriters() === 1) { blocked = true; break; } await delay(10); }
+      assert(blocked, 'The move must be waiting for the space lock');
+      await lock.query('DELETE FROM "SpaceMembership" WHERE "spaceId" = $1 AND "userId" = $2', [spaceId, editorUser.id]);
+      await lock.query('UPDATE "Space" SET "lockVersion" = "lockVersion" + 1 WHERE "id" = $1', [spaceId]);
+      await lock.query('COMMIT'); expectProblem(await pending, 404);
+      assert.deepEqual(await database.prisma.document.findUniqueOrThrow({ where: { id: child.data.id } }), before);
+      assert.equal(await database.prisma.documentRevision.count({ where: { documentId: child.data.id } }), 1);
+      assert.equal((await editor.send('GET', '/api/v1/me')).status, 200);
+    } finally { await lock.query('ROLLBACK'); lock.release(); if (pending) await Promise.allSettled([pending]); }
+  });
+
 });

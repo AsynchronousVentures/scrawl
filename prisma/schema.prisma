@@ -119,6 +119,9 @@ model Document {
   slug                  String             @db.VarChar(80)
   spaceId               String             @db.Uuid
   space                 Space              @relation(fields: [spaceId], references: [id], onDelete: Restrict)
+  parentDocumentId      String?            @db.Uuid
+  parent                Document?          @relation("DocumentTree", fields: [parentDocumentId, spaceId], references: [id, spaceId], onDelete: NoAction, onUpdate: NoAction)
+  children              Document[]         @relation("DocumentTree")
   currentRevisionNumber Int
   head                  DocumentRevision   @relation("DocumentHead", fields: [id, currentRevisionNumber], references: [documentId, revisionNumber], onDelete: NoAction, onUpdate: NoAction)
   lockVersion           Int                @default(1)
@@ -137,6 +140,8 @@ model Document {
   attachments           Attachment[]
   publication           Publication?
 
+  @@unique([id, spaceId])
+  @@index([spaceId, parentDocumentId, archivedAt, id])
   @@unique([spaceId, slug])
   @@index([spaceId, archivedAt, id])
 }

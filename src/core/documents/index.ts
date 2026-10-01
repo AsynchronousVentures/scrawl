@@ -86,6 +86,7 @@ function revisionDto(revision: DocumentRevision) {
 function documentSummary(document: Document & { head: Pick<DocumentRevision, 'title'>; space: { slug: string } }) {
   return {
     id: document.id, slug: document.slug, spaceId: document.spaceId, spaceSlug: document.space.slug,
+    parentDocumentId: document.parentDocumentId,
     editingMode: document.liveEpoch ? 'live' as const : 'solo' as const,
     currentRevisionNumber: document.currentRevisionNumber,
     lockVersion: document.lockVersion, title: document.head.title, createdAt: document.createdAt.toISOString(),
@@ -320,6 +321,38 @@ export function createDocuments(prisma: PrismaClient, identity: Identity, spaces
     });
   }
 
+  // Every structural operation holds the exclusive space lock. This serializes
+  // reciprocal moves and archive/create races without locking an entire subtree.
+  async function validateParent(tx: Prisma.TransactionClient, spaceId: string, parentId: string | null, movingId?: string) {
+    if (!parentId) return;
+    const parent = await tx.document.findFirst({ where: { id: parentId, spaceId }, select: { archivedAt: true } });
+    if (!parent) throw new HttpProblem(404, 'NOT_FOUND');
+    if (parent.archivedAt) throw new HttpProblem(409, 'PARENT_DOCUMENT_ARCHIVED');
+    const ancestors = await tx.$queryRaw<Array<{ id: string; depth: number }>>`
+      WITH RECURSIVE ancestors AS (
+        SELECT "id", "parentDocumentId", 1 AS depth FROM "Document" WHERE "id" = ${parentId}::uuid AND "spaceId" = ${spaceId}::uuid
+        UNION ALL
+        SELECT d."id", d."parentDocumentId", a.depth + 1 FROM "Document" d
+        JOIN ancestors a ON d."id" = a."parentDocumentId"
+        WHERE d."spaceId" = ${spaceId}::uuid AND a.depth <= 32
+      ) SELECT "id", depth FROM ancestors`;
+    if (ancestors.some(ancestor => ancestor.id === movingId)) throw new HttpProblem(409, 'DOCUMENT_HIERARCHY_CYCLE');
+    let height = 1;
+    if (movingId) {
+      const [subtree] = await tx.$queryRaw<Array<{ height: number }>>`
+        WITH RECURSIVE descendants AS (
+          SELECT "id", 1 AS depth FROM "Document" WHERE "id" = ${movingId}::uuid AND "spaceId" = ${spaceId}::uuid
+          UNION ALL
+          SELECT d."id", child.depth + 1 FROM "Document" d JOIN descendants child ON d."parentDocumentId" = child."id"
+          WHERE d."spaceId" = ${spaceId}::uuid AND child.depth <= 32
+        ) SELECT max(depth)::int AS height FROM descendants`;
+      height = subtree?.height ?? 1;
+    }
+    if (Math.max(...ancestors.map(ancestor => ancestor.depth)) + height > 32) {
+      throw new HttpProblem(409, 'DOCUMENT_HIERARCHY_TOO_DEEP');
+    }
+  }
+
   async function append(tx: Prisma.TransactionClient, document: Head, actor: Actor,
     snapshot: { title: string; content: ReturnType<typeof content>; changeNote: string | null }) {
     const revisionNumber = document.currentRevisionNumber + 1;
@@ -346,6 +379,10 @@ export function createDocuments(prisma: PrismaClient, identity: Identity, spaces
   async function lifecycle(headers: Headers, id: string, expectedEtag: string | undefined, archive: boolean) {
     return mutate(headers, id, expectedEtag, async (tx, document, actor) => {
       if (Boolean(document.archivedAt) === archive) return document;
+      if (archive && await tx.document.count({ where: { parentDocumentId: document.id, archivedAt: null } })) {
+        throw new HttpProblem(409, 'DOCUMENT_HAS_ACTIVE_CHILDREN');
+      }
+      if (!archive) await validateParent(tx, document.spaceId, document.parentDocumentId);
       await tx.document.update({ where: { id: document.id }, data: {
         archivedAt: archive ? new Date() : null, archivedBy: archive ? actor.id : null,
         ...(archive ? { availabilityVersion: { increment: 1 } } : {}),
@@ -457,15 +494,20 @@ export function createDocuments(prisma: PrismaClient, identity: Identity, spaces
     },
     async create(headers: Headers, spaceId: string, input: unknown) {
       const principal = await identity.resolve(headers);
-      const fields = record(input, ['title', 'content', 'changeNote']);
+      const fields = record(input, ['title', 'content', 'changeNote', 'parentDocumentId']);
+      const parentDocumentId = fields.parentDocumentId ?? null;
+      if (parentDocumentId !== null && (typeof parentDocumentId !== 'string' || !uuid.test(parentDocumentId))) {
+        throw new HttpProblem(400, 'INVALID_REQUEST');
+      }
       const snapshot = { title: title(fields.title), content: content(fields.content), changeNote: changeNote(fields.changeNote) };
       return prisma.$transaction(async (tx) => {
         const actor = await spaces.lockForWrite(tx, principal, spaceId);
+        await validateParent(tx, spaceId, parentDocumentId);
         const base = slugify(snapshot.title, 'document');
         const occupied = await tx.document.findMany({ where: { spaceId, OR: [{ slug: base }, { slug: { startsWith: `${base}-` } }] }, select: { slug: true } });
         const slug = availableSlug(base, occupied.map(document => document.slug));
         const document = await tx.document.create({ data: {
-          id: randomUUID(), slug, spaceId, currentRevisionNumber: 1, createdBy: actor.id,
+          id: randomUUID(), slug, spaceId, parentDocumentId, currentRevisionNumber: 1, createdBy: actor.id,
         } });
         const revisionId = randomUUID();
         await tx.documentRevision.create({ data: {
@@ -514,6 +556,21 @@ export function createDocuments(prisma: PrismaClient, identity: Identity, spaces
         },
         content: content(revisionDto(revision).content).content,
       };
+    },
+    async move(headers: Headers, id: string, input: unknown, expectedEtag?: string) {
+      const fields = record(input, ['parentDocumentId']);
+      const parentDocumentId = fields.parentDocumentId;
+      if (parentDocumentId !== null && (typeof parentDocumentId !== 'string' || !uuid.test(parentDocumentId))) {
+        throw new HttpProblem(400, 'INVALID_REQUEST');
+      }
+      return mutate(headers, id, expectedEtag, async (tx, document) => {
+        await validateParent(tx, document.spaceId, parentDocumentId, document.id);
+        if (document.parentDocumentId === parentDocumentId) return document;
+        // Position is lifecycle metadata, outside live content and immutable revisions.
+        return tx.document.update({ where: { id: document.id }, data: {
+          parentDocumentId, lockVersion: { increment: 1 },
+        }, include: { head: true, space: { select: { slug: true } } } });
+      });
     },
     async update(headers: Headers, id: string, input: unknown, expectedEtag?: string) {
       const fields = record(input, ['title', 'content', 'changeNote']);

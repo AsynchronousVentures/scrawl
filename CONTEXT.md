@@ -13,3 +13,5 @@ An **attachment** is an immutable file owned by one document. A **revision attac
 A **lock version** guards a document mutation. A **revision number** counts saved content snapshots. An **availability version** invalidates publication approval after archive. They are separate counters; publishing and lifecycle changes do not create content revisions.
 
 A **search result** describes the current saved, non-archived head visible under current access grants. Search is derived state, never a private draft or historical revision lookup.
+
+A **parent document** organizes related child documents in the same space. A **root document** has no parent. This hierarchy does not grant access or make content public.

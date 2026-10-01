@@ -360,6 +360,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/documents/{id}/move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Move within the same space or to its root. Structure changes the lock version, not content history or publishing. */
+        post: operations["moveDocument"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/documents/{id}/publication": {
         parameters: {
             query?: never;
@@ -951,6 +968,8 @@ export interface operations {
                         /** Format: uuid */
                         id: string;
                         lockVersion: number;
+                        /** Format: uuid */
+                        parentDocumentId: string | null;
                         revision: {
                             authorId: string;
                             changeNote: string | null;
@@ -1067,6 +1086,8 @@ export interface operations {
                         /** Format: uuid */
                         id: string;
                         lockVersion: number;
+                        /** Format: uuid */
+                        parentDocumentId: string | null;
                         revision: {
                             authorId: string;
                             changeNote: string | null;
@@ -1170,6 +1191,8 @@ export interface operations {
                         /** Format: uuid */
                         id: string;
                         lockVersion: number;
+                        /** Format: uuid */
+                        parentDocumentId: string | null;
                         revision: {
                             authorId: string;
                             changeNote: string | null;
@@ -1690,6 +1713,8 @@ export interface operations {
                         /** Format: uuid */
                         id: string;
                         lockVersion: number;
+                        /** Format: uuid */
+                        parentDocumentId: string | null;
                         revision: {
                             authorId: string;
                             changeNote: string | null;
@@ -1799,6 +1824,8 @@ export interface operations {
                             /** Format: uuid */
                             id: string;
                             lockVersion: number;
+                            /** Format: uuid */
+                            parentDocumentId: string | null;
                             revision: {
                                 authorId: string;
                                 changeNote: string | null;
@@ -2611,6 +2638,113 @@ export interface operations {
             };
         };
     };
+    moveDocument: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description One strong ETag from this document; missing is 428, stale is 412. */
+                "if-match"?: string;
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: uuid */
+                    parentDocumentId: string | null;
+                };
+            };
+        };
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: date-time */
+                        archivedAt: string | null;
+                        archivedBy: string | null;
+                        /** Format: date-time */
+                        createdAt: string;
+                        createdBy: string;
+                        currentRevisionNumber: number;
+                        /** @enum {string} */
+                        editingMode: "solo" | "live";
+                        /** Format: uuid */
+                        id: string;
+                        lockVersion: number;
+                        /** Format: uuid */
+                        parentDocumentId: string | null;
+                        revision: {
+                            authorId: string;
+                            changeNote: string | null;
+                            content: {
+                                document: {
+                                    [key: string]: unknown;
+                                }[];
+                                /** @enum {string} */
+                                editorVersion: "0.55.0";
+                                /** @enum {string} */
+                                format: "blocknote-json";
+                                /** @enum {integer} */
+                                schemaVersion: 1;
+                            };
+                            /** Format: date-time */
+                            createdAt: string;
+                            /** Format: uuid */
+                            documentId: string;
+                            /** Format: uuid */
+                            id: string;
+                            plainText: string;
+                            revisionNumber: number;
+                            title: string;
+                        };
+                        slug: string;
+                        /** Format: uuid */
+                        spaceId: string;
+                        spaceSlug: string;
+                        /** Format: date-time */
+                        updatedAt: string;
+                    };
+                };
+            };
+        };
+    };
     readDocumentPublication: {
         parameters: {
             query?: never;
@@ -2890,6 +3024,8 @@ export interface operations {
                         /** Format: uuid */
                         id: string;
                         lockVersion: number;
+                        /** Format: uuid */
+                        parentDocumentId: string | null;
                         revision: {
                             authorId: string;
                             changeNote: string | null;
@@ -3138,6 +3274,8 @@ export interface operations {
                         /** Format: uuid */
                         id: string;
                         lockVersion: number;
+                        /** Format: uuid */
+                        parentDocumentId: string | null;
                         revision: {
                             authorId: string;
                             changeNote: string | null;
@@ -3622,6 +3760,8 @@ export interface operations {
                             /** Format: uuid */
                             id: string;
                             lockVersion: number;
+                            /** Format: uuid */
+                            parentDocumentId: string | null;
                             slug: string;
                             /** Format: uuid */
                             spaceId: string;
@@ -3660,6 +3800,8 @@ export interface operations {
                         /** @enum {integer} */
                         schemaVersion: 1;
                     };
+                    /** Format: uuid */
+                    parentDocumentId?: string | null;
                     title: string;
                 };
             };
@@ -3714,6 +3856,8 @@ export interface operations {
                         /** Format: uuid */
                         id: string;
                         lockVersion: number;
+                        /** Format: uuid */
+                        parentDocumentId: string | null;
                         revision: {
                             authorId: string;
                             changeNote: string | null;
@@ -3810,6 +3954,8 @@ export interface operations {
                         /** Format: uuid */
                         id: string;
                         lockVersion: number;
+                        /** Format: uuid */
+                        parentDocumentId: string | null;
                         revision: {
                             authorId: string;
                             changeNote: string | null;

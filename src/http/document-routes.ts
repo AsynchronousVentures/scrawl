@@ -41,6 +41,7 @@ const revisionSchema = {
 const documentProperties = {
   id: { type: 'string', format: 'uuid' }, spaceId: { type: 'string', format: 'uuid' },
   slug: slugSchema, spaceSlug: slugSchema,
+  parentDocumentId: { type: ['string', 'null'], format: 'uuid' },
   editingMode: { type: 'string', enum: ['solo', 'live'] },
   currentRevisionNumber: { type: 'integer', minimum: 1 }, lockVersion: { type: 'integer', minimum: 1 },
   createdAt: { type: 'string', format: 'date-time' }, createdBy: { type: 'string' },
@@ -48,7 +49,7 @@ const documentProperties = {
   archivedAt: { type: ['string', 'null'], format: 'date-time' }, archivedBy: { type: ['string', 'null'] },
 } as const;
 const documentRequired = [
-  'id', 'slug', 'spaceId', 'spaceSlug', 'editingMode', 'currentRevisionNumber', 'lockVersion', 'createdAt', 'createdBy', 'updatedAt', 'archivedAt', 'archivedBy',
+  'id', 'slug', 'spaceId', 'spaceSlug', 'parentDocumentId', 'editingMode', 'currentRevisionNumber', 'lockVersion', 'createdAt', 'createdBy', 'updatedAt', 'archivedAt', 'archivedBy',
 ] as const;
 export const documentSchema = {
   type: 'object', additionalProperties: false, required: [...documentRequired, 'revision'],
@@ -112,6 +113,7 @@ export function registerDocumentRoutes(app: FastifyInstance, core: Core, collabo
     operationId: 'createDocument', tags: ['Documents'], params: documentParams,
     body: { type: 'object', additionalProperties: false, required: ['title', 'content'], properties: {
       title: titleSchema, content: contentSchema, changeNote: changeNoteSchema,
+      parentDocumentId: { type: ['string', 'null'], format: 'uuid' },
     } },
     response: { 201: documentSchema, ...errors },
   } }, async (request, reply) => {
@@ -151,6 +153,18 @@ export function registerDocumentRoutes(app: FastifyInstance, core: Core, collabo
     const exported = await core.documents.exportNative(fromNodeHeaders(request.headers), request.params.id);
     return reply.header('content-disposition', `attachment; filename="scrawl-document-${exported.document.id}.json"`)
       .type('application/json').send(exported);
+  });
+
+  app.post<{ Params: { id: string }; Body: unknown }>('/api/v1/documents/:id/move', { schema: {
+    operationId: 'moveDocument', tags: ['Documents'], params: documentParams, headers: preconditionHeaders,
+    description: 'Move within the same space or to its root. Structure changes the lock version, not content history or publishing.',
+    body: { type: 'object', additionalProperties: false, required: ['parentDocumentId'], properties: {
+      parentDocumentId: { type: ['string', 'null'], format: 'uuid' },
+    } },
+    response: { 200: documentSchema, ...errors },
+  } }, async (request, reply) => {
+    const document = await core.documents.move(fromNodeHeaders(request.headers), request.params.id, request.body, request.headers['if-match']);
+    return reply.header('etag', documentEtag(document)).send(document);
   });
 
   app.patch<{ Params: { id: string }; Body: unknown }>('/api/v1/documents/:id', { schema: {

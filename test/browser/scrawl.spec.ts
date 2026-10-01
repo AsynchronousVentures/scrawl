@@ -2325,3 +2325,40 @@ test('save shortcut does not write from a space dialog or a reader session', asy
     expect((await readDocument(context)).data.currentRevisionNumber).toBe(1);
   } finally { await reader.close(); }
 });
+
+test('an authorized structural move preserves readable links and forces deliberate reconciliation of an open draft', async ({ page, context, browser }) => {
+  await login(page); const original = await readDocument(context);
+  expect(original.data.parentDocumentId).toBeNull();
+  const parentResponse = await apiRequest(context, `/api/v1/spaces/${seeded.spaceId}/documents`, {
+    method: 'POST', headers: { origin: demo.origin }, data: { title: 'Organization API parent', content: original.data.revision.content },
+  });
+  expect(parentResponse.status()).toBe(201);
+  const parent: unknown = await parentResponse.json();
+  if (!parent || typeof parent !== 'object' || !('id' in parent) || typeof parent.id !== 'string') throw new Error('Missing parent identity');
+  await title(page).fill('Complete local title after structural move'); await body(page).fill('Complete unsaved body after structural move.');
+  const moved = await apiRequest(context, `/api/v1/documents/${seeded.documentId}/move`, {
+    method: 'POST', headers: { origin: demo.origin, 'if-match': original.etag }, data: { parentDocumentId: parent.id },
+  });
+  expect(moved.status()).toBe(200);
+  const latest = await readDocument(context);
+  expect(latest.data.parentDocumentId).toBe(parent.id); expect(latest.data.currentRevisionNumber).toBe(1);
+  expect(latest.data.revision).toEqual(original.data.revision); expect(latest.data.slug).toBe(original.data.slug);
+  await save(page).click(); await expect(page.getByRole('heading', { name: 'Save conflict', exact: true })).toBeVisible();
+  await expect(title(page)).toHaveValue('Complete local title after structural move'); await expect(body(page)).toHaveText('Complete unsaved body after structural move.');
+  await page.getByRole('button', { name: 'Use my changes', exact: true }).click(); await save(page).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved · revision 2' })).toBeVisible();
+  const saved = await readDocument(context); expect(saved.data.parentDocumentId).toBe(parent.id); expect(saved.data.currentRevisionNumber).toBe(2);
+  await page.reload(); await expect(title(page)).toHaveValue(saved.data.revision.title);
+  await expect(body(page)).toHaveText('Complete unsaved body after structural move.');
+  await expect(page).toHaveURL(`${demo.origin}/spaces/${original.data.spaceSlug}/documents/${original.data.slug}`);
+  const reader = await browser.newContext(), outsider = await browser.newContext();
+  try {
+    const readOnly = await reader.newPage(); await login(readOnly, 'reader', page.url());
+    await expect(title(readOnly)).toHaveValue(saved.data.revision.title); await expect(body(readOnly)).toHaveAttribute('aria-readonly', 'true'); await expect(save(readOnly)).toHaveCount(0);
+    const denied = await outsider.newPage(); await login(denied, 'outsider', page.url());
+    await expect(denied.getByText(/No accessible spaces|Access to this document is unavailable/).first()).toBeVisible();
+    await expect(denied.getByRole('navigation', { name: 'Documents', exact: true })).toHaveCount(0); await expect(title(denied)).toHaveCount(0); await expect(body(denied)).toHaveCount(0);
+    const response = await apiRequest(outsider, `/api/v1/documents/${seeded.documentId}`); expect(response.status()).toBe(404);
+    expect(await response.text()).not.toContain('parentDocumentId'); expect(await response.text()).not.toContain('Organization API parent');
+  } finally { await reader.close(); await outsider.close(); }
+});

@@ -486,7 +486,7 @@ test('P1 identity and space acceptance against migrated PostgreSQL and real HTTP
       '/api/v1/collaboration',
       '/api/v1/search', '/api/v1/attachments/{id}/content', '/api/v1/documents/{id}/attachments',
       '/api/v1/spaces/by-slug/{slug}', '/api/v1/spaces/{id}/documents/by-slug/{slug}',
-      '/api/v1/documents/{id}', '/api/v1/documents/{id}/archive', '/api/v1/documents/{id}/restore',
+      '/api/v1/documents/{id}', '/api/v1/documents/{id}/move', '/api/v1/documents/{id}/archive', '/api/v1/documents/{id}/restore',
       '/api/v1/documents/{id}/export',
       '/api/v1/documents/{id}/revisions', '/api/v1/documents/{id}/revisions/{revisionId}', '/api/v1/documents/{id}/unarchive',
       '/api/v1/users/lookup', '/api/v1/spaces/{id}/members',

@@ -18,7 +18,7 @@ Use text-compatible foreign keys for auth user IDs rather than assuming the libr
 
 ## P2: document identity and snapshots
 
-`Document`: stable ID, space ID, persisted slug, currentRevisionNumber, monotonic lockVersion, availabilityVersion, createdAt, createdBy, updatedAt, archivedAt (nullable), archivedBy (nullable).
+`Document`: stable ID, space ID, nullable parentDocumentId, persisted slug, currentRevisionNumber, monotonic lockVersion, availabilityVersion, createdAt, createdBy, updatedAt, archivedAt (nullable), archivedBy (nullable).
 
 `DocumentRevision`: stable ID, document ID, revision number, title, content format, content schema version, producing editor version, body JSONB, derived plain text, author ID, timestamp, optional change note.
 
@@ -103,7 +103,9 @@ Private comment commands use the supplied Yjs thread store on a validated clone 
 
 ## Add only with the feature
 
-A document hierarchy adds a same-space parent reference, cycle protection and explicit archive-with-children policy. Reject archive of a page with active children initially; no silent recursive hide/move. Cross-space moves are deferred.
+The hierarchy core adds a nullable same-space parent reference, enforced by a composite foreign key, plus core cycle/depth protection under the exclusive space lock. Migration nine leaves existing documents at the root without rewriting content/history/versions. Child creation accepts `parentDocumentId`; `POST /api/v1/documents/:id/move` requires the current document ETag and a parent ID or null for the root. A structural change increments lockVersion, preserves content revision numbers, slugs, live bytes and publication approval; an unchanged parent is a no-op. Maximum hierarchy depth is 32, including the entire moved subtree.
+
+Archive rejects a parent with active children; an archived parent cannot receive new/active children. Unarchive requires an active parent, or an explicit move to an active parent/root first. No recursive hide/move, cross-space move, per-document permission override or publication cascade is added. The connected navigation is not yet implemented. See [ADR 0004](adr/0004-document-organization.md).
 
 Whole-instance backup and document export remain distinct. Future content import must remap IDs, preserve attribution as safe metadata, assign a destination space, and never escalate membership or restore public grants implicitly. No import or full backup system is implemented.
 
