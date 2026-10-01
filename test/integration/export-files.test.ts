@@ -146,12 +146,12 @@ test('authorized PDF/DOCX snapshots and private images against PostgreSQL and re
   assert(typeof otherRevisionId === 'string');
   const revisionCount = () => database.prisma.documentRevision.count({ where: { documentId } });
 
-  async function textFrom(response: Awaited<ReturnType<typeof owner.send>>, format: 'pdf' | 'docx') {
+  async function textFrom(response: Awaited<ReturnType<typeof owner.send>>, format: 'pdf' | 'docx', selected: 'current' | 'historical' = 'current') {
     assert.equal(response.status, 200);
     assert.equal(response.headers['cache-control'], 'no-store');
     assert.equal(response.headers['x-content-type-options'], 'nosniff');
     assert.equal(response.headers.etag, undefined);
-    assert(String(response.headers['content-disposition']).includes(`scrawl-document-${documentId}-revision-`));
+    assert.equal(response.headers['content-disposition'], `attachment; filename="scrawl-synthetic-${selected}-file-title-revision-${selected === 'historical' ? 1 : 2}.${format}"`);
     if (format === 'docx') {
       assert.equal(response.headers['content-type'], 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
       const zip = await JSZip.loadAsync(response.bytes);
@@ -196,7 +196,7 @@ test('authorized PDF/DOCX snapshots and private images against PostgreSQL and re
           'Stored private image caption', 'Stored private file caption']) assert(text.includes(expected));
         assert(!text.includes('Historical rendered body'));
       }
-      const old = await textFrom(await reader.send('GET', `${path}/exports/${format}?revisionId=${firstRevisionId}`), format);
+      const old = await textFrom(await reader.send('GET', `${path}/exports/${format}?revisionId=${firstRevisionId}`), format, 'historical');
       assert(old.includes('Synthetic historical file title'));
       assert(old.includes('Historical rendered body'));
       assert(!old.includes('Current rendered body') && !old.includes('Stored private image caption'));

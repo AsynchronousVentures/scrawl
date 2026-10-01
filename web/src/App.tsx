@@ -657,10 +657,9 @@ export function App() {
     const ticket = generation.current, id = base.document.id;
     setSaveError(''); setNotice(''); setBusyLabel('Exporting…'); setBusy(true);
     try {
-      const blob = format ? await api.exportFile(id, format, revisionId)
-        : new Blob([JSON.stringify(await api.export(id), null, 2) + '\n'], { type: 'application/json' });
+      const exported = format ? await api.exportFile(id, format, revisionId) : await api.export(id);
       if (ticket !== generation.current) return;
-      downloadFile(blob, `scrawl-document-${id}${revisionId ? `-revision-${revisionId}` : ''}.${format ?? 'json'}`);
+      downloadFile(exported.blob, exported.filename);
       setNotice(`Exported ${revisionId ? 'the selected saved revision' : 'the saved revision'} as ${format ? format.toUpperCase() : 'native JSON'}.${dirty ? ' Your unsaved draft is not included.' : ''}`);
     } catch (error) { if (ticket === generation.current && !unavailable(error)) setSaveError(failureMessage(error)); }
     finally { setBusy(false); }

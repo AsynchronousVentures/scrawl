@@ -256,3 +256,6 @@ The complete local regression on `b03d230` passes 97 real browser workflows, inc
 
 
 Use Document actions > Copy private link to copy the saved readable document address. This works for editors and readers, including when an editor has an unsaved title/body. It copies the stable saved location, leaves the draft and history alone, and grants no access or publication. If the browser refuses clipboard access, copy the address bar URL manually. Keyboard focus returns to Document actions. [Actual masked running interface](https://uwvqig7mu5.ufs.sh/f/tJOw1mn9psOE7HoTpqitwUWT3HxrEBYNkgzAoiu6SGqjCZDa).
+
+
+Exports now download as readable saved-snapshot names, such as `scrawl-start-here-revision-2.json`, rather than UUID filenames. Current native/PDF/DOCX downloads use the exported head; historical PDF/DOCX use the selected revision's own title and number. Unsaved titles/bodies never supply the filename or content. Native JSON from a selected older history entry remains planned. The existing preview has been restarted and its fresh role/publication checks pass, including actual native download names. No migration or reset is needed. The preceding complete 100-case browser suite passed; four focused post-change download workflows also pass.

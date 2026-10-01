@@ -12,6 +12,7 @@ import type { createDocuments } from '../../core/documents/index.js';
 import type { Attachments } from '../../core/attachments/index.js';
 import { HttpProblem } from '../../http/problems.js';
 import { contentSchema, validateContent, type NativeBlock, type NativeBlockSchema } from '../../shared/content.js';
+import { exportFilename } from '../../shared/export-filename.js';
 
 type DocumentAccess = Pick<ReturnType<typeof createDocuments>, 'exportNative' | 'readRevision'>;
 type AttachmentAccess = Pick<Attachments, 'read'>;
@@ -163,7 +164,7 @@ export function createExporting(documents: DocumentAccess, attachments: Attachme
       return {
         bytes,
         mimeType: format === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        filename: `scrawl-document-${documentId}-revision-${snapshot.revisionNumber}.${format}`,
+        filename: exportFilename(snapshot.title, snapshot.revisionNumber, format),
       };
     },
   };

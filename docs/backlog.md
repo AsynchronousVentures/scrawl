@@ -2,7 +2,7 @@
 
 P0-P4 below record the completed historical checkpoints and their acceptance criteria. [Status](status.md) distinguishes current implementation from verified behavior. The maintainer authorized this integration session to cross the earlier packet review boundaries, using small reviewable commits rather than another redesign. No calendar estimates are implied.
 
-The current dependency sequence is native BlockNote/private workflow, private attachments and supplied exporters, PostgreSQL 18 with 17 compatibility and authorized search, selected-revision publishing, isolated durable collaboration/comments, then optional AI. [The integration backlog](integration-backlog.md) tracks that work and its review state. The historical packet numbering does not override this sequence. Integration-branch pushes and a draft PR are authorized; the existing synthetic preview's public Tailscale Funnel on port 10000 is also explicitly authorized. Merging, new public exposure and production deployment are not.
+The current dependency sequence is native BlockNote/private workflow, private attachments and supplied exporters, the existing PostgreSQL 18 instance and authorized search, selected-revision publishing, isolated durable collaboration/comments, then optional AI. [The integration backlog](integration-backlog.md) tracks that work and its review state. The historical packet numbering does not override this sequence. Integration-branch pushes and a draft PR are authorized; the existing synthetic preview's public Tailscale Funnel on port 10000 is also explicitly authorized. Merging, new public exposure and production deployment are not.
 
 ## P0 — Verify and lock the existing foundation
 
@@ -86,13 +86,13 @@ Use the application's host, opaque stable public IDs, no-store caching, and no a
 
 ## P6 — Findability and lightweight organization
 
-**Depends on:** saved native content/plain text and current identity/membership policy for search. Search is integrated before publishing; document hierarchies remain a separate future assignment. **Goal:** make a growing private wiki navigable.
+**Depends on:** saved native content/plain text and current identity/membership policy for search. Search was integrated before publishing; same-space hierarchy is now implemented on the integration branch under ADR 0004. **Goal:** make a growing private wiki navigable.
 
-Add PostgreSQL full-text search over current authorized nonarchived heads, with title weighting, a language-neutral dictionary, bounded queries and plain excerpts. Apply current session/role/membership checks in SQL before ranking and limits. Keep the native content/history authoritative; generated vectors and their GIN index are rebuildable derived state. Use a fresh PostgreSQL 18 volume and preserve PostgreSQL 17 compatibility, rehearsing retained-data upgrades only on disposable copies.
+Add PostgreSQL full-text search over current authorized nonarchived heads, with title weighting, a language-neutral dictionary, bounded queries and plain excerpts. Apply current session/role/membership checks in SQL before ranking and limits. Keep the native content/history authoritative; generated vectors and their GIN index are rebuildable derived state. Use the existing PostgreSQL 18 instance only. Preserve legacy data and migration history without maintaining another version target or creating a new server/volume. Earlier disposable-copy upgrade rehearsals are historical verification.
 
-Optional same-space parents, cycle validation and a basic tree remain future work once a flat list is insufficient. Choose a deterministic order; drag/drop ranking is optional and not a prerequisite. Search does not authorize document hierarchy work in this session.
+Same-space parents, cycle/depth validation and alphabetical nested navigation are implemented and tested under the expanded integration assignment. Spaces remain the permission boundary, and position does not change readable links. Drag ordering, cross-space moves and hierarchy permission overrides remain separate future work.
 
-**Acceptance:** query a unique term in a forbidden page and receive no title/body/snippet/count evidence; permissions applied in the database query before results; archive excludes search; edit refreshes text; rebuild works. Bound search results and verify consistency with committed changes. Future hierarchy acceptance must reject cross-space/cyclic/self parents and archive with active children.
+**Acceptance:** query a unique term in a forbidden page and receive no title/body/snippet/count evidence; permissions applied in the database query before results; archive excludes search; edit refreshes text; rebuild works. Bound search results and verify consistency with committed changes. Hierarchy acceptance rejects cross-space/cyclic/self parents, depth over 32 and archive with active children; preserve revisions and live state through moves.
 
 ## P7 — Private attachments, then published attachment grants
 

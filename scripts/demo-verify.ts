@@ -8,6 +8,7 @@ import { chromium, expect, type APIResponse, type Page } from '@playwright/test'
 import { readDemoConfig, readDemoCredentials, readPrivateDemoEnvironment, readPrivateDemoFile, type DemoRole } from './demo-config.js';
 import { privateDemoOrigin } from './demo-server.js';
 import { validateContent } from '../src/shared/content.js';
+import { exportFilename } from '../src/shared/export-filename.js';
 
 /** Opt-in acceptance check of the retained synthetic demo, without setup/reset. */
 async function main() {
@@ -130,6 +131,10 @@ async function main() {
           for await (const chunk of stream) chunks.push(Buffer.from(chunk));
           const exported: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
           assert(exported && typeof exported === 'object' && 'content' in exported);
+          assert('revision' in exported && exported.revision && typeof exported.revision === 'object'
+            && 'title' in exported.revision && typeof exported.revision.title === 'string'
+            && 'revisionNumber' in exported.revision && typeof exported.revision.revisionNumber === 'number');
+          assert.equal(download.suggestedFilename(), exportFilename(exported.revision.title, exported.revision.revisionNumber, 'json'));
           assert.deepEqual(validateContent(exported.content).content, validateContent(saved.revision.content).content);
           if (role === 'administrator') {
             stage = 'saved native tables, checklists and code';

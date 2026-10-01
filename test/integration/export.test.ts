@@ -150,7 +150,7 @@ test('P3 native export against PostgreSQL and authenticated HTTP sessions', asyn
   function assertExport(response: Awaited<ReturnType<typeof admin.send>>) {
     assert.equal(response.status, 200);
     assert.match(String(response.headers['content-type']), /^application\/json/);
-    assert.equal(response.headers['content-disposition'], `attachment; filename="scrawl-document-${documentId}.json"`);
+    assert.equal(response.headers['content-disposition'], 'attachment; filename="scrawl-synthetic-current-export-title-revision-2.json"');
     assert.equal(response.headers['cache-control'], 'no-store');
     assert.equal(response.headers.etag, undefined);
     const exported = object(response.data);

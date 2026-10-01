@@ -5,6 +5,7 @@ import createClient from 'openapi-fetch';
 import { validateContent } from '@scrawl/content';
 import type { ContentEnvelope } from '@scrawl/content';
 import type { operations, paths } from './schema';
+import { downloadFilename } from './download';
 
 type JsonResponse<T extends keyof operations, S extends keyof operations[T]['responses']> =
   operations[T]['responses'][S] extends { content: { 'application/json': infer R } } ? R : never;
@@ -206,8 +207,10 @@ export const api = {
     return loaded(data, response);
   },
   async export(id: string) {
-    const { data } = await checked(client.GET('/api/v1/documents/{id}/export', { params: { path: { id } } }));
-    return { ...data, content: validateContent(data.content).content };
+    const { data, response } = await checked(client.GET('/api/v1/documents/{id}/export', { params: { path: { id } } }));
+    const exported = { ...data, content: validateContent(data.content).content };
+    return { blob: new Blob([JSON.stringify(exported, null, 2) + '\n'], { type: 'application/json' }),
+      filename: downloadFilename(response, 'json') };
   },
   async upload(id: string, file: File): Promise<Attachment> {
     const { data } = await checked(client.POST('/api/v1/documents/{id}/attachments', {
@@ -221,13 +224,13 @@ export const api = {
     return data;
   },
   async exportFile(id: string, format: ExportFormat, revisionId?: string) {
-    const { data } = await checked(client.GET('/api/v1/documents/{id}/exports/{format}', {
+    const { data, response } = await checked(client.GET('/api/v1/documents/{id}/exports/{format}', {
       params: { path: { id, format }, query: revisionId ? { revisionId } : {} }, parseAs: 'blob',
     }));
     const expected = format === 'pdf' ? 'application/pdf'
       : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
     if (data.type !== expected || !data.size) throw new ApiError(502);
-    return data;
+    return { blob: data, filename: downloadFilename(response, format) };
   },
   async resolveFileUrl(url: string) {
     return url.startsWith('/api/v1/attachments/') ? new URL(url, location.origin).href : url;

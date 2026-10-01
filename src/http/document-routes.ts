@@ -8,6 +8,7 @@ import { documentEtag } from '../core/documents/index.js';
 import { problemSchema } from './problems.js';
 import { slugSchema } from './slugs.js';
 import type { Collaboration } from '../capabilities/collaboration/index.js';
+import { exportFilename } from '../shared/export-filename.js';
 
 const contentSchema = {
   type: 'object', additionalProperties: false, required: ['format', 'schemaVersion', 'editorVersion', 'document'],
@@ -151,7 +152,7 @@ export function registerDocumentRoutes(app: FastifyInstance, core: Core, collabo
     response: { 200: nativeExportSchema, ...errors },
   } }, async (request, reply) => {
     const exported = await core.documents.exportNative(fromNodeHeaders(request.headers), request.params.id);
-    return reply.header('content-disposition', `attachment; filename="scrawl-document-${exported.document.id}.json"`)
+    return reply.header('content-disposition', `attachment; filename="${exportFilename(exported.revision.title, exported.revision.revisionNumber, 'json')}"`)
       .type('application/json').send(exported);
   });
 

@@ -72,6 +72,7 @@ test('official rich PDF/DOCX output embeds private images without external netwo
 
   const docx = await exporting.download(new Headers(), documentId, 'docx', revisionId);
   assert.equal(docx.mimeType, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+  assert.equal(docx.filename, 'scrawl-synthetic-rich-export-revision-2.docx');
   assert.equal(docx.bytes.subarray(0, 2).toString(), 'PK');
   const archive = await JSZip.loadAsync(docx.bytes);
   const xml = await archive.file('word/document.xml')!.async('text');
@@ -96,6 +97,7 @@ test('official rich PDF/DOCX output embeds private images without external netwo
 
   const pdf = await exporting.download(new Headers(), documentId, 'pdf');
   assert.equal(pdf.mimeType, 'application/pdf');
+  assert.equal(pdf.filename, 'scrawl-synthetic-rich-export-revision-2.pdf');
   assert.equal(pdf.bytes.subarray(0, 5).toString(), '%PDF-');
   const loading = getDocument({ data: new Uint8Array(pdf.bytes), useSystemFonts: false });
   const parsed = await loading.promise;

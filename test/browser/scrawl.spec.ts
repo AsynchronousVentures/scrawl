@@ -614,7 +614,7 @@ test('PDF and DOCX downloads use saved current or selected history and never che
     const download = page.waitForEvent('download');
     await page.getByRole('button', { name: `Export ${format.toUpperCase()}`, exact: true }).click();
     const file = await download;
-    expect(file.suggestedFilename()).toBe(`scrawl-document-${seeded.documentId}.${format}`);
+    expect(file.suggestedFilename()).toBe(`scrawl-synthetic-saved-file-export-revision-2.${format}`);
     const path = await file.path();
     if (!path) throw new Error('No rendered document download');
     const bytes = await readFile(path);
@@ -645,7 +645,9 @@ test('PDF and DOCX downloads use saved current or selected history and never che
     && new URL(response.url()).searchParams.get('revisionId') === seeded.revisionId);
   await history.getByRole('button', { name: 'Export DOCX', exact: true }).click();
   expect((await selected).status()).toBe(200);
-  const oldPath = await (await oldDownload).path();
+  const oldFile = await oldDownload;
+  expect(oldFile.suggestedFilename()).toBe('scrawl-release-checklist-revision-1.docx');
+  const oldPath = await oldFile.path();
   if (!oldPath) throw new Error('No selected revision download');
   const oldBody = (await JSZip.loadAsync(await readFile(oldPath))).file('word/document.xml');
   if (!oldBody) throw new Error('Selected DOCX has no body');
@@ -1009,7 +1011,7 @@ test('history restore appends a revision, archive preserves history, and native 
   const downloadPromise = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Export JSON', exact: true }).click();
   const download = await downloadPromise;
-  expect(download.suggestedFilename()).toBe(`scrawl-document-${seeded.documentId}.json`);
+  expect(download.suggestedFilename()).toBe('scrawl-release-checklist-revision-3.json');
   const stream = await download.createReadStream();
   const chunks: Buffer[] = [];
   for await (const chunk of stream) chunks.push(Buffer.from(chunk));
