@@ -956,8 +956,29 @@ test('nested native list undo/redo preserves another account\'s child and checkp
     await slashBlock(page, 'bullet', 'Bullet List'); await page.keyboard.insertText('Local parent');
     await page.keyboard.press('Enter'); await page.keyboard.press('Tab'); await page.keyboard.insertText('Local child');
     const peerChild = body(peer).locator('.bn-inline-content').filter({ hasText: 'Local child' });
-    await expect(peerChild).toBeVisible(); await peerChild.click(); await peer.keyboard.press('End');
+    await expect(peerChild).toBeVisible(); await peerChild.click();
+    // This child is the final block. A line-end key can leave the caret inside
+    // it; use document end for the intended append and prove the input position.
+    await peer.keyboard.press('ControlOrMeta+End');
     const beforeInsertion = await nativeSelectionEvidence(peer);
+    const atChildEnd = await peerChild.evaluate(inline => {
+      const selection = window.getSelection();
+      if (!selection?.isCollapsed || !selection.rangeCount || !selection.focusNode
+        || !inline.closest('[role="textbox"][contenteditable]')?.contains(selection.focusNode)) return false;
+      // Native caret endpoints may be text offsets or an editor-root boundary.
+      // Compare with the child text end, excluding supplied presence widgets.
+      const walker = document.createTreeWalker(inline, NodeFilter.SHOW_TEXT);
+      let lastText: Node | null = null;
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        if (node.textContent?.replace(/\u2060/g, '').length
+          && !node.parentElement?.closest('.bn-collaboration-cursor__base')) lastText = node;
+      }
+      if (!lastText) return false;
+      const end = document.createRange();
+      end.setStart(lastText, lastText.textContent?.length ?? 0); end.collapse(true);
+      return selection.getRangeAt(0).compareBoundaryPoints(Range.START_TO_START, end) >= 0;
+    });
+    expect(atChildEnd).toBe(true);
     await peer.keyboard.insertText(' with administrator contribution');
     const caret = { before: beforeInsertion, after: await nativeSelectionEvidence(peer) };
     try {
