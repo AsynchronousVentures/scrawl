@@ -724,7 +724,7 @@ export function App() {
     : liveChecking || liveState?.phase === 'connecting' ? 'Connecting shared document…'
     : liveState?.phase === 'closed' ? 'Connection closed · local work retained'
     : liveState?.pending ? 'Syncing changes · not saved as a revision'
-    : saveError ? 'Not saved · request failed'
+    : saveError ? (base && !dirty ? 'Request failed · saved version retained' : 'Not saved · request failed')
     : liveState && dirty ? `Shared changes · not saved as a revision · based on revision ${base?.document.currentRevisionNumber}`
     : dirty ? `Unsaved changes${base ? ` · based on revision ${base.document.currentRevisionNumber}` : ''}`
     : base?.document.archivedAt ? `Archived · revision ${base.document.currentRevisionNumber}` : `Saved · revision ${base?.document.currentRevisionNumber ?? ''}`;

@@ -2511,6 +2511,7 @@ test('organization parent archive is explicit and readers and outsiders cannot a
   await page.getByRole('button', { name: 'Archive', exact: true }).click();
   expect((await archive).status()).toBe(409);
   await expect(page.getByRole('alert')).toContainText('Move or archive child documents');
+  await expect(page.locator('.documentbar').getByRole('status')).toHaveText('Request failed · saved version retained');
   expect((await readDocument(context)).data).toEqual(parent.data);
   const readerContext = await browser.newContext(), outsiderContext = await browser.newContext();
   try {
@@ -2532,4 +2533,47 @@ test('organization parent archive is explicit and readers and outsiders cannot a
     await expect(outsider.getByText('Access controlled child', { exact: true })).toHaveCount(0);
     expect((await readDocument(context, child.id)).data).toEqual(child);
   } finally { await readerContext.close(); await outsiderContext.close(); }
+});
+
+test('organization assembles all authorized cursor pages before locating a child under its last-page parent', async ({ page, context }) => {
+  test.setTimeout(120_000); // Deliberately crosses the real 100-document API page boundary.
+  await login(page);
+  const original = await readDocument(context);
+  const created: Document[] = [];
+  for (let offset = 0; offset < 101; offset += 4) {
+    const batch = await Promise.all(Array.from({ length: Math.min(4, 101 - offset) }, async (_, index) => {
+      const response = await apiRequest(context, `/api/v1/spaces/${seeded.spaceId}/documents`, {
+        method: 'POST', headers: { origin: demo.origin },
+        data: { title: `Pagination document ${offset + index + 1}`, content: original.data.revision.content },
+      });
+      expect(response.status()).toBe(201);
+      return await response.json() as Document;
+    }));
+    created.push(...batch);
+  }
+  const ordered = [...created, original.data].sort((a, b) => a.id.localeCompare(b.id));
+  const child = ordered[0]!, parent = ordered.at(-1)!;
+  const before = await readDocument(context, child.id);
+  const moved = await apiRequest(context, `/api/v1/documents/${child.id}/move`, {
+    method: 'POST', headers: { origin: demo.origin, 'If-Match': before.etag }, data: { parentDocumentId: parent.id },
+  });
+  expect(moved.status()).toBe(200);
+  const firstPage = await apiRequest(context, `/api/v1/spaces/${seeded.spaceId}/documents?limit=100&includeArchived=true`);
+  expect(firstPage.status()).toBe(200);
+  const first = await firstPage.json() as operations['listDocuments']['responses'][200]['content']['application/json'];
+  expect(first.items).toHaveLength(100);
+  expect(first.items.some(item => item.id === parent.id)).toBe(false);
+  expect(first.nextCursor).toBeTruthy();
+  await page.goto(`${demo.origin}/spaces/${child.spaceSlug}/documents/${child.slug}`);
+  await expect(title(page)).toHaveValue(child.revision.title);
+  await expect(page.getByRole('navigation', { name: 'Document path' }).getByRole('link', { name: parent.revision.title, exact: true })).toBeVisible();
+  const navigation = page.getByRole('navigation', { name: 'Documents', exact: true });
+  await expect(navigation.getByRole('button', { name: `Child documents of ${parent.revision.title}`, exact: true })).toHaveAttribute('aria-expanded', 'true');
+  await expect(navigation.getByRole('link', { name: child.revision.title, exact: true })).toBeVisible();
+  expect((await readDocument(context, child.id)).data.revision).toEqual(before.data.revision);
+  await title(page).fill('Complete pagination draft remains local');
+  await page.getByLabel('Show archived', { exact: true }).check();
+  await expect(title(page)).toHaveValue('Complete pagination draft remains local');
+  await expect(navigation.getByRole('link', { name: parent.revision.title, exact: true })).toBeVisible();
+  expect((await readDocument(context, child.id)).data.revision).toEqual(before.data.revision);
 });
