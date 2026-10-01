@@ -1,5 +1,13 @@
 # Validation
 
+## Acknowledged live state through abrupt process death
+
+The owned browser fixture now has an explicit SIGKILL/restart operation for its child process. It preserves the same disposable PostgreSQL database, configuration, credentials and sessions, waits for observed process death and readiness, and never touches retained preview processes or data. A real two-account browser case verifies acknowledged native title/body/private comments, terminal read-only draft retention in both old tabs, and fresh authenticated recovery after the crash. The live record is byte-for-byte unchanged and history remains revision 1. A deliberate checkpoint then appends revision 2, including the body and excluding private comments.
+
+`npm run typecheck` and the focused browser case passed (`artifacts/live-crash-typecheck.log`, `artifacts/live-crash-focused.log`). Three independent fixture repetitions passed without retries in 47.6 seconds (`artifacts/live-crash-repetitions.log`). The preceding complete check passed 91 cases and all 20 live cases passed together. This new case brings the suite to 68 total; a full local 68-case run is not claimed. No application, migration or dependency changed.
+
+Both complete hosted matrices on `0b002f7` passed PostgreSQL 17 and 18: [PR](https://github.com/AsynchronousVentures/scrawl/actions/runs/36873075573), [push](https://github.com/AsynchronousVentures/scrawl/actions/runs/36873066901). They include all 66 browser workflows and 136 database cases per version under the bounded 25-minute job budget. Newer hosted results are pending. Fresh running-preview administrator/reader/outsider and anonymous publication/image checks also passed after the native reaction fix, with no revisions/reset (`artifacts/demo18/verification-native-reactions.log`). Collaboration remains disabled there; no retained content or credentials changed.
+
 ## Native reaction failure and pending guards
 
 The supplied picker previously dropped rejected reaction promises without displaying failure. The native REST store boundary now reports reaction pending/error state through the existing live session. Add/remove failures leave the accepted thread/live record byte-for-byte unchanged and display an error, with deliberate retry required. A held real add request keeps the sidebar open and blocks Back through Please wait; Keep editing retains the current document until the actual response. The supplied picker and keyboard-operated badges remain native UI. Reactions do not create revisions.

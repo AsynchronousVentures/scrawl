@@ -863,3 +863,51 @@ test('native reaction failures stay visible, preserve accepted threads and requi
   });
   expect(await page.evaluate(() => sessionStorage.length)).toBe(0);
 });
+
+test('abrupt process death preserves acknowledged native content and comments across separate authenticated sessions', async ({ page, context, browser }) => {
+  await login(page); await expect(title(page)).toBeVisible(); await enroll(page);
+  const administrator = await browser.newContext();
+  try {
+    const peer = await administrator.newPage(); await login(peer, 'administrator'); await expect(body(peer)).toBeEditable();
+    await body(page).focus(); await page.keyboard.press('ControlOrMeta+Home'); await page.keyboard.press('Shift+End');
+    await page.getByRole('button', { name: 'Add comment', exact: true }).click();
+    await page.locator('.bn-comment-editor [contenteditable="true"]').fill('Acknowledged private comment survives abrupt process death.');
+    const anchored = page.waitForResponse(response => response.request().method() === 'POST'
+      && new URL(response.url()).pathname.endsWith('/addToDocument'));
+    await page.locator('.bn-thread').getByRole('button', { name: 'Save', exact: true }).click(); expect((await anchored).status()).toBe(200);
+    await title(page).fill('Acknowledged live title across abrupt process death');
+    await body(page).focus(); await page.keyboard.press('ControlOrMeta+End'); await page.keyboard.insertText(' Acknowledged native crash recovery body.');
+    await expect(save(page)).toBeEnabled();
+    await expect(title(peer)).toHaveValue('Acknowledged live title across abrupt process death');
+    await expect(body(peer)).toContainText('Acknowledged native crash recovery body.');
+    const before = await demo.database.prisma.documentLive.findFirstOrThrow({ where: { documentId: seeded.documentId } });
+    expect((await latest(context)).currentRevisionNumber).toBe(1);
+    await demo.crashAndRestart();
+    for (const tab of [page, peer]) {
+      await expect(tab.getByText('The shared connection closed.', { exact: true })).toBeVisible();
+      await expect(title(tab)).toHaveValue('Acknowledged live title across abrupt process death');
+      await expect(body(tab)).toContainText('Acknowledged native crash recovery body.');
+      await expect(body(tab)).not.toBeEditable();
+    }
+    const recovered = await context.newPage(), recoveredPeer = await administrator.newPage();
+    try {
+      for (const tab of [recovered, recoveredPeer]) {
+        await tab.goto(page.url()); await expect(body(tab)).toBeEditable();
+        await expect(title(tab)).toHaveValue('Acknowledged live title across abrupt process death');
+        await expect(body(tab)).toContainText('Acknowledged native crash recovery body.');
+        await tab.locator('.document-comments > summary').click();
+        await expect(tab.locator('.document-comments')).toContainText('Acknowledged private comment survives abrupt process death.');
+      }
+      expect(await demo.database.prisma.documentLive.findFirstOrThrow({ where: { documentId: seeded.documentId } })).toEqual(before);
+      expect((await latest(context)).currentRevisionNumber).toBe(1);
+      await expect(save(recovered)).toBeEnabled(); await save(recovered).click();
+      await expect(recovered.getByText('Saved revision 2.', { exact: true })).toBeVisible();
+      const saved = await latest(context); expect(saved.currentRevisionNumber).toBe(2);
+      expect(saved.revision.title).toBe('Acknowledged live title across abrupt process death');
+      expect(saved.revision.plainText).toContain('Acknowledged native crash recovery body.');
+      expect(saved.revision.plainText).not.toContain('Acknowledged private comment'); validateContent(saved.revision.content);
+      expect(await demo.database.prisma.documentRevision.count({ where: { documentId: seeded.documentId } })).toBe(2);
+      for (const tab of [recovered, recoveredPeer]) expect(await tab.evaluate(() => localStorage.length + sessionStorage.length)).toBe(0);
+    } finally { await recovered.close(); await recoveredPeer.close(); }
+  } finally { await administrator.close(); }
+});

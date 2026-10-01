@@ -226,6 +226,22 @@ export async function createBrowserDemo(options: { collaboration?: boolean } = {
         await writeFile(environmentPath, Object.entries(values).map(([name, value]) => `${name}=${value}`).join('\n') + '\n', { mode: 0o600 });
         await startServer();
       },
+      async crashAndRestart() {
+        // Kill only the child created by this disposable fixture. Do not reset
+        // its database/configuration or invoke retained preview processes.
+        const child = server;
+        if (!child || child.exitCode !== null || child.signalCode !== null) throw new Error('Browser demo process is not running');
+        await new Promise<void>((done, reject) => {
+          const deadline = setTimeout(() => reject(new Error('Browser demo crash did not complete')), 12_000);
+          child.once('close', () => {
+            clearTimeout(deadline);
+            if (child.signalCode === 'SIGKILL') done(); else reject(new Error('Browser demo did not terminate by SIGKILL'));
+          });
+          if (!child.kill('SIGKILL')) { clearTimeout(deadline); reject(new Error('Browser demo crash could not be initiated')); }
+        });
+        server = undefined;
+        await startServer();
+      },
       async runDemoA() { await command('demo-a.ts'); },
       close,
     };
