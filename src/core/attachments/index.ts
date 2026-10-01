@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Asynchronous Ventures and contributors
 import { randomUUID, createHash } from 'node:crypto';
-import { mkdir, open, unlink } from 'node:fs/promises';
+import { mkdir, open, readFile, unlink } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { fileTypeFromBuffer } from 'file-type';
 import sharp from 'sharp';
@@ -66,6 +66,48 @@ export function createAttachments(prisma: PrismaClient, identity: Identity, spac
   return {
     async validateReferences(tx: Prisma.TransactionClient, documentId: string, parsedContent: unknown) {
       await ownedReferences(tx, documentId, parsedContent);
+    },
+    /** Caller owns the transaction and records files before writes for rollback cleanup. */
+    async copyReferences(tx: Prisma.TransactionClient, sourceId: string, targetId: string,
+      parsedContent: unknown, actorId: string, written: string[]) {
+      const ids = await ownedReferences(tx, sourceId, parsedContent);
+      const files = await tx.attachment.findMany({ where: { documentId: sourceId, id: { in: ids } } });
+      if (files.reduce((total, file) => total + file.size, 0) > MAX_DOCUMENT_BYTES) {
+        throw new HttpProblem(413, 'ATTACHMENT_QUOTA_EXCEEDED');
+      }
+      const replacements = new Map<string, string>();
+      for (const source of files) {
+        if (source.size > MAX_UPLOAD_BYTES) throw new HttpProblem(413, 'ATTACHMENT_TOO_LARGE');
+        const bytes = await readFile(join(root, source.id));
+        if (bytes.length !== source.size || createHash('sha256').update(bytes).digest('hex') !== source.sha256) {
+          throw new HttpProblem(500, 'ATTACHMENT_UNAVAILABLE');
+        }
+        const id = randomUUID();
+        await mkdir(root, { recursive: true, mode: 0o700 });
+        const file = await open(join(root, id), 'wx', 0o600);
+        written.push(id);
+        try { await file.writeFile(bytes); await file.sync(); } finally { await file.close(); }
+        await tx.attachment.create({ data: { id, documentId: targetId, name: source.name,
+          mimeType: source.mimeType, size: source.size, sha256: source.sha256, createdBy: actorId } });
+        replacements.set(source.id, id);
+      }
+      function rewrite(value: unknown): unknown {
+        if (Array.isArray(value)) return value.map(rewrite);
+        if (!value || typeof value !== 'object') return value;
+        return Object.fromEntries(Object.entries(value).map(([key, child]) => {
+          const source = (key === 'url' || key === 'href') && typeof child === 'string'
+            ? attachmentUrl.exec(child)?.[1]?.toLowerCase() : undefined;
+          return [key, source ? `/api/v1/attachments/${replacements.get(source)!}/content` : rewrite(child)];
+        }));
+      }
+      return rewrite(parsedContent);
+    },
+    async removeRolledBackCopies(ids: readonly string[]) {
+      // Preserve bytes when commit acknowledgement or the confirming read is uncertain.
+      for (const id of ids) {
+        const persisted = await prisma.attachment.findUnique({ where: { id } }).catch(() => undefined);
+        if (persisted === null) await unlink(join(root, id)).catch(() => {});
+      }
     },
     async upload(headers: Headers, documentId: string, name: string, bytes: Buffer) {
       const principal = await identity.resolve(headers);

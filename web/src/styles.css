@@ -159,6 +159,11 @@
 .path-menu summary { cursor: pointer; list-style: none; padding: 0 4px; min-width: 20px; text-align: center; }
 .path-menu summary::-webkit-details-marker { display: none; }
 .path-menu .menu-items { top: 100%; left: 0; right: 0; max-height: 50dvh; overflow: auto; }
+.copy-form { display: grid; gap: 10px; }
+.copy-form input { width: 100%; min-width: 0; }
+.copy-dialog p { overflow-wrap: anywhere; }
+.copy-dialog a.primary { display: inline-flex; align-items: center; min-height: 36px; padding: 7px 12px; border: 1px solid var(--accent); border-radius: 4px; background: var(--accent); color: var(--accent-ink); font-weight: 600; text-decoration: none; }
+.copy-dialog a.primary:hover { background: #c8dabb; border-color: #c8dabb; }
 .path-menu .menu-items a { display: block; padding: 8px; overflow-wrap: anywhere; }
 .path-menu .menu-items a:hover { background: var(--surface); }
 @media (max-width: 700px) {

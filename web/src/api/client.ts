@@ -178,6 +178,12 @@ export const api = {
     }));
     return loaded(data, response);
   },
+  async duplicate(id: string, revisionId: string, title: string) {
+    const { data, response } = await checked(client.POST('/api/v1/documents/{id}/duplicate', {
+      params: { path: { id } }, body: { revisionId, title },
+    }));
+    return loaded(data, response);
+  },
   async save(id: string, etag: string, draft: Draft) {
     const { data, response } = await checked(client.PATCH('/api/v1/documents/{id}', {
       params: { path: { id }, header: { 'if-match': etag } }, body: draft,

@@ -123,6 +123,19 @@ export function registerDocumentRoutes(app: FastifyInstance, core: Core, collabo
       .header('location', `/api/v1/documents/${document.id}`).send(document);
   });
 
+  app.post<{ Params: { id: string }; Body: unknown }>('/api/v1/documents/:id/duplicate', { schema: {
+    operationId: 'duplicateDocument', tags: ['Documents'], params: documentParams,
+    description: 'Create a solo root document in the same space from one selected saved revision, with independently owned private attachments. Does not mutate or checkpoint the source.',
+    body: { type: 'object', additionalProperties: false, required: ['title', 'revisionId'], properties: {
+      title: titleSchema, revisionId: { type: 'string', format: 'uuid' },
+    } },
+    response: { 201: documentSchema, ...errors },
+  } }, async (request, reply) => {
+    const document = await core.documents.duplicate(fromNodeHeaders(request.headers), request.params.id, request.body);
+    return reply.code(201).header('etag', documentEtag(document))
+      .header('location', `/api/v1/documents/${document.id}`).send(document);
+  });
+
   app.get<{ Params: { id: string }; Querystring: { limit?: number; cursor?: string; includeArchived?: boolean } }>(
     '/api/v1/spaces/:id/documents', { schema: {
       operationId: 'listDocuments', tags: ['Documents'], params: documentParams,

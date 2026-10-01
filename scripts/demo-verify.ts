@@ -85,6 +85,23 @@ async function main() {
           if (role === 'reader') await expect(body.getByRole('heading', { name: 'What Save commits', exact: true })).toBeFocused();
           if (role === 'administrator') await page.screenshot({ path: `${evidenceDirectory}/section-link.png`, mask: [page.locator('.account')], maskColor: '#1b1e20' });
           await page.evaluate(() => window.scrollTo(0, 0));
+          if (role === 'administrator') {
+            stage = 'administrator saved duplication dialog and cancellation';
+            const before: APIResponse = await context.request.get(`${origin}/api/v1/documents/${manifest.startDocumentId}`);
+            const saved: unknown = await before.json();
+            await page.getByLabel('Document actions', { exact: true }).click();
+            await page.getByRole('button', { name: 'Duplicate saved document', exact: true }).click();
+            const dialog = page.getByRole('dialog', { name: 'Duplicate saved document', exact: true });
+            await expect(dialog).toContainText('including its private attachments');
+            await expect(page.getByLabel('Copy title', { exact: true })).toBeFocused();
+            await page.screenshot({ path: `${evidenceDirectory}/duplicate-document.png`, mask: [page.locator('.account')], maskColor: '#1b1e20' });
+            await page.keyboard.press('Escape');
+            await expect(dialog).toHaveCount(0);
+            await expect(page.getByLabel('Document actions', { exact: true })).toBeFocused();
+            const after: APIResponse = await context.request.get(`${origin}/api/v1/documents/${manifest.startDocumentId}`);
+            assert.equal(after.status(), 200); assert.deepEqual(await after.json(), saved);
+            assert.equal(after.headers().etag, before.headers().etag);
+          }
           if (role === 'reader') {
             await expect(page.getByRole('button', { name: 'New space', exact: true })).toHaveCount(0);
             await expect(title).toHaveAttribute('readonly', '');

@@ -37,6 +37,185 @@ async function navigationDocument(context: BrowserContext) {
   return (await readDocument(context, value.id)).data;
 }
 
+test('duplicate saved document retains a complete dirty draft, selects its known revision and guards opening the copy', async ({ page, context }) => {
+  await login(page);
+  const baseline = await readDocument(context);
+  await expect(title(page)).toHaveValue(baseline.data.revision.title);
+  await expect(body(page)).toBeEditable();
+  const changed = await apiRequest(context, `/api/v1/documents/${seeded.documentId}`, {
+    method: 'PATCH', headers: { origin: demo.origin, 'if-match': baseline.etag }, data: { title: 'Newer saved source title' },
+  });
+  expect(changed.status()).toBe(200);
+  const latest = await readDocument(context);
+  await title(page).fill('Complete unsaved source title'); await body(page).fill('Complete unsaved source body.');
+  await page.getByLabel('Document actions', { exact: true }).click();
+  await page.getByRole('button', { name: 'Duplicate saved document', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Duplicate saved document', exact: true });
+  await expect(dialog).toContainText(`Copy revision ${baseline.data.currentRevisionNumber}`);
+  await page.getByLabel('Copy title', { exact: true }).fill('Reusable handbook copy');
+  const response = page.waitForResponse(response => response.url().endsWith('/duplicate') && response.request().method() === 'POST');
+  await dialog.getByRole('button', { name: 'Create copy', exact: true }).click();
+  const accepted = await response; expect(accepted.status()).toBe(201);
+  const created: Document = await accepted.json();
+  await expect(dialog.getByRole('status')).toHaveText('Created "Reusable handbook copy" with revision 1.');
+  expect(created.revision.content).toEqual(baseline.data.revision.content);
+  expect(created.editingMode).toBe('solo'); expect(created.parentDocumentId).toBeNull(); expect(created.currentRevisionNumber).toBe(1);
+  expect(await readDocument(context)).toEqual(latest);
+  await dialog.getByRole('link', { name: 'Open copy', exact: true }).click();
+  const discard = page.getByRole('dialog', { name: 'Unsaved changes', exact: true });
+  await expect(discard).toBeVisible(); await discard.getByRole('button', { name: 'Keep editing', exact: true }).click();
+  await expect(title(page)).toHaveValue('Complete unsaved source title'); await expect(body(page)).toHaveText('Complete unsaved source body.');
+  expect(await readDocument(context)).toEqual(latest);
+  await save(page).click(); await expect(page.getByRole('complementary', { name: 'Save conflict' })).toBeVisible();
+  await expect(title(page)).toHaveValue('Complete unsaved source title'); await expect(body(page)).toHaveText('Complete unsaved source body.');
+  expect(await readDocument(context)).toEqual(latest);
+  await page.getByLabel('Document actions', { exact: true }).click();
+  await page.getByRole('button', { name: 'Duplicate saved document', exact: true }).click();
+  await expect(dialog).toContainText(`Copy revision ${baseline.data.currentRevisionNumber}`);
+  await dialog.getByRole('button', { name: 'Keep editing', exact: true }).click();
+});
+
+test('duplicate saved document never retries an uncertain accepted creation or replaces dirty content', async ({ page, context }) => {
+  await login(page); const baseline = await readDocument(context);
+  await title(page).fill('Unsent title after a failed copy'); await body(page).fill('Unsent body after a failed copy.');
+  let writes = 0;
+  await page.route('**/api/v1/documents/*/duplicate', async route => {
+    writes++;
+    const response = await route.fetch(); expect(response.status()).toBe(201);
+    await route.fulfill({ status: 502, contentType: 'application/problem+json', body: JSON.stringify({ status: 502 }) });
+  });
+  await page.getByLabel('Document actions', { exact: true }).click();
+  await page.getByRole('button', { name: 'Duplicate saved document', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Duplicate saved document', exact: true });
+  await page.getByLabel('Copy title', { exact: true }).fill('Accepted copy with a lost response');
+  await dialog.getByRole('button', { name: 'Create copy', exact: true }).click();
+  await expect(dialog.getByRole('alert')).toContainText('The request will not be retried');
+  await expect(dialog.getByRole('button', { name: 'Create copy', exact: true })).toBeDisabled();
+  expect(writes).toBe(1);
+  await dialog.getByRole('button', { name: 'Keep editing', exact: true }).click();
+  await expect(title(page)).toHaveValue('Unsent title after a failed copy'); await expect(body(page)).toHaveText('Unsent body after a failed copy.');
+  await expect(page.getByRole('navigation', { name: 'Documents', exact: true }).getByRole('link', { name: 'Accepted copy with a lost response', exact: true })).toBeVisible();
+  expect(await readDocument(context)).toEqual(baseline);
+  const list = await apiRequest(context, `/api/v1/spaces/${seeded.spaceId}/documents`);
+  const result: operations['listDocuments']['responses'][200]['content']['application/json'] = await list.json();
+  expect(result.items.filter(item => 'title' in item && item.title === 'Accepted copy with a lost response')).toHaveLength(1);
+  expect(writes).toBe(1);
+});
+
+test('duplicate saved document is keyboard usable on mobile and canceling makes no revision or document', async ({ page, context }) => {
+  await page.setViewportSize({ width: 390, height: 844 }); await login(page);
+  const baseline = await readDocument(context);
+  const before = await apiRequest(context, `/api/v1/spaces/${seeded.spaceId}/documents`); const listBefore: unknown = await before.json();
+  await page.getByLabel('Document actions', { exact: true }).focus(); await page.keyboard.press('Enter');
+  await page.getByRole('button', { name: 'Duplicate saved document', exact: true }).focus(); await page.keyboard.press('Enter');
+  await expect(page.getByLabel('Copy title', { exact: true })).toBeFocused();
+  await page.getByLabel('Copy title', { exact: true }).fill('Canceled synthetic copy');
+  await evidence(page, 'duplicate-mobile');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.keyboard.press('Escape'); await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.getByLabel('Document actions', { exact: true })).toBeFocused();
+  expect(await readDocument(context)).toEqual(baseline);
+  const after = await apiRequest(context, `/api/v1/spaces/${seeded.spaceId}/documents`); expect(await after.json()).toEqual(listBefore);
+});
+
+test('duplicate saved document from history opens rich revision one and edits persist through an explicit save and reload', async ({ page, context }) => {
+  await login(page); const original = await readDocument(context);
+  const updated = await apiRequest(context, `/api/v1/documents/${seeded.documentId}`, {
+    method: 'PATCH', headers: { origin: demo.origin, 'if-match': original.etag }, data: { title: 'Latest source heading' },
+  }); expect(updated.status()).toBe(200);
+  await page.reload(); await expect(title(page)).toHaveValue('Latest source heading');
+  await page.getByRole('button', { name: 'History', exact: true }).click();
+  await page.getByRole('button', { name: 'Revision 1', exact: true }).click();
+  await page.getByRole('button', { name: 'Duplicate revision 1', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Duplicate saved document', exact: true });
+  await page.getByLabel('Copy title', { exact: true }).fill('Independent rich handbook');
+  const response = page.waitForResponse(response => response.url().endsWith('/duplicate') && response.request().method() === 'POST');
+  await dialog.getByRole('button', { name: 'Create copy', exact: true }).click();
+  const accepted = await response; expect(accepted.status()).toBe(201); const copy: Document = await accepted.json();
+  await dialog.getByRole('link', { name: 'Open copy', exact: true }).click();
+  await expect(title(page)).toHaveValue('Independent rich handbook');
+  await expect(body(page).getByRole('table')).toHaveCount(1);
+  await expect(page.getByRole('navigation', { name: 'On this page', exact: true }).getByRole('link', { name: 'Rich blocks', exact: true })).toBeVisible();
+  expect((await readDocument(context, copy.id)).data.revision.content).toEqual(original.data.revision.content);
+  await title(page).fill('Edited independent handbook'); await explicitSave(page);
+  await page.reload(); await expect(title(page)).toHaveValue('Edited independent handbook');
+  await expect(body(page).getByRole('table')).toHaveCount(1);
+  const saved = await readDocument(context, copy.id);
+  expect(saved.data.currentRevisionNumber).toBe(2); expect(saved.data.revision.content).toEqual(original.data.revision.content);
+  expect((await readDocument(context)).data.revision.title).toBe('Latest source heading');
+});
+
+test('duplicate saved document refuses a grant revoked after the dialog opens and retains the complete local draft', async ({ page, context, browser }) => {
+  await login(page); const original = await readDocument(context);
+  await expect(page.getByRole('combobox', { name: 'Space', exact: true })).toBeVisible();
+  const me = await apiRequest(context, '/api/v1/me'); const editor: { id: string } = await me.json();
+  await title(page).fill('Local title after copy access loss'); await body(page).fill('Complete local body after copy access loss.');
+  await page.getByLabel('Document actions', { exact: true }).click();
+  await page.getByRole('button', { name: 'Duplicate saved document', exact: true }).click();
+  const administrator = await browser.newContext();
+  try {
+    const adminPage = await administrator.newPage(); await login(adminPage, 'administrator');
+    const space = await apiRequest(administrator, `/api/v1/spaces/${seeded.spaceId}`);
+    const revoked = await apiRequest(administrator, `/api/v1/spaces/${seeded.spaceId}/members/${editor.id}`, {
+      method: 'DELETE', headers: { origin: demo.origin, 'if-match': space.headers().etag! },
+    }); expect(revoked.status()).toBe(200);
+    const response = page.waitForResponse(response => response.url().endsWith('/duplicate') && response.request().method() === 'POST');
+    await page.getByRole('button', { name: 'Create copy', exact: true }).click(); expect((await response).status()).toBe(404);
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(title(page)).toHaveValue('Local title after copy access loss'); await expect(body(page)).toHaveText('Complete local body after copy access loss.');
+    await expect(body(page)).not.toBeEditable(); await expect(page.getByLabel('Document actions', { exact: true })).toHaveCount(0);
+    await expect(page.getByRole('combobox', { name: 'Space', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('status').filter({ hasText: /Created/ })).toHaveCount(0);
+    expect((await readDocument(administrator)).data.revision).toEqual(original.data.revision);
+  } finally { await administrator.close(); }
+});
+
+test('duplicate saved document freezes its pending request and cannot submit twice or dismiss until it finishes', async ({ page, context }) => {
+  await login(page); const original = await readDocument(context);
+  await title(page).fill('Retained draft during a pending copy');
+  let release!: () => void; const gate = new Promise<void>(done => { release = done; });
+  let writes = 0;
+  await page.route('**/api/v1/documents/*/duplicate', async route => { writes++; await gate; await route.continue(); });
+  try {
+    await page.getByLabel('Document actions', { exact: true }).click();
+    await page.getByRole('button', { name: 'Duplicate saved document', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Duplicate saved document', exact: true });
+    await dialog.getByRole('button', { name: 'Create copy', exact: true }).click();
+    await expect(dialog.getByRole('status')).toHaveText('Copying saved revision…');
+    await expect(dialog.getByRole('button', { name: 'Create copy', exact: true })).toBeDisabled();
+    await expect(dialog.getByRole('button', { name: 'Keep editing', exact: true })).toBeDisabled();
+    await expect(page.getByLabel('Copy title', { exact: true })).toBeDisabled();
+    await page.keyboard.press('Escape'); await expect(dialog).toBeVisible();
+    expect(writes).toBe(1); expect(await readDocument(context)).toEqual(original);
+    release(); await expect(dialog.getByRole('status')).toContainText('with revision 1.');
+    await dialog.getByRole('button', { name: 'Keep editing', exact: true }).click();
+    await expect(title(page)).toHaveValue('Retained draft during a pending copy'); expect(writes).toBe(1);
+    expect(await readDocument(context)).toEqual(original);
+  } finally { release(); }
+});
+
+test('duplicate saved document controls and direct writes are denied to readers and outsiders', async ({ page, context, browser }) => {
+  await login(page, 'reader'); const baseline = await readDocument(context);
+  await page.getByLabel('Document actions', { exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Duplicate saved document', exact: true })).toHaveCount(0);
+  await page.getByLabel('Document actions', { exact: true }).click();
+  await page.getByRole('button', { name: 'History', exact: true }).click();
+  await page.getByRole('button', { name: `Revision ${baseline.data.currentRevisionNumber}`, exact: true }).click();
+  await expect(page.getByRole('button', { name: /^Duplicate revision/ })).toHaveCount(0);
+  const outsider = await browser.newContext();
+  try {
+    const hidden = await outsider.newPage(); await login(hidden, 'outsider');
+    await expect(title(hidden)).toHaveCount(0); await expect(hidden.getByLabel('Document actions', { exact: true })).toHaveCount(0);
+    for (const agent of [context, outsider]) {
+      const denied = await apiRequest(agent, `/api/v1/documents/${seeded.documentId}/duplicate`, {
+        method: 'POST', headers: { origin: demo.origin }, data: { title: 'Forbidden private copy', revisionId: baseline.data.revision.id },
+      });
+      expect(denied.status()).toBe(404); expect(await denied.text()).not.toContain(baseline.data.revision.title);
+    }
+    expect(await readDocument(context)).toEqual(baseline);
+  } finally { await outsider.close(); }
+});
+
 test('copy private link uses the saved readable URL without saving drafts or granting recipient access', async ({ page, context, browser }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: demo.origin });
   await login(page);
@@ -355,7 +534,7 @@ async function confirmDiscard(page: Page) {
 }
 
 async function evidence(page: Page, name: 'editing' | 'conflict' | 'history' | 'access-loss' | 'mobile'
-  | 'organization' | 'organization-depth' | 'private-link' | 'editor-toolbar' | 'link-editor' | 'discard-changes' | 'search' | 'attachments' | 'publication' | 'public-document') {
+  | 'organization' | 'organization-depth' | 'private-link' | 'editor-toolbar' | 'link-editor' | 'discard-changes' | 'search' | 'attachments' | 'publication' | 'public-document' | 'duplicate-mobile') {
   if (process.env.SCRAWL_BROWSER_EVIDENCE !== '1') return;
   const password = page.getByLabel('Password', { exact: true });
   if (await password.isVisible() && await password.inputValue() !== '') {

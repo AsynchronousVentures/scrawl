@@ -118,6 +118,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/documents/{id}/duplicate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Create a solo root document in the same space from one selected saved revision, with independently owned private attachments. Does not mutate or checkpoint the source. */
+        post: operations["duplicateDocument"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/documents/{id}/export": {
         parameters: {
             query?: never;
@@ -1289,6 +1306,111 @@ export interface operations {
                         name: string;
                         size: number;
                         url: string;
+                    };
+                };
+            };
+        };
+    };
+    duplicateDocument: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: uuid */
+                    revisionId: string;
+                    title: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: date-time */
+                        archivedAt: string | null;
+                        archivedBy: string | null;
+                        /** Format: date-time */
+                        createdAt: string;
+                        createdBy: string;
+                        currentRevisionNumber: number;
+                        /** @enum {string} */
+                        editingMode: "solo" | "live";
+                        /** Format: uuid */
+                        id: string;
+                        lockVersion: number;
+                        /** Format: uuid */
+                        parentDocumentId: string | null;
+                        revision: {
+                            authorId: string;
+                            changeNote: string | null;
+                            content: {
+                                document: {
+                                    [key: string]: unknown;
+                                }[];
+                                /** @enum {string} */
+                                editorVersion: "0.55.0";
+                                /** @enum {string} */
+                                format: "blocknote-json";
+                                /** @enum {integer} */
+                                schemaVersion: 1;
+                            };
+                            /** Format: date-time */
+                            createdAt: string;
+                            /** Format: uuid */
+                            documentId: string;
+                            /** Format: uuid */
+                            id: string;
+                            plainText: string;
+                            revisionNumber: number;
+                            title: string;
+                        };
+                        slug: string;
+                        /** Format: uuid */
+                        spaceId: string;
+                        spaceSlug: string;
+                        /** Format: date-time */
+                        updatedAt: string;
                     };
                 };
             };

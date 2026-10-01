@@ -832,6 +832,31 @@ test('live-only title, body and comments stay out of native/PDF/DOCX snapshots, 
     expect(validateContent(exported.content).content).toEqual(saved.revision.content);
     expect(JSON.stringify(exported)).not.toContain('LiveOnlyExportBoundary');
     expect(JSON.stringify(exported)).not.toMatch(/"(?:threads|password|token|session|account|email|cookie)"\s*:/i);
+    const sharedBefore = await context.request.get(`${demo.origin}/api/v1/documents/${seeded.documentId}/live`);
+    expect(sharedBefore.status()).toBe(200); const sharedSnapshot: unknown = await sharedBefore.json();
+    const headBefore = await latest(context);
+    await page.getByLabel('Document actions', { exact: true }).click();
+    await page.getByRole('button', { name: 'Duplicate saved document', exact: true }).click();
+    const copyDialog = page.getByRole('dialog', { name: 'Duplicate saved document', exact: true });
+    await page.getByLabel('Copy title', { exact: true }).fill('Independent saved copy of a shared document');
+    const copiedResponse = page.waitForResponse(response => response.request().method() === 'POST'
+      && new URL(response.url()).pathname === `/api/v1/documents/${seeded.documentId}/duplicate`);
+    await copyDialog.getByRole('button', { name: 'Create copy', exact: true }).click();
+    const copied = await copiedResponse; expect(copied.status()).toBe(201);
+    const copy = await copied.json() as operations['duplicateDocument']['responses'][201]['content']['application/json'];
+    expect(copy.editingMode).toBe('solo'); expect(copy.currentRevisionNumber).toBe(1);
+    expect(validateContent(copy.revision.content).content).toEqual(saved.revision.content);
+    expect(JSON.stringify(copy)).not.toContain('LiveOnlyExportBoundary');
+    await copyDialog.getByRole('button', { name: 'Keep editing', exact: true }).click();
+    await expect(title(page)).toHaveValue('LiveOnlyExportBoundary title');
+    await expect(body(page)).toContainText('LiveOnlyExportBoundary body, not checkpointed.');
+    expect(await latest(context)).toEqual(headBefore);
+    const sharedAfter = await context.request.get(`${demo.origin}/api/v1/documents/${seeded.documentId}/live`);
+    expect(sharedAfter.status()).toBe(200); expect(await sharedAfter.json()).toEqual(sharedSnapshot);
+    const copyPublication = await context.request.get(`${demo.origin}/api/v1/documents/${copy.id}/publication`);
+    expect(copyPublication.status()).toBe(200); expect((await copyPublication.json()).publication).toBeNull();
+    const copyRoom = await context.request.get(`${demo.origin}/api/v1/documents/${copy.id}/live`);
+    expect(copyRoom.status()).toBe(409);
     async function downloadText(format: 'pdf' | 'docx', selected = false) {
       const download = page.waitForEvent('download');
       if (selected) {

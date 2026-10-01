@@ -9,6 +9,7 @@ import { request as httpRequest, type IncomingHttpHeaders } from 'node:http';
 import { mkdtemp, readdir, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { readConfig } from '../../src/config.js';
 import { createDatabase } from '../../src/db/client.js';
 import { createCore } from '../../src/core/index.js';
@@ -17,6 +18,7 @@ import { validateContent } from '../../src/core/documents/content.js';
 import { createOperator } from '../../src/core/identity/operator.js';
 import { HttpProblem } from '../../src/http/problems.js';
 import { buildApp } from '../../src/app.js';
+import { richDemoContent } from '../../scripts/demo-content.js';
 
 function object(value: unknown): Record<string, unknown> {
   assert(value && typeof value === 'object' && !Array.isArray(value), 'Expected response object');
@@ -239,6 +241,169 @@ test('private document attachments retain immutable bytes and revision ownership
       }), 400);
     }
     assert.deepEqual(await snapshots(), before);
+  });
+
+  const selectedCopy = await database.prisma.documentRevision.findUniqueOrThrow({ where: {
+    documentId_revisionNumber: { documentId: main.id, revisionNumber: 2 },
+  } });
+  const copyInput = { title: 'Synthetic reusable guide', revisionId: selectedCopy.id };
+  const copyPath = `/api/v1/documents/${main.id}/duplicate`;
+
+  await t.test('duplicate rejects readers, outsiders, missing or foreign revisions in HTTP and core without discovery', async () => {
+    const before = await snapshots();
+    for (const [agent, status] of [[reader, 404], [outsider, 404], [anonymous, 401]] as const) {
+      denied(await agent.send('POST', copyPath, copyInput), status);
+      await assert.rejects(core.documents.duplicate(agent.headers, main.id, copyInput),
+        (error: unknown) => error instanceof HttpProblem && error.status === status);
+    }
+    const foreign = await database.prisma.documentRevision.findFirstOrThrow({ where: { documentId: other.id } });
+    for (const revisionId of [foreign.id, randomUUID()]) {
+      denied(await editor.send('POST', copyPath, { ...copyInput, revisionId }), 404);
+      await assert.rejects(core.documents.duplicate(editor.headers, main.id, { ...copyInput, revisionId }),
+        (error: unknown) => error instanceof HttpProblem && error.status === 404);
+    }
+    for (const input of [{ title: 'Synthetic missing revision' }, { ...copyInput, title: ' ' },
+      { ...copyInput, content: content('Synthetic injected draft') }, { ...copyInput, revisionId: 'bad' }]) {
+      denied(await editor.send('POST', copyPath, input), 400);
+    }
+    assert.deepEqual(await snapshots(), before);
+  });
+
+  await t.test('duplicate copies the explicitly selected immutable body and independent private bytes without changing source history', async () => {
+    const before = await snapshots();
+    const response = await editor.send('POST', copyPath, copyInput);
+    assert.equal(response.status, 201);
+    const copied = object(response.data), revision = object(copied.revision), id = string(copied.id);
+    assert.notEqual(id, main.id); assert.equal(response.headers.location, `/api/v1/documents/${id}`);
+    assert.equal(copied.parentDocumentId, null); assert.equal(copied.editingMode, 'solo');
+    assert.equal(copied.currentRevisionNumber, 1); assert.equal(copied.lockVersion, 1);
+    assert.equal(copied.createdBy, editorUser.id); assert.equal(revision.authorId, editorUser.id);
+    assert.equal(revision.title, copyInput.title); assert.equal(revision.changeNote, null);
+    const copiedFiles = await database.prisma.attachment.findMany({ where: { documentId: id } });
+    assert.equal(copiedFiles.length, 1); const copiedFile = copiedFiles[0]!;
+    assert.notEqual(copiedFile.id, file.id); assert.equal(copiedFile.sha256, createHash('sha256').update(textBytes).digest('hex'));
+    assert.deepEqual(validateContent(revision.content).content, content('Synthetic file reference', {
+      url: `/api/v1/attachments/${copiedFile.id}/content`, name: file.name,
+    }));
+    assert.equal(revision.plainText, selectedCopy.plainText);
+    assert.equal(await database.prisma.documentRevision.count({ where: { documentId: id } }), 1);
+    assert.equal(await database.prisma.documentLive.count({ where: { documentId: id } }), 0);
+    assert.equal(await database.prisma.publication.count({ where: { documentId: id } }), 0);
+    for (const agent of [editor, reader]) {
+      const read = await agent.send('GET', `/api/v1/attachments/${copiedFile.id}/content`);
+      assert.equal(read.status, 200); assert.deepEqual(read.bytes, textBytes);
+    }
+    denied(await outsider.send('GET', `/api/v1/attachments/${copiedFile.id}/content`), 404);
+    assert.equal((await stat(join(storageRoot, copiedFile.id))).mode & 0o777, 0o600);
+    assert.notEqual((await stat(join(storageRoot, copiedFile.id))).ino, (await stat(join(storageRoot, file.id))).ino);
+    const after = await snapshots();
+    assert.deepEqual(after.documents.filter(row => row.id !== id), before.documents);
+    assert.deepEqual(after.revisions.filter(row => row.documentId !== id), before.revisions);
+    assert.deepEqual(after.attachments.filter(row => row.documentId !== id), before.attachments);
+    assert.deepEqual(after.references.filter(row => row.documentId !== id), before.references);
+  });
+
+  await t.test('concurrent duplicates each have a unique readable slug and exactly one valid head', async () => {
+    const source = await editor.send('GET', `/api/v1/documents/${main.id}`);
+    const results = await Promise.all([editor.send('POST', copyPath, copyInput), editor.send('POST', copyPath, copyInput)]);
+    assert.deepEqual(results.map(row => row.status), [201, 201]);
+    assert.notEqual(object(results[0]!.data).slug, object(results[1]!.data).slug);
+    for (const result of results) {
+      const id = string(object(result.data).id);
+      assert.equal(await database.prisma.documentRevision.count({ where: { documentId: id } }), 1);
+      assert.equal(await database.prisma.revisionAttachment.count({ where: { documentId: id } }), 1);
+    }
+    const after = await editor.send('GET', `/api/v1/documents/${main.id}`);
+    assert.deepEqual(after.data, source.data); assert.equal(after.headers.etag, source.headers.etag);
+  });
+
+  await t.test('a forced late duplicate failure rolls back document, head, references, metadata and copied bytes', async () => {
+    const before = await snapshots();
+    await database.pool.query(`CREATE FUNCTION duplicate_test_failure() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN RAISE EXCEPTION 'Synthetic forced copy failure'; END; $$`);
+    await database.pool.query(`CREATE TRIGGER duplicate_test_failure BEFORE INSERT ON "RevisionAttachment"
+      FOR EACH ROW EXECUTE FUNCTION duplicate_test_failure()`);
+    try { denied(await editor.send('POST', copyPath, copyInput), 500); }
+    finally {
+      await database.pool.query('DROP TRIGGER duplicate_test_failure ON "RevisionAttachment"');
+      await database.pool.query('DROP FUNCTION duplicate_test_failure()');
+    }
+    assert.deepEqual(await snapshots(), before);
+    assert.deepEqual(await readFile(join(storageRoot, file.id)), textBytes);
+  });
+
+  await t.test('rich archived snapshots duplicate nested blocks, tables, code, image and file links into an active independent document', async () => {
+    const rich = validateContent({ ...richDemoContent(['Synthetic rich saved snapshot']), document: [
+      ...richDemoContent(['Synthetic rich saved snapshot']).document,
+      { id: 'copied-image', type: 'image', props: { url: image.url, name: 'Synthetic image.png', caption: 'Synthetic image caption' } },
+      { id: 'copied-file', type: 'file', props: { url: file.url, name: file.name } },
+      { id: 'copied-link', type: 'paragraph', content: [{ type: 'link', href: file.url,
+        content: [{ type: 'text', text: 'Synthetic private file link', styles: { bold: true } }] }] },
+    ] }).content;
+    const saved = await editor.send('PATCH', `/api/v1/documents/${main.id}`, { content: rich }, { 'if-match': main.etag });
+    assert.equal(saved.status, 200); main.etag = string(saved.headers.etag);
+    const selected = string(object(object(saved.data).revision).id);
+    const later = await editor.send('PATCH', `/api/v1/documents/${main.id}`, { content: content('Synthetic newer content excluded from copy') }, { 'if-match': main.etag });
+    assert.equal(later.status, 200); main.etag = string(later.headers.etag);
+    const archived = await editor.send('POST', `/api/v1/documents/${main.id}/archive`, {}, { 'if-match': main.etag });
+    assert.equal(archived.status, 200); main.etag = string(archived.headers.etag);
+    const original = await database.prisma.document.findUniqueOrThrow({ where: { id: main.id } });
+    const response = await editor.send('POST', copyPath, { ...copyInput, revisionId: selected });
+    assert.equal(response.status, 201);
+    const copied = object(response.data), id = string(copied.id);
+    assert.equal(copied.archivedAt, null);
+    const copiedFiles = await database.prisma.attachment.findMany({ where: { documentId: id } });
+    assert.equal(copiedFiles.length, 2);
+    let expected = JSON.stringify(rich);
+    for (const source of [image, file]) {
+      const metadata = await database.prisma.attachment.findUniqueOrThrow({ where: { id: source.id } });
+      const copiedFile = copiedFiles.find(row => row.sha256 === metadata.sha256)!;
+      assert(copiedFile); assert.notEqual(copiedFile.id, source.id);
+      expected = expected.replaceAll(source.url, `/api/v1/attachments/${copiedFile.id}/content`);
+      const downloaded = await reader.send('GET', `/api/v1/attachments/${copiedFile.id}/content`);
+      assert.equal(downloaded.status, 200); assert.deepEqual(downloaded.bytes, await readFile(join(storageRoot, source.id)));
+    }
+    assert.deepEqual(validateContent(object(copied.revision).content).content, validateContent(JSON.parse(expected)).content);
+    assert.deepEqual(await database.prisma.document.findUniqueOrThrow({ where: { id: main.id } }), original);
+    const unarchive = await editor.send('POST', `/api/v1/documents/${main.id}/unarchive`, {}, { 'if-match': main.etag });
+    assert.equal(unarchive.status, 200); main.etag = string(unarchive.headers.etag);
+  });
+
+  await t.test('expired authenticated sessions cannot duplicate and leave every saved object and byte intact', async () => {
+    const before = await snapshots();
+    const sessions = await database.prisma.session.findMany({ where: { userId: editorUser.id }, select: { id: true, expiresAt: true } });
+    assert(sessions.length);
+    try {
+      await database.prisma.session.updateMany({ where: { userId: editorUser.id }, data: { expiresAt: new Date(Date.now() - 1000) } });
+      denied(await editor.send('POST', copyPath, copyInput), 401);
+      await assert.rejects(core.documents.duplicate(editor.headers, main.id, copyInput),
+        (error: unknown) => error instanceof HttpProblem && error.status === 401);
+      assert.deepEqual(await snapshots(), before);
+    } finally {
+      assert.equal((await editor.send('POST', '/api/auth/sign-in/email', { email: editorUser.email, password })).status, 200);
+    }
+  });
+
+  await t.test('a queued duplicate rechecks revoked membership before copying any bytes', async () => {
+    const before = await snapshots();
+    const lock = await database.pool.connect(); await lock.query('BEGIN');
+    let pending: ReturnType<typeof editor.send> | undefined;
+    try {
+      await lock.query('SELECT "id" FROM "Space" WHERE "id" = $1 FOR UPDATE', [spaceId]);
+      pending = editor.send('POST', copyPath, copyInput);
+      let blocked = false;
+      for (let attempt = 0; attempt < 100; attempt++) {
+        const waiting = await database.pool.query(`SELECT 1 FROM pg_stat_activity a JOIN pg_locks l ON l.pid = a.pid
+          WHERE a.wait_event_type = 'Lock' AND a.query LIKE '%FROM "Space"%FOR UPDATE%'
+            AND l.relation = $1::regclass LIMIT 1`, [`"${schema}"."Space"`]);
+        if (waiting.rowCount) { blocked = true; break; } await delay(10);
+      }
+      assert(blocked, 'The duplicate must wait for the space lock');
+      await lock.query('DELETE FROM "SpaceMembership" WHERE "spaceId" = $1 AND "userId" = $2', [spaceId, editorUser.id]);
+      await lock.query('COMMIT'); denied(await pending, 404);
+      assert.deepEqual(await snapshots(), before);
+    } finally { await lock.query('ROLLBACK'); lock.release(); if (pending) await Promise.allSettled([pending]); }
+    await grant(editorUser.id, 'editor');
   });
 
   await t.test('database constraints protect attachment metadata and reference ownership; failed uploads remove staged bytes', async () => {

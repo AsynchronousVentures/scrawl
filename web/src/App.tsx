@@ -9,6 +9,7 @@ import { extractPlainText, validateContent } from '@scrawl/content';
 import { Editor } from './Editor';
 import { SearchDialog } from './SearchDialog';
 import { SpaceAccess } from './SpaceAccess';
+import { DuplicateDocument } from './DuplicateDocument';
 import { DocumentNavigation, DocumentPath, ParentOptions, documentAncestors, initialDocument } from './DocumentOrganization';
 import { LiveSession, type LiveState } from './live';
 import type { CommentState } from './PrivateComments';
@@ -71,6 +72,7 @@ export function App() {
   const [documents, setDocuments] = useState<DocumentSummary[]>([]);
   const [draftParentId, setDraftParentId] = useState<string | null>(null);
   const [moveOpen, setMoveOpen] = useState(false);
+  const [duplicateRevision, setDuplicateRevision] = useState<Revision | null>(null);
   const [moveParentId, setMoveParentId] = useState('');
   const [moveError, setMoveError] = useState('');
   const [moveNeedsCompare, setMoveNeedsCompare] = useState(false);
@@ -173,6 +175,7 @@ export function App() {
     void navigate(href, { replace, flushSync: true });
   }
   function resetDocument() {
+    setDuplicateRevision(null);
     setAccessOpen(false); setMoveOpen(false); setMoveNeedsCompare(false); setMoveError(''); setDraftParentId(null);
     setLiveCheckError(false);
     liveRef.current?.destroy(); liveRef.current = null; setLive(null); setLiveState(null); setRetainedLiveDraft(null);
@@ -264,6 +267,7 @@ export function App() {
     generation.current++; historyGeneration.current++;
     setAccessIssue(error.status === 401 ? 'session' : 'access');
     setSearchOpen(false); setAccessOpen(false); setSpacePrompt(false); setSpaceNotice(''); setUploadMessage('');
+    setDuplicateRevision(null);
     setPublication(null); setPublicationPrompt(null); setPublicationError('');
     setSpaces([]); setSpace(null); setDocuments([]); setSpacesCursor(null);
     setListLoading(false); setLoadingDocument(false); setHistoryOpen(false);
@@ -762,6 +766,7 @@ export function App() {
               {base && !accessIssue && <><button disabled={blocked} onClick={() => { if (historyOpen) setHistoryOpen(false); else void openHistory(); }}>History</button>
                 <details className="doc-menu"><summary ref={actionsTrigger} aria-label="Document actions">⋯</summary><div className="menu-items">
                   <button disabled={blocked} onClick={event => { event.currentTarget.closest('details')?.removeAttribute('open'); actionsTrigger.current?.focus(); void copyPrivateLink(); }}>Copy private link</button>
+                  {space?.access === 'editor' && <button disabled={blocked} onClick={event => { event.currentTarget.closest('details')?.removeAttribute('open'); setDuplicateRevision(base.document.revision); }}>Duplicate saved document</button>}
                   {space?.access === 'editor' && !base.document.archivedAt && <><button disabled={blocked || listLoading || Boolean(listError) || atNestingLimit} aria-describedby={atNestingLimit ? 'document-nesting-limit' : undefined} onClick={event => { event.currentTarget.closest('details')?.removeAttribute('open'); newDocument(base.document.id); }}>New child document</button>{atNestingLimit && <small id="document-nesting-limit">Nesting limit reached (32 levels).</small>}</>}
                   {space?.access === 'editor' && !conflict && <button disabled={blocked || hasUnsavedWork || Boolean(liveState?.pending)} onClick={event => { event.currentTarget.closest('details')?.removeAttribute('open'); setMoveParentId(base.document.parentDocumentId ?? ''); if (!moveNeedsCompare) setMoveError(''); setMoveOpen(true); }}>Move document</button>}
                   <button disabled={blocked} onClick={event => { event.currentTarget.closest('details')?.removeAttribute('open'); void exportDocument(); }}>Export JSON</button>
@@ -813,7 +818,7 @@ export function App() {
                 {historyError && <div role="alert"><p>{historyError}</p><button onClick={() => { void openHistory(); }}>Retry</button></div>}
                 <ol className="revisions">{revisions.map(item => <li key={item.id}><button aria-label={`Revision ${item.revisionNumber}`} aria-pressed={revision?.id===item.id} disabled={blocked} onClick={() => { void selectRevision(item); }}><span>Revision {item.revisionNumber}</span><small>{new Date(item.createdAt).toLocaleString()}</small></button></li>)}</ol>
                 {revisionsCursor && <button disabled={historyLoading} onClick={() => { void openHistory(revisionsCursor); }}>More revisions</button>}
-                {revision && !historyLoading && <Editor key={revision.id} initialContent={revision.content} label="Revision content" editable={false} resolveFileUrl={api.resolveFileUrl} onChange={() => {}} header={<><h3>{revision.title}</h3>{mayEdit && !conflict && <button className="restore" disabled={blocked || revision.id===base?.document.revision.id || Boolean(live && (dirty || commentState.dirty || liveState?.pending || retainedLiveDraft))} onClick={() => { void restoreRevision(revision.id); }}>Restore revision {revision.revisionNumber}</button>}{mayPublish && <button disabled={blocked || !publication} onClick={() => setPublicationPrompt({ action: 'publish', revision })}>Publish revision {revision.revisionNumber}</button>}<div className="revision-exports"><button disabled={blocked} onClick={() => { void exportDocument(undefined, revision.id); }}>Export JSON</button><button disabled={blocked} onClick={() => { void exportDocument('pdf', revision.id); }}>Export PDF</button><button disabled={blocked} onClick={() => { void exportDocument('docx', revision.id); }}>Export DOCX</button></div></>} />}
+                {revision && !historyLoading && <Editor key={revision.id} initialContent={revision.content} label="Revision content" editable={false} resolveFileUrl={api.resolveFileUrl} onChange={() => {}} header={<><h3>{revision.title}</h3>{mayEdit && !conflict && <button className="restore" disabled={blocked || revision.id===base?.document.revision.id || Boolean(live && (dirty || commentState.dirty || liveState?.pending || retainedLiveDraft))} onClick={() => { void restoreRevision(revision.id); }}>Restore revision {revision.revisionNumber}</button>}{mayPublish && <button disabled={blocked || !publication} onClick={() => setPublicationPrompt({ action: 'publish', revision })}>Publish revision {revision.revisionNumber}</button>}<div className="revision-exports">{space?.access === 'editor' && <button disabled={blocked} onClick={() => setDuplicateRevision(revision)}>Duplicate revision {revision.revisionNumber}</button>}<button disabled={blocked} onClick={() => { void exportDocument(undefined, revision.id); }}>Export JSON</button><button disabled={blocked} onClick={() => { void exportDocument('pdf', revision.id); }}>Export PDF</button><button disabled={blocked} onClick={() => { void exportDocument('docx', revision.id); }}>Export DOCX</button></div></>} />}
               </aside>}
             </div> : !loadingDocument && !saveError && !accessIssue && !listLoading && <section className="state"><h1>{space ? 'No documents yet' : 'No accessible spaces'}</h1><p>{space ? space.access === 'editor' ? 'Create a document when you are ready.' : 'An editor can add the first document.' : user?.role === 'administrator' ? 'Create a space to organize your documents.' : 'Ask an administrator for space access.'}</p></section>}
           </main>
@@ -829,6 +834,14 @@ export function App() {
       const action = pending?.action; setPending(null); resetDraftToBaseline();
       if (navigationBlocker.state === 'blocked') navigationBlocker.proceed(); else action?.();
     }}>Discard changes</button></div></Dialog.Content></Dialog.Portal></Dialog.Root>
+    {duplicateRevision && base && space && !accessIssue && <DuplicateDocument documentId={base.document.id} revision={duplicateRevision}
+      onClose={() => setDuplicateRevision(null)} onBusy={value => { setBusyLabel('Copying saved revision…'); setBusy(value); }}
+      onCreated={() => { void listDocuments(space); }} onFailure={error => {
+        if (unavailable(error)) return true;
+        // A lost creation response may still have committed. Refresh only navigation.
+        void listDocuments(space); return false;
+      }}
+      returnFocus={() => { if (actionsTrigger.current?.isConnected) actionsTrigger.current.focus(); else titleInput.current?.focus(); }} />}
     <Dialog.Root open={spacePrompt} onOpenChange={open => { if (!creatingSpace) setSpacePrompt(open); }}><Dialog.Portal><Dialog.Overlay className="dialog-overlay" /><Dialog.Content className="dialog" onCloseAutoFocus={event => { event.preventDefault(); if (spaceTrigger.current?.isConnected) spaceTrigger.current.focus(); else titleInput.current?.focus(); }} onEscapeKeyDown={event => { if (creatingSpace) event.preventDefault(); }} onPointerDownOutside={event => { if (creatingSpace) event.preventDefault(); }}>
       <Dialog.Title>New space</Dialog.Title><Dialog.Description>Create a space for private documents. Only administrators have access until members are granted access.</Dialog.Description>
       <form className="space-form" onSubmit={event => { event.preventDefault(); void createSpace(); }}>

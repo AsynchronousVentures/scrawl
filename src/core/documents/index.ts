@@ -522,6 +522,47 @@ export function createDocuments(prisma: PrismaClient, identity: Identity, spaces
         return documentDto(await tx.document.findUniqueOrThrow({ where: { id: document.id }, include: { head: true, space: { select: { slug: true } } } }));
       });
     },
+    async duplicate(headers: Headers, id: string, input: unknown) {
+      const principal = await identity.resolve(headers);
+      const fields = record(input, ['title', 'revisionId']);
+      const copyTitle = title(fields.title);
+      if (typeof fields.revisionId !== 'string' || !uuid.test(fields.revisionId)) throw new HttpProblem(400, 'INVALID_REQUEST');
+      const revisionId = fields.revisionId;
+      const target = await prisma.document.findUnique({ where: { id }, select: { spaceId: true } });
+      if (!target) throw new HttpProblem(404, 'NOT_FOUND');
+      const written: string[] = [];
+      try {
+        return await prisma.$transaction(async tx => {
+          await spaces.lockForWrite(tx, principal, target.spaceId);
+          await tx.$queryRaw`SELECT "id" FROM "Document" WHERE "id" = ${id}::uuid FOR SHARE`;
+          await identity.lockActors(tx, [principal]);
+          const actor = await spaces.authorize(tx, principal, target.spaceId, true);
+          const selected = await tx.documentRevision.findFirst({ where: { id: revisionId, documentId: id } });
+          if (!selected) throw new HttpProblem(404, 'NOT_FOUND');
+          const snapshot = revisionDto(selected).content;
+          const base = slugify(copyTitle, 'document');
+          const occupied = await tx.document.findMany({ where: { spaceId: target.spaceId,
+            OR: [{ slug: base }, { slug: { startsWith: `${base}-` } }] }, select: { slug: true } });
+          const document = await tx.document.create({ data: { id: randomUUID(),
+            slug: availableSlug(base, occupied.map(document => document.slug)), spaceId: target.spaceId,
+            currentRevisionNumber: 1, createdBy: actor.id } });
+          const copied = content({ ...snapshot, document: await attachments.copyReferences(tx, id, document.id,
+            snapshot.document, actor.id, written) });
+          const headId = randomUUID();
+          await tx.documentRevision.create({ data: { id: headId, documentId: document.id, revisionNumber: 1,
+            title: copyTitle, contentFormat: copied.content.format, contentSchemaVersion: copied.content.schemaVersion,
+            contentEditorVersion: copied.content.editorVersion, body: JSON.parse(JSON.stringify(copied.content.document)) as Prisma.InputJsonValue,
+            plainText: copied.plainText, authorId: actor.id } });
+          await attachments.reference(tx, document.id, headId, copied.content.document);
+          await identity.actor(principal, tx);
+          return documentDto(await tx.document.findUniqueOrThrow({ where: { id: document.id },
+            include: { head: true, space: { select: { slug: true } } } }));
+        }, { timeout: 15_000, maxWait: 10_000 });
+      } catch (error) {
+        await attachments.removeRolledBackCopies(written);
+        throw error;
+      }
+    },
     async list(headers: Headers, spaceId: string, input: { limit?: number; cursor?: string; includeArchived?: boolean } = {}) {
       await spaces.authorize(prisma, await identity.resolve(headers), spaceId);
       const limit = pageLimit(input.limit);
