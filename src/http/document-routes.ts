@@ -145,13 +145,13 @@ export function registerDocumentRoutes(app: FastifyInstance, core: Core, collabo
     return reply.header('etag', documentEtag(document)).send(document);
   });
 
-  app.get<{ Params: { id: string } }>('/api/v1/documents/:id/export', { schema: {
+  app.get<{ Params: { id: string }; Querystring: { revisionId?: string } }>('/api/v1/documents/:id/export', { schema: {
     operationId: 'exportNativeDocument', tags: ['Documents'], params: documentParams,
-    description: 'Export the current authorized snapshot as native JSON, including archived documents. No history or authentication data.',
-    querystring: { type: 'object', additionalProperties: false, properties: {} },
+    description: 'Export one authorized snapshot as native JSON, current or an explicitly selected immutable revision, including archived documents. No full history or authentication data.',
+    querystring: { type: 'object', additionalProperties: false, properties: { revisionId: { type: 'string', format: 'uuid' } } },
     response: { 200: nativeExportSchema, ...errors },
   } }, async (request, reply) => {
-    const exported = await core.documents.exportNative(fromNodeHeaders(request.headers), request.params.id);
+    const exported = await core.documents.exportNative(fromNodeHeaders(request.headers), request.params.id, request.query.revisionId);
     return reply.header('content-disposition', `attachment; filename="${exportFilename(exported.revision.title, exported.revision.revisionNumber, 'json')}"`)
       .type('application/json').send(exported);
   });

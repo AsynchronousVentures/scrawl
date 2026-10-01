@@ -206,8 +206,10 @@ export const api = {
     }));
     return loaded(data, response);
   },
-  async export(id: string) {
-    const { data, response } = await checked(client.GET('/api/v1/documents/{id}/export', { params: { path: { id } } }));
+  async export(id: string, revisionId?: string) {
+    const { data, response } = await checked(client.GET('/api/v1/documents/{id}/export', {
+      params: { path: { id }, query: revisionId ? { revisionId } : {} },
+    }));
     const exported = { ...data, content: validateContent(data.content).content };
     return { blob: new Blob([JSON.stringify(exported, null, 2) + '\n'], { type: 'application/json' }),
       filename: downloadFilename(response, 'json') };

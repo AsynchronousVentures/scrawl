@@ -864,6 +864,23 @@ test('live-only title, body and comments stay out of native/PDF/DOCX snapshots, 
     }
     await page.getByRole('button', { name: 'History', exact: true }).click();
     await page.getByRole('button', { name: /^Revision 1\b/ }).click();
+    const oldNativeDownload = page.waitForEvent('download');
+    await page.getByRole('complementary', { name: 'Revision history', exact: true })
+      .getByRole('button', { name: 'Export JSON', exact: true }).click();
+    const oldNativeFile = await oldNativeDownload;
+    expect(oldNativeFile.suggestedFilename()).toBe('scrawl-release-checklist-revision-1.json');
+    const oldNativePath = await oldNativeFile.path();
+    if (!oldNativePath) throw new Error('No historical native snapshot download');
+    const oldNativeText = await readFile(oldNativePath, 'utf8');
+    const oldNative = JSON.parse(oldNativeText);
+    const selectedRevision = await context.request.get(`${demo.origin}/api/v1/documents/${seeded.documentId}/revisions/${seeded.revisionId}`);
+    expect(selectedRevision.status()).toBe(200);
+    expect(oldNative.revision.id).toBe(seeded.revisionId);
+    expect(oldNative.revision.revisionNumber).toBe(1);
+    expect(validateContent(oldNative.content).content).toEqual((await selectedRevision.json()).content);
+    expect(oldNativeText).not.toContain(saved.revision.title);
+    expect(oldNativeText).not.toContain('LiveOnlyExportBoundary');
+    expect(oldNativeText).not.toMatch(/"(?:threads|password|token|session|account|email|cookie)"\s*:/i);
     for (const format of ['pdf', 'docx'] as const) {
       const text = await downloadText(format, true); expect(text).toContain('Run tests before deploying.');
       expect(text).not.toContain(saved.revision.title); expect(text).not.toContain('LiveOnlyExportBoundary');

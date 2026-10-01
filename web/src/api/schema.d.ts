@@ -125,7 +125,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** @description Export the current authorized snapshot as native JSON, including archived documents. No history or authentication data. */
+        /** @description Export one authorized snapshot as native JSON, current or an explicitly selected immutable revision, including archived documents. No full history or authentication data. */
         get: operations["exportNativeDocument"];
         put?: never;
         post?: never;
@@ -1296,7 +1296,9 @@ export interface operations {
     };
     exportNativeDocument: {
         parameters: {
-            query?: never;
+            query?: {
+                revisionId?: string;
+            };
             header?: never;
             path: {
                 id: string;

@@ -193,6 +193,31 @@ test('P3 native export against PostgreSQL and authenticated HTTP sessions', asyn
     assert.equal(await database.prisma.documentRevision.count({ where: { documentId } }), 2);
   });
 
+  await t.test('selected history exports exactly one immutable native snapshot without newer content or authentication data', async () => {
+    assert(typeof createdRevision.id === 'string');
+    const expected = {
+      format: 'scrawl-document', exportVersion: 1,
+      document: { id: documentId, spaceId, createdAt: currentDocument.createdAt, createdBy: editorUser.id },
+      revision: { id: createdRevision.id, revisionNumber: 1, title: createdRevision.title,
+        createdAt: createdRevision.createdAt, authorId: editorUser.id },
+      content: validateContent(createdRevision.content).content,
+    };
+    for (const agent of [admin, editor, reader]) {
+      const response = await agent.send('GET', `${exportPath}?revisionId=${createdRevision.id}`);
+      assert.equal(response.status, 200);
+      assert.equal(response.headers['content-disposition'], 'attachment; filename="scrawl-synthetic-first-export-title-revision-1.json"');
+      assert.equal(response.headers['cache-control'], 'no-store');
+      assert.equal(response.headers.etag, undefined);
+      assert.deepEqual(response.data, expected);
+      assert(!response.body.includes('Synthetic current export title') && !response.body.includes('Synthetic current content'));
+      for (const value of forbiddenValues) assert(!response.body.includes(value), 'Historical export omits authentication/session data');
+      assert.deepEqual(validateContent(object(response.data).content).content, expected.content);
+    }
+    assert.deepEqual(await core.documents.exportNative(new Headers({ cookie: reader.cookie }), documentId, createdRevision.id), expected);
+    assert.equal(await database.prisma.documentRevision.count({ where: { documentId } }), 2);
+    assert.deepEqual(object((await reader.send('GET', `/api/v1/documents/${documentId}`)).data), currentDocument);
+  });
+
   await t.test('anonymous and outsider requests disclose no export, including direct core calls', async () => {
     assertDenied(await anonymous.send('GET', exportPath), 401);
     assertDenied(await outsider.send('GET', exportPath), 404);
@@ -203,10 +228,22 @@ test('P3 native export against PostgreSQL and authenticated HTTP sessions', asyn
     }
   });
 
-  await t.test('export rejects malformed IDs and unsupported revision selection without writing', async () => {
+  await t.test('export rejects malformed and foreign-document revision selections without writing or leaking metadata', async () => {
     assertDenied(await admin.send('GET', '/api/v1/documents/not-a-uuid/export'), 400);
-    assertDenied(await admin.send('GET', `${exportPath}?revisionId=${createdRevision.id}`), 400);
+    assertDenied(await admin.send('GET', `${exportPath}?revisionId=not-a-uuid`), 400);
     assertDenied(await admin.send('GET', `${exportPath}?includeHistory=true`), 400);
+    assertDenied(await reader.send('GET', `${exportPath}?revisionId=${randomUUID()}`), 404);
+    const other = await editor.send('POST', `/api/v1/spaces/${spaceId}/documents`, {
+      title: 'Synthetic foreign document', content: syntheticContent('Synthetic foreign body'),
+    });
+    assert.equal(other.status, 201);
+    const otherRevisionId = object(object(other.data).revision).id;
+    assert(typeof otherRevisionId === 'string');
+    assertDenied(await reader.send('GET', `${exportPath}?revisionId=${otherRevisionId}`), 404);
+    await assert.rejects(core.documents.exportNative(new Headers({ cookie: reader.cookie }), documentId, otherRevisionId),
+      (error: unknown) => error instanceof HttpProblem && error.status === 404);
+    await assert.rejects(core.documents.exportNative(new Headers({ cookie: reader.cookie }), documentId, 'invalid'),
+      (error: unknown) => error instanceof HttpProblem && error.status === 400);
     assert.equal(await database.prisma.documentRevision.count({ where: { documentId } }), 2);
   });
 
@@ -215,6 +252,9 @@ test('P3 native export against PostgreSQL and authenticated HTTP sessions', asyn
     assert.equal(archive.status, 200);
     etag = String(archive.headers.etag);
     assertExport(await reader.send('GET', exportPath));
+    const historical = await reader.send('GET', `${exportPath}?revisionId=${createdRevision.id}`);
+    assert.equal(historical.status, 200);
+    assert.deepEqual(object(historical.data).content, validateContent(createdRevision.content).content);
     assertDenied(await outsider.send('GET', exportPath), 404);
     const unarchive = await editor.send('POST', `/api/v1/documents/${documentId}/unarchive`, {}, { 'if-match': etag });
     assert.equal(unarchive.status, 200);
@@ -231,6 +271,8 @@ test('P3 native export against PostgreSQL and authenticated HTTP sessions', asyn
     assert.equal((await reader.send('GET', '/api/v1/me')).status, 200, 'Revocation does not replace authentication');
     assert(reader.cookie === existingCookie, 'The same cookie must remain in use');
     assertDenied(await reader.send('GET', exportPath), 404);
+    assertDenied(await reader.send('GET', `${exportPath}?revisionId=${createdRevision.id}`), 404);
+    assertDenied(await outsider.send('GET', `${exportPath}?revisionId=${createdRevision.id}`), 404);
     await assert.rejects(core.documents.exportNative(new Headers({ cookie: existingCookie }), documentId),
       (error: unknown) => error instanceof HttpProblem && error.status === 404);
     assertExport(await admin.send('GET', exportPath));

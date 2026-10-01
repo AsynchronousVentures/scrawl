@@ -59,7 +59,7 @@ Readers and outsiders cannot mutate and receive 404 without titles, content, ver
 
 ## P3 native export contract
 
-`GET /api/v1/documents/{id}/export` is a read operation with the same core authorization as current document reads, including archived documents. It returns 200 `application/json` with `Content-Disposition: attachment; filename="scrawl-document-{id}.json"`. Anonymous callers receive 401, outsiders or revoked members 404. Unknown query parameters are rejected with 400; there is no historical revision selector or Markdown conversion.
+`GET /api/v1/documents/{id}/export` is a read operation with the same core authorization as current document reads, including archived documents. It returns 200 `application/json` with `Content-Disposition: attachment; filename="scrawl-{snapshot-title}-revision-{number}.json"`. Anonymous callers receive 401, outsiders or revoked members 404. The optional UUID `revisionId` selects one immutable revision belonging to this document. Unknown query parameters and malformed revision IDs return 400; missing or foreign-document revisions return 404. There is no Markdown conversion.
 
 The separately allowlisted response has exactly these fields:
 
@@ -70,7 +70,7 @@ The separately allowlisted response has exactly these fields:
 | `revision` | `id`, `revisionNumber`, `title`, `createdAt`, `authorId` |
 | `content` | `format` (`blocknote-json`), `schemaVersion` (1), `editorVersion` (`0.55.0`), `document` (validated native BlockNote blocks) |
 
-The snapshot is selected by the authorized current-head read and revalidated through the existing parser. Source IDs/timestamps are provenance, not authentication records. No profiles, emails, roles, memberships, authentication/account/session records, passwords, cookies, tokens, lifecycle fields, change notes, or historical snapshots are included. It is a single-document native format, not a backup or import system.
+The snapshot is selected by an authorized current-head read or an explicit document-scoped immutable revision lookup and revalidated through the existing parser. Source IDs/timestamps are provenance, not authentication records. No profiles, emails, roles, memberships, authentication/account/session records, passwords, cookies, tokens, lifecycle fields, change notes, or other historical snapshots are included. It is a single-document native format, not a backup or import system.
 
 ## Search contract
 

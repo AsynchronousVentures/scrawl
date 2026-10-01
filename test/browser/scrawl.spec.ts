@@ -601,7 +601,7 @@ test('a rejected native upload retains the entire local draft and creates no rev
   expect(await readDocument(context)).toEqual(baseline);
 });
 
-test('PDF and DOCX downloads use saved current or selected history and never checkpoint dirty work', async ({ page, context }) => {
+test('native JSON, PDF and DOCX downloads use saved current or selected history and never checkpoint dirty work', async ({ page, context }) => {
   await login(page);
   await title(page).fill('Synthetic saved file export');
   await body(page).fill('Saved text included in rendered exports.');
@@ -653,6 +653,30 @@ test('PDF and DOCX downloads use saved current or selected history and never che
   if (!oldBody) throw new Error('Selected DOCX has no body');
   expect(await oldBody.async('text')).toContain('Run tests before deploying.');
   expect(await oldBody.async('text')).not.toContain('Saved text included in rendered exports.');
+  const nativeDownload = page.waitForEvent('download');
+  const nativeResponse = page.waitForResponse(response => new URL(response.url()).pathname === `/api/v1/documents/${seeded.documentId}/export`
+    && new URL(response.url()).searchParams.get('revisionId') === seeded.revisionId);
+  await history.getByRole('button', { name: 'Export JSON', exact: true }).click();
+  expect((await nativeResponse).status()).toBe(200);
+  const nativeFile = await nativeDownload;
+  expect(nativeFile.suggestedFilename()).toBe('scrawl-release-checklist-revision-1.json');
+  const nativePath = await nativeFile.path();
+  if (!nativePath) throw new Error('No selected native revision download');
+  const nativeText = await readFile(nativePath, 'utf8');
+  const native = JSON.parse(nativeText);
+  const selectedRevision = await context.request.get(`${demo.origin}/api/v1/documents/${seeded.documentId}/revisions/${seeded.revisionId}`);
+  expect(selectedRevision.status()).toBe(200);
+  const snapshot = await selectedRevision.json();
+  expect(native.revision).toEqual({ id: snapshot.id, revisionNumber: 1, title: snapshot.title,
+    createdAt: snapshot.createdAt, authorId: snapshot.authorId });
+  expect(validateContent(native.content).content).toEqual(snapshot.content);
+  expect(nativeText).not.toContain('Synthetic saved file export');
+  expect(nativeText).not.toContain('Unsaved title excluded');
+  expect(nativeText).not.toContain('Unsaved body excluded');
+  expect(nativeText).not.toMatch(/"(?:password|token|session|account|email|cookie)"\s*:/i);
+  await expect(title(page)).toHaveValue('Unsaved title excluded from exported files');
+  await expect(body(page)).toHaveText('Unsaved body excluded from exported files.');
+  await expect(save(page)).toBeEnabled();
   expect(await readDocument(context)).toEqual(saved);
   expect(await demo.database.prisma.documentRevision.count({ where: { documentId: seeded.documentId } })).toBe(2);
 });
@@ -1058,6 +1082,17 @@ test('reader controls are read-only and real API denies every mutation', async (
   expect(await demo.database.prisma.documentRevision.count({ where: { documentId: seeded.documentId } })).toBe(1);
   const exported = await apiRequest(context, `/api/v1/documents/${seeded.documentId}/export`);
   expect(exported.status()).toBe(200);
+  await page.getByRole('button', { name: 'History', exact: true }).click();
+  const history = page.getByRole('complementary', { name: 'Revision history', exact: true });
+  await history.getByRole('button', { name: 'Revision 1', exact: true }).click();
+  await expect(history.getByRole('button', { name: 'Restore revision 1', exact: true })).toHaveCount(0);
+  const download = page.waitForEvent('download');
+  await history.getByRole('button', { name: 'Export JSON', exact: true }).click();
+  const path = await (await download).path();
+  if (!path) throw new Error('No authorized reader history download');
+  const native = JSON.parse(await readFile(path, 'utf8'));
+  expect(native.revision.id).toBe(seeded.revisionId);
+  expect(validateContent(native.content).content).toEqual(original.data.revision.content);
 });
 
 test('outsider sees an empty private interface and cannot discover document, history or export', async ({ page, context }) => {
@@ -1070,6 +1105,7 @@ test('outsider sees an empty private interface and cannot discover document, his
     `/api/v1/documents/${seeded.documentId}/revisions`,
     `/api/v1/documents/${seeded.documentId}/revisions/${seeded.revisionId}`,
     `/api/v1/documents/${seeded.documentId}/export`,
+    `/api/v1/documents/${seeded.documentId}/export?revisionId=${seeded.revisionId}`,
   ]) {
     const response = await apiRequest(context, path);
     expect(response.status()).toBe(404);

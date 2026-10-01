@@ -114,6 +114,35 @@ async function main() {
           await expect(history.getByRole('button', { name: 'Revision 1', exact: true })).toBeVisible();
           await history.getByRole('button', { name: 'Revision 1', exact: true }).click();
           await expect(page.getByRole('textbox', { name: 'Revision content', exact: true })).toContainText('This is a synthetic workspace');
+          stage = `${role} selected native snapshot download`;
+          const selected = page.waitForResponse(response => new URL(response.url()).pathname === `/api/v1/documents/${manifest.startDocumentId}/export`
+            && new URL(response.url()).searchParams.has('revisionId'));
+          const selectedDownload = page.waitForEvent('download');
+          await history.getByRole('button', { name: 'Export JSON', exact: true }).click();
+          const selectedResponse = await selected;
+          assert.equal(selectedResponse.status(), 200);
+          const revisionId = new URL(selectedResponse.url()).searchParams.get('revisionId');
+          assert(revisionId);
+          const selectedFile = await selectedDownload;
+          const selectedStream = await selectedFile.createReadStream();
+          assert(selectedStream);
+          const selectedChunks: Buffer[] = [];
+          for await (const chunk of selectedStream) selectedChunks.push(Buffer.from(chunk));
+          const selectedText = Buffer.concat(selectedChunks).toString('utf8');
+          const selectedExport: unknown = JSON.parse(selectedText);
+          assert(selectedExport && typeof selectedExport === 'object' && 'content' in selectedExport
+            && 'revision' in selectedExport && selectedExport.revision && typeof selectedExport.revision === 'object'
+            && 'id' in selectedExport.revision && selectedExport.revision.id === revisionId
+            && 'title' in selectedExport.revision && typeof selectedExport.revision.title === 'string'
+            && 'revisionNumber' in selectedExport.revision && selectedExport.revision.revisionNumber === 1);
+          const snapshotResponse: APIResponse = await context.request.get(`${origin}/api/v1/documents/${manifest.startDocumentId}/revisions/${revisionId}`);
+          assert.equal(snapshotResponse.status(), 200);
+          const snapshot: unknown = await snapshotResponse.json();
+          assert(snapshot && typeof snapshot === 'object' && 'content' in snapshot);
+          assert.deepEqual(validateContent(selectedExport.content).content, validateContent(snapshot.content).content);
+          assert.equal(selectedFile.suggestedFilename(), exportFilename(selectedExport.revision.title, 1, 'json'));
+          assert(!/"(?:password|token|session|account|email|cookie)"\s*:/i.test(selectedText));
+          if (role === 'administrator') await page.screenshot({ path: `${evidenceDirectory}/native-history-export.png`, mask: [page.locator('.account')], maskColor: '#1b1e20' });
           await page.getByRole('button', { name: 'Close history', exact: true }).click();
           stage = `${role} native authorized export`;
           const response: APIResponse = await context.request.get(`${origin}/api/v1/documents/${manifest.startDocumentId}`);

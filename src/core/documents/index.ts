@@ -541,9 +541,14 @@ export function createDocuments(prisma: PrismaClient, identity: Identity, spaces
       if (!target) throw new HttpProblem(404, 'NOT_FOUND');
       return documentDto(await readHead(headers, target.id));
     },
-    async exportNative(headers: Headers, id: string) {
+    async exportNative(headers: Headers, id: string, revisionId?: string) {
       const document = await readHead(headers, id);
-      const revision = document.head;
+      if (revisionId !== undefined && (typeof revisionId !== 'string' || !uuid.test(revisionId))) {
+        throw new HttpProblem(400, 'INVALID_REQUEST');
+      }
+      const revision = revisionId === undefined ? document.head
+        : await prisma.documentRevision.findFirst({ where: { id: revisionId, documentId: document.id } });
+      if (!revision) throw new HttpProblem(404, 'NOT_FOUND');
       return {
         format: 'scrawl-document' as const, exportVersion: 1 as const,
         document: {
