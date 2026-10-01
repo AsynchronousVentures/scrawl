@@ -257,6 +257,50 @@ test('private native live storage uses PostgreSQL and genuine authenticated sess
     await problem(core.documents.live.update(editor, id, room.epoch, frame(room.state, doc => doc.getMap('unknown').set('hidden', 'content'))), 400);
     assert.deepEqual(await savedRoom(), before); assert.equal(await count(), 4);
   });
+  await t.test('a session expiring during a delayed write cannot authorize the committed result or its delivery', async () => {
+    const expiringEditor = await login(editorUser.email, '127.0.0.27');
+    const editorPrincipal = await core.identity.resolve(expiringEditor);
+    const expiringReader = await login(readerUser.email, '127.0.0.28');
+    const readerPrincipal = await core.identity.resolve(expiringReader);
+    const gate = await database.pool.connect();
+    await database.pool.query(`CREATE FUNCTION pause_expiring_write() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN PERFORM pg_advisory_xact_lock(7242032, hashtext('${schema}')); RETURN NEW; END $$;
+      CREATE TRIGGER expiry_gate BEFORE UPDATE ON "DocumentLive" FOR EACH ROW EXECUTE FUNCTION pause_expiring_write()`);
+    const pending: Promise<unknown>[] = [];
+    try {
+      await gate.query('SELECT pg_advisory_lock(7242032, hashtext($1))', [schema]);
+      await gate.query('BEGIN'); await gate.query('SELECT "id" FROM "Document" WHERE "id"=$1 FOR UPDATE', [id]);
+      const before = await savedRoom();
+      const rejected = core.documents.live.update(expiringEditor, id, room.epoch, frame(room.state, doc => text(doc).insert(0, 'Must roll back ')));
+      pending.push(rejected);
+      await waitForLock('Document');
+      // Resolve the genuine cookie first, then shorten its stored lifetime.
+      // Otherwise the auth library's normal refresh would renew the session.
+      const expiresAt = new Date(Date.now() + 1500);
+      await database.prisma.session.update({ where: { id: editorPrincipal.sessionId }, data: { expiresAt } });
+      await gate.query('COMMIT'); await waitForLock('DocumentLive');
+      await delay(Math.max(0, expiresAt.getTime() - Date.now() + 25));
+      await gate.query('SELECT pg_advisory_unlock(7242032, hashtext($1))', [schema]);
+      await problem(rejected, 401);
+      assert.deepEqual(await savedRoom(), before); assert.equal(await count(), 4);
+
+      await gate.query('SELECT pg_advisory_lock(7242032, hashtext($1))', [schema]);
+      const recipientExpiry = new Date(Date.now() + 1500);
+      await database.prisma.session.update({ where: { id: readerPrincipal.sessionId }, data: { expiresAt: recipientExpiry } });
+      const accepted = core.documents.live.update(editor, id, room.epoch, frame(room.state, doc => text(doc).insert(0, 'Expiry-safe ')),
+        [...connections, { connectionId: 'expiring-reader', principal: readerPrincipal }]);
+      pending.push(accepted); await waitForLock('DocumentLive');
+      await delay(Math.max(0, recipientExpiry.getTime() - Date.now() + 25));
+      await gate.query('SELECT pg_advisory_unlock(7242032, hashtext($1))', [schema]);
+      const receipt = await accepted; room = receipt;
+      assert(!receipt.recipients.some(connection => connection.connectionId === 'expiring-reader'));
+      assert.match(readLiveState(room.state).plainText, /Expiry-safe/); assert.equal(await count(), 4);
+    } finally {
+      await gate.query('ROLLBACK'); await gate.query('SELECT pg_advisory_unlock(7242032, hashtext($1))', [schema]);
+      await Promise.allSettled(pending); gate.release();
+      await database.pool.query('DROP TRIGGER expiry_gate ON "DocumentLive"; DROP FUNCTION pause_expiring_write()');
+    }
+  });
   await t.test('recipient account recovery waits for durable acceptance, then is excluded from subsequent delivery receipts', async () => {
     const gate = await database.pool.connect();
     await gate.query('SELECT pg_advisory_lock(7242031, hashtext($1))', [schema]);

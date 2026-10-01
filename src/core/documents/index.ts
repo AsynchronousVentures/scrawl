@@ -133,18 +133,23 @@ export function createDocuments(prisma: PrismaClient, identity: Identity, spaces
       const document = await tx.document.findUniqueOrThrow({ where: { id }, include: { head: true, space: { select: { slug: true } } } });
       if (document.archivedAt) throw new HttpProblem(409, 'DOCUMENT_ARCHIVED');
       const recipients: { connectionId: string; canWrite: boolean }[] = [];
-      for (const connection of connections) {
-        try {
-          const permission = await spaces.access(tx, connection.principal, target.spaceId);
-          recipients.push({ connectionId: connection.connectionId, canWrite: permission.canWrite });
-        } catch (error) {
-          // A revoked/expired recipient is omitted, not a reason to accept an
-          // unchecked audience or to fail another authorized editor's update.
-          if (!(error instanceof HttpProblem && [401, 403, 404].includes(error.status))) throw error;
+      try {
+        const result = await operation(tx, document, actor, recipients);
+        // Rows stay locked, but their lifetime can expire while SQL waits.
+        // Fill the receipt and recheck the sender only after the write finishes.
+        for (const connection of connections) {
+          try {
+            const permission = await spaces.access(tx, connection.principal, target.spaceId);
+            recipients.push({ connectionId: connection.connectionId, canWrite: permission.canWrite });
+          } catch (error) {
+            // A revoked/expired recipient is omitted, not a reason to accept an
+            // unchecked audience or to fail another authorized editor's update.
+            if (!(error instanceof HttpProblem && [401, 403, 404].includes(error.status))) throw error;
+          }
         }
-      }
-      try { return await operation(tx, document, actor, recipients); }
-      catch (error) {
+        await identity.actor(principal, tx);
+        return result;
+      } catch (error) {
         if (error instanceof LiveContentError) throw new HttpProblem(error.status, error.code);
         throw error;
       }
