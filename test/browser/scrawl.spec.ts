@@ -2252,3 +2252,76 @@ test('space access shows a real empty grant list and read failures cannot enable
   await expect(dialog.getByRole('button', { name: 'Grant access', exact: true })).toBeEnabled();
   await expect(dialog.getByLabel('Existing account email')).toHaveValue(demo.accountEmail('reader'));
 });
+
+test('save shortcut persists complete native edits and a clean shortcut creates no revision', async ({ page, context }) => {
+  await login(page); await expect(save(page)).toBeDisabled();
+  let writes = 0;
+  page.on('request', request => { if (request.method() === 'PATCH' && new URL(request.url()).pathname === `/api/v1/documents/${seeded.documentId}`) writes++; });
+  await expect(save(page)).toHaveAttribute('aria-keyshortcuts', 'Control+s Meta+s');
+  await title(page).fill('Saved with the document shortcut');
+  await body(page).fill('Complete native keyboard save.');
+  await body(page).press('ControlOrMeta+s');
+  await expect(page.getByRole('status').filter({ hasText: 'Saved · revision 2' })).toBeVisible();
+  expect(writes).toBe(1);
+  await body(page).press('ControlOrMeta+s');
+  expect(writes).toBe(1); expect((await readDocument(context)).data.currentRevisionNumber).toBe(2);
+  await page.reload(); await expect(title(page)).toHaveValue('Saved with the document shortcut');
+  await expect(body(page)).toHaveText('Complete native keyboard save.');
+  await assertNoBrowserPersistence(page);
+});
+
+test('save shortcut cannot duplicate a pending write and failed work requires deliberate retry', async ({ page, context }) => {
+  await login(page); await title(page).fill('Keyboard work retained after failure'); await body(page).fill('Full unsaved body remains local.');
+  let release!: () => void, writes = 0;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  page.on('request', request => { if (request.method() === 'PATCH' && new URL(request.url()).pathname === `/api/v1/documents/${seeded.documentId}`) writes++; });
+  const endpoint = `**/api/v1/documents/${seeded.documentId}`;
+  await page.route(endpoint, async route => { if (route.request().method() !== 'PATCH') { await route.continue(); return; } await gate; await route.fulfill({ status: 503, contentType: 'application/json', body: '{}' }); });
+  try {
+    await body(page).press('ControlOrMeta+s'); await expect(save(page)).toBeDisabled();
+    await expect.poll(() => writes).toBe(1);
+    await body(page).press('ControlOrMeta+s'); expect(writes).toBe(1);
+  } finally { release(); }
+  await expect(page.getByRole('alert').filter({ hasText: 'The request failed.' })).toBeVisible();
+  await expect(title(page)).toHaveValue('Keyboard work retained after failure'); await expect(body(page)).toHaveText('Full unsaved body remains local.');
+  expect((await readDocument(context)).data.currentRevisionNumber).toBe(1);
+  await page.unroute(endpoint); await body(page).press('ControlOrMeta+s');
+  await expect(page.getByRole('status').filter({ hasText: 'Saved · revision 2' })).toBeVisible(); expect(writes).toBe(2);
+});
+
+test('save shortcut retains stale work and requires deliberate reconciliation before another write', async ({ page, context }) => {
+  await login(page); await expect(save(page)).toBeDisabled(); const original = await readDocument(context);
+  await title(page).fill('Complete local shortcut draft'); await body(page).fill('Complete retained native body.');
+  const localBody = await body(page).innerText();
+  const remote = await apiRequest(context, `/api/v1/documents/${seeded.documentId}`, { method: 'PATCH', headers: { origin: demo.origin, 'if-match': original.etag }, data: { title: 'New remote saved title' } });
+  expect(remote.status()).toBe(200);
+  let writes = 0; page.on('request', request => { if (request.method() === 'PATCH' && new URL(request.url()).pathname === `/api/v1/documents/${seeded.documentId}`) writes++; });
+  const rejected = page.waitForResponse(response => response.request().method() === 'PATCH' && new URL(response.url()).pathname === `/api/v1/documents/${seeded.documentId}`);
+  await body(page).press('ControlOrMeta+s'); expect((await rejected).status()).toBe(412);
+  await expect(page.getByRole('heading', { name: 'Save conflict', exact: true })).toBeVisible();
+  await expect(title(page)).toHaveValue('Complete local shortcut draft'); await expect(body(page)).toHaveText(localBody, { useInnerText: true });
+  await body(page).press('ControlOrMeta+s'); expect(writes).toBe(1);
+  expect((await readDocument(context)).data.currentRevisionNumber).toBe(2);
+  await page.getByRole('button', { name: 'Use my changes', exact: true }).click();
+  expect(writes).toBe(1); await body(page).press('ControlOrMeta+s');
+  await expect(page.getByRole('status').filter({ hasText: 'Saved · revision 3' })).toBeVisible(); expect(writes).toBe(2);
+});
+
+test('save shortcut does not write from a space dialog or a reader session', async ({ page, context, browser }) => {
+  await login(page, 'administrator'); await title(page).fill('Draft under a space dialog');
+  let writes = 0; page.on('request', request => { if (request.method() === 'PATCH' && new URL(request.url()).pathname === `/api/v1/documents/${seeded.documentId}`) writes++; });
+  await page.getByRole('button', { name: 'Space access', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Space access', exact: true });
+  await dialog.getByLabel('Existing account email').fill('synthetic@example.test');
+  await dialog.getByLabel('Existing account email').press('ControlOrMeta+s');
+  await expect(dialog).toBeVisible(); expect(writes).toBe(0);
+  await dialog.getByRole('button', { name: 'Done', exact: true }).click(); await expect(title(page)).toHaveValue('Draft under a space dialog');
+  expect((await readDocument(context)).data.currentRevisionNumber).toBe(1);
+  const reader = await browser.newContext();
+  try {
+    const readOnly = await reader.newPage(); await login(readOnly, 'reader'); await expect(body(readOnly)).toHaveAttribute('aria-readonly', 'true');
+    let readerWrites = 0; readOnly.on('request', request => { if (['PATCH', 'POST'].includes(request.method()) && new URL(request.url()).pathname.includes('/documents/')) readerWrites++; });
+    await body(readOnly).press('ControlOrMeta+s'); expect(readerWrites).toBe(0); await expect(save(readOnly)).toHaveCount(0);
+    expect((await readDocument(context)).data.currentRevisionNumber).toBe(1);
+  } finally { await reader.close(); }
+});

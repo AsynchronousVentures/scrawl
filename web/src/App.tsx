@@ -116,6 +116,7 @@ export function App() {
   const historyGeneration = useRef(0);
   const listGeneration = useRef(0);
   const titleInput = useRef<HTMLInputElement>(null);
+  const saveTrigger = useRef<HTMLButtonElement>(null);
   const spaceTrigger = useRef<HTMLButtonElement>(null);
   const accessTrigger = useRef<HTMLButtonElement>(null);
   const owner = useRef<string | null>(null);
@@ -458,8 +459,19 @@ export function App() {
   }, [publishing?.mayPublish, base?.document.id, base?.document.lockVersion, accessIssue, publicationRetry]);
   useEffect(() => {
     const shortcut = (event: KeyboardEvent) => {
-      if (!user || accessIssue || blocked || event.defaultPrevented || !(event.ctrlKey || event.metaKey)
-        || event.altKey || event.key.toLowerCase() !== 'k') return;
+      if (event.defaultPrevented || !(event.ctrlKey || event.metaKey) || event.altKey) return;
+      if (event.key.toLowerCase() === 's' && !event.shiftKey) {
+        if (event.target instanceof HTMLElement && (event.target.closest('[role="dialog"]')
+          || event.target.closest('.bn-comment-editor'))) return;
+        const button = saveTrigger.current;
+        if (!button) return;
+        event.preventDefault();
+        // Use the current control, including its disabled state and existing
+        // write guards. Holding the shortcut never creates repeated writes.
+        if (!event.repeat && !button.disabled) button.click();
+        return;
+      }
+      if (!user || accessIssue || blocked || event.key.toLowerCase() !== 'k') return;
       // BlockNote owns its native link shortcut while editing, including UI
       // portalled from the editor. Search remains available in the header.
       if (event.target instanceof HTMLElement && (event.target.closest('[role="dialog"]')
@@ -705,7 +717,7 @@ export function App() {
                   {mayPublish && publication?.publication?.active && <button disabled={blocked} onClick={event => { event.currentTarget.closest('details')?.removeAttribute('open'); setPublicationPrompt({ action: 'withdraw' }); }}>Withdraw publication</button>}
                   {space?.access === 'editor' && !conflict && <button disabled={blocked || Boolean(liveState?.pending)} onClick={event => { event.currentTarget.closest('details')?.removeAttribute('open'); guarded(() => { void mutate(() => api.archive(base.document.id,base.etag,Boolean(base.document.archivedAt)),base.document.archivedAt ? 'Unarchiving…' : 'Archiving…'); }); }}>{base.document.archivedAt ? 'Unarchive' : 'Archive'}</button>}
                 </div></details></>}
-              {mayEdit && <div className="save-actions">{live ? <><button disabled={blocked || !liveState?.canUndo} aria-label="Undo my changes" onClick={() => live.undo()}>Undo</button><button disabled={blocked || !liveState?.canRedo} aria-label="Redo my changes" onClick={() => live.redo()}>Redo</button></> : <button disabled={blocked || (!hasDraftChanges && !contentError)} onClick={discardChanges}>Discard changes</button>}<button className="primary" disabled={blocked || !dirty || Boolean(conflict) || Boolean(contentError) || Boolean(liveState?.pending)} onClick={save}>Save</button></div>}
+              {mayEdit && <div className="save-actions">{live ? <><button disabled={blocked || !liveState?.canUndo} aria-label="Undo my changes" onClick={() => live.undo()}>Undo</button><button disabled={blocked || !liveState?.canRedo} aria-label="Redo my changes" onClick={() => live.redo()}>Redo</button></> : <button disabled={blocked || (!hasDraftChanges && !contentError)} onClick={discardChanges}>Discard changes</button>}<button ref={saveTrigger} className="primary" aria-keyshortcuts="Control+s Meta+s" title="Save (Ctrl/Cmd+S)" disabled={blocked || !dirty || Boolean(conflict) || Boolean(contentError) || Boolean(liveState?.pending)} onClick={save}>Save</button></div>}
             </div>}
             {accessIssue && <div className="notice" role="alert"><strong>{saveError || (accessIssue === 'session' ? 'Your session expired.' : 'Access to this document is unavailable.')}</strong><p>{dirty ? 'Your complete unsaved title and body are retained in this tab. Nothing was saved. Server actions are unavailable. Copy your draft before closing or reloading.' : commentState.dirty ? 'Your unsent comment text remains in this tab. Nothing was submitted. Server actions are unavailable. Copy it before closing or reloading.' : 'Sign in or ask an administrator to verify your access.'}</p>
               {dirty && draft && <button onClick={() => { void navigator.clipboard.writeText(draft.title+'\n\n'+extractPlainText(draft.content.document)).then(() => setNotice('Local draft text copied. Nothing was saved.')).catch(() => setNotice('Copy is unavailable. Select and copy the retained title and body.')); }}>Copy local draft text</button>}

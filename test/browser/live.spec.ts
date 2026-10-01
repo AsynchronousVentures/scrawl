@@ -1145,3 +1145,20 @@ test('operator account recovery revokes every live session while preserving an u
     expect(await page.evaluate(() => localStorage.length + sessionStorage.length)).toBe(0);
   } finally { await secondary.close(); await administrator.close(); }
 });
+
+test('save shortcut checkpoints shared work but never submits from the native comment composer', async ({ page, context }) => {
+  await login(page); await expect(title(page)).toBeVisible(); await enroll(page);
+  await body(page).fill('Native shared shortcut document.'); await expect(save(page)).toBeEnabled();
+  let checkpoints = 0;
+  page.on('request', request => { if (request.method() === 'POST' && new URL(request.url()).pathname.endsWith('/checkpoint')) checkpoints++; });
+  await body(page).press('ControlOrMeta+s'); await expect(page.getByText('Saved revision 2.', { exact: true })).toBeVisible(); expect(checkpoints).toBe(1);
+  await title(page).fill('Uncheckpointed shared title'); await expect(save(page)).toBeEnabled();
+  await body(page).press('ControlOrMeta+Home'); await body(page).press('Shift+End');
+  await page.getByRole('button', { name: 'Add comment', exact: true }).click();
+  const composer = page.locator('.bn-comment-editor [contenteditable="true"]');
+  await composer.fill('Complete unsent private comment.'); await composer.press('ControlOrMeta+s');
+  await expect(composer).toHaveText('Complete unsent private comment.');
+  expect(checkpoints).toBe(1); expect((await latest(context)).currentRevisionNumber).toBe(2);
+  // The native comment dialog makes the document inert while its composer is open.
+  await expect(page.locator('input#title')).toHaveValue('Uncheckpointed shared title');
+});
