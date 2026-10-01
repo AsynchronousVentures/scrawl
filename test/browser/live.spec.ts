@@ -447,3 +447,111 @@ test('restart preserves live content and comments; a disabled runtime shows only
     } finally { await disabled.close(); }
   } finally { if (!enabled) await demo.restart(true); }
 });
+
+test('failed native comment deletion reports failure without changing the thread or revision; deliberate retry deletes it', async ({ page, context }) => {
+  const runtimeErrors: string[] = []; page.on('pageerror', error => runtimeErrors.push(error.message));
+  await login(page); await expect(title(page)).toBeVisible(); await enroll(page);
+  await body(page).focus(); await page.keyboard.press('ControlOrMeta+Home'); await page.keyboard.press('Shift+End');
+  await page.getByRole('button', { name: 'Add comment', exact: true }).click();
+  await page.locator('.bn-comment-editor [contenteditable="true"]').fill('Synthetic native comment retained after failed deletion.');
+  await page.locator('.bn-thread').getByRole('button', { name: 'Save', exact: true }).click();
+  const sidebar = page.locator('.document-comments'); await sidebar.locator('summary').click();
+  await expect(sidebar).toContainText('Synthetic native comment retained after failed deletion.');
+  const before = await demo.database.prisma.documentLive.findFirstOrThrow({ where: { documentId: seeded.documentId } });
+  const endpoint = `**/api/v1/documents/${seeded.documentId}/live/*/threads/*/comments/*?soft=false`;
+  await page.route(endpoint, route => route.request().method() === 'DELETE'
+    ? route.fulfill({ status: 500, contentType: 'application/json', body: '{}' }) : route.continue());
+  async function remove() {
+    await sidebar.locator('.bn-thread-comment').first().hover();
+    await sidebar.getByRole('button', { name: 'More actions', exact: true }).first().click({ timeout: 10_000 });
+    await page.getByRole('menuitem', { name: 'Delete comment', exact: true }).click();
+  }
+  await remove();
+  await expect(page.getByRole('alert').filter({ hasText: 'The comment action did not finish.' })).toBeVisible();
+  await expect(sidebar).toContainText('Synthetic native comment retained after failed deletion.');
+  expect(await demo.database.prisma.documentLive.findFirstOrThrow({ where: { documentId: seeded.documentId } })).toEqual(before);
+  expect((await latest(context)).currentRevisionNumber).toBe(1); expect(runtimeErrors).toEqual([]);
+  await page.unroute(endpoint); await remove();
+  await expect(sidebar).not.toContainText('Synthetic native comment retained after failed deletion.');
+  await expect(page.getByRole('alert').filter({ hasText: 'The comment action did not finish.' })).toHaveCount(0);
+  expect((await latest(context)).currentRevisionNumber).toBe(1); expect(runtimeErrors).toEqual([]);
+});
+
+test('native comment actions are discoverable by keyboard and failed resolution preserves the thread until deliberate retry', async ({ page, context }) => {
+  const runtimeErrors: string[] = []; page.on('pageerror', error => runtimeErrors.push(error.message));
+  await login(page); await expect(title(page)).toBeVisible(); await enroll(page);
+  await body(page).focus(); await page.keyboard.press('ControlOrMeta+Home'); await page.keyboard.press('Shift+End');
+  await page.getByRole('button', { name: 'Add comment', exact: true }).click();
+  await page.locator('.bn-comment-editor [contenteditable="true"]').fill('Synthetic native thread awaiting resolution.');
+  await page.locator('.bn-thread').getByRole('button', { name: 'Save', exact: true }).click();
+  const sidebar = page.locator('.document-comments'); await sidebar.locator('summary').click();
+  await expect(sidebar).toContainText('Synthetic native thread awaiting resolution.');
+  await page.mouse.move(1, 1); await sidebar.locator('.bn-thread').first().focus();
+  const resolve = page.getByRole('button', { name: 'Resolve', exact: true }).first();
+  await expect(resolve).toBeVisible();
+  const before = await demo.database.prisma.documentLive.findFirstOrThrow({ where: { documentId: seeded.documentId } });
+  const endpoint = `**/api/v1/documents/${seeded.documentId}/live/*/threads/*/resolve`;
+  await page.route(endpoint, route => route.fulfill({ status: 500, contentType: 'application/json', body: '{}' }));
+  await resolve.focus(); await expect(resolve).toBeFocused(); await page.keyboard.press('Enter');
+  await expect(page.getByRole('alert').filter({ hasText: 'The comment action did not finish.' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Re-open', exact: true })).toHaveCount(0);
+  expect(await demo.database.prisma.documentLive.findFirstOrThrow({ where: { documentId: seeded.documentId } })).toEqual(before);
+  expect((await latest(context)).currentRevisionNumber).toBe(1); expect(runtimeErrors).toEqual([]);
+  await page.unroute(endpoint); await resolve.focus(); await page.keyboard.press('Enter');
+  const reopen = page.getByRole('button', { name: 'Re-open', exact: true }).first();
+  await expect(reopen).toBeVisible(); await reopen.focus(); await page.keyboard.press('Enter');
+  await expect(resolve).toBeVisible(); expect((await latest(context)).currentRevisionNumber).toBe(1);
+  expect(runtimeErrors).toEqual([]); expect(await page.evaluate(() => localStorage.length + sessionStorage.length)).toBe(0);
+});
+
+test('native reply and own-comment editing retain complete text after failures and persist only on deliberate submission', async ({ page, context }) => {
+  const runtimeErrors: string[] = []; page.on('pageerror', error => runtimeErrors.push(error.message));
+  await login(page); await expect(title(page)).toBeVisible(); await enroll(page);
+  await body(page).focus(); await page.keyboard.press('ControlOrMeta+Home'); await page.keyboard.press('Shift+End');
+  await page.getByRole('button', { name: 'Add comment', exact: true }).click();
+  await page.locator('.bn-comment-editor [contenteditable="true"]').fill('Synthetic parent thread for native replies.');
+  await page.locator('.bn-thread').getByRole('button', { name: 'Save', exact: true }).click();
+  const sidebar = page.locator('.document-comments'); await sidebar.locator('summary').click();
+  await expect(sidebar).toContainText('Synthetic parent thread for native replies.');
+  await expect(page.getByRole('status').filter({ hasText: 'Submitting comment…' })).toHaveCount(0);
+  await page.mouse.move(1, 1); await sidebar.locator('.bn-thread').first().focus();
+  const card = sidebar.locator('.bn-thread').first();
+  const composer = card.locator('.bn-thread-composer [contenteditable="true"]');
+  await composer.fill('Complete retained native reply.', { timeout: 10_000 });
+  await title(page).focus(); await expect(composer).toHaveText('Complete retained native reply.');
+  await page.getByRole('button', { name: 'New document', exact: true }).click();
+  const guard = page.getByRole('dialog', { name: 'Unsaved changes', exact: true });
+  await expect(guard).toBeVisible(); await expect(guard).toContainText('unsent comment text');
+  await guard.getByRole('button', { name: 'Keep editing', exact: true }).click();
+  await expect(composer).toHaveText('Complete retained native reply.');
+  const replyEndpoint = `**/api/v1/documents/${seeded.documentId}/live/*/threads/*/comments`;
+  await page.route(replyEndpoint, route => route.fulfill({ status: 500, contentType: 'application/json', body: '{}' }));
+  await composer.press('ControlOrMeta+Enter');
+  await expect(page.getByRole('alert').filter({ hasText: 'The comment action did not finish.' })).toBeVisible();
+  await expect(composer).toHaveText('Complete retained native reply.');
+  await expect(card.locator('.bn-thread-comment')).toHaveCount(1); expect((await latest(context)).currentRevisionNumber).toBe(1);
+  await page.unroute(replyEndpoint); await card.locator('.bn-thread-composer').getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(card.locator('.bn-thread-comment')).toHaveCount(2); await expect(composer).toHaveText('');
+  const reply = card.locator('.bn-thread-comment').filter({ hasText: 'Complete retained native reply.' });
+  await reply.getByRole('button', { name: 'More actions', exact: true }).focus(); await page.keyboard.press('Enter');
+  await page.getByRole('menuitem', { name: 'Edit comment', exact: true }).click();
+  const edit = card.locator('.bn-thread-comment .bn-comment-editor [contenteditable="true"]');
+  await edit.fill('Complete retained native reply after an explicit edit.');
+  const beforeEdit = await demo.database.prisma.documentLive.findFirstOrThrow({ where: { documentId: seeded.documentId } });
+  const editEndpoint = `**/api/v1/documents/${seeded.documentId}/live/*/threads/*/comments/*`;
+  await page.route(editEndpoint, route => route.request().method() === 'PUT'
+    ? route.fulfill({ status: 500, contentType: 'application/json', body: '{}' }) : route.continue());
+  await edit.press('ControlOrMeta+Enter');
+  await expect(page.getByRole('alert').filter({ hasText: 'The comment action did not finish.' })).toBeVisible();
+  await expect(edit).toHaveText('Complete retained native reply after an explicit edit.');
+  expect(await demo.database.prisma.documentLive.findFirstOrThrow({ where: { documentId: seeded.documentId } })).toEqual(beforeEdit);
+  expect((await latest(context)).currentRevisionNumber).toBe(1);
+  await page.unroute(editEndpoint); await edit.press('ControlOrMeta+Enter');
+  await expect(card.locator('.bn-thread-comment [contenteditable="true"]')).toHaveCount(0);
+  await expect(card.locator('.bn-thread-comments')).toContainText('Complete retained native reply after an explicit edit.');
+  await page.reload(); await expect(body(page)).toBeEditable(); await sidebar.locator('summary').click();
+  await expect(sidebar.locator('.bn-thread-comment')).toHaveCount(2);
+  await expect(sidebar).toContainText('Complete retained native reply after an explicit edit.');
+  expect((await latest(context)).currentRevisionNumber).toBe(1); expect(runtimeErrors).toEqual([]);
+  expect(await page.evaluate(() => localStorage.length + sessionStorage.length)).toBe(0);
+});

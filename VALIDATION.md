@@ -1,6 +1,25 @@
 # Validation
 
+## Native comment actions and retained replies
+
+The supplied BlockNote toolbar/menu now reports rejected comment commands, with accessible names and continuously reachable keyboard actions. A single supplied sidebar owns reply editors, avoiding duplicate floating/sidebar composers whose focus changes could discard a reply. Dirty or pending composers remain mounted when focus moves to the title or navigation guard. Native author/date text and action controls have separate space. Loss of submission authority explicitly asks users to copy their unsent text; it never reports a save.
+
+Observed results without retries or skips:
+
+- `npm run check` passed all 91 cases, types, boundaries, builds and generated API drift. Log: `artifacts/live-comment-actions-check.log`.
+- Complete `npm run test:browser` passed 62/62 genuine HTTP/session/PostgreSQL cases, including all prior workflows and Demo A. Log: `artifacts/live-comment-actions-full-browser.log`.
+- After the final action-layout CSS adjustment, rebuilding and rerunning all four relevant comment cases passed 4/4, including real desktop/mobile captures and overflow assertions. Log: `artifacts/live-comment-actions-layout-browser.log`. The complete 62-case run precedes this CSS-only adjustment.
+- Three focused new cases passed before the complete run. Log: `artifacts/live-comment-one-view.log`. Failed deletion/resolution leave the exact stored live record unchanged; rejected reply/edit retains complete composer text and does not append history. Deliberate retry succeeds, reply/edit survives reload, and Resolve/Re-open is keyboard usable. No unhandled page error or private browser storage was observed.
+
+Backend, migrations and dependency pins are unchanged from `b267732`, whose complete PostgreSQL suite passed 136/136 on each of 17 and 18, locally and in both hosted matrices. Those are preceding backend results, not a claim that the unchanged database suite was rerun for this frontend patch. No retained reset or enrollment occurred. Intermediate failing browser runs are diagnostic results, not passes.
+
+Actual enabled disposable-fixture captures: [desktop](https://uwvqig7mu5.ufs.sh/f/tJOw1mn9psOEtIU246n9psOEgi62D1HuWBIdXRlvM5wjaer0), [mobile](https://uwvqig7mu5.ufs.sh/f/tJOw1mn9psOEKmv2BNC3Bjv1YwCrM4JkcGPpy6E8TQIxhfOK). Supplied actions no longer cover author/date text. These are acceptance-fixture screenshots, not an enabled retained preview.
+
+Collaboration remains disabled in the retained preview. Reaction error handling, comment-only drafts during access/session loss, authenticated presence, nested-block peer undo, hard restart recovery, rendered live-only export/publication isolation and two-step create/anchor recovery remain activation gates. The already passing solo workflow remains usable.
+
 ## Disabled collaboration and retained-state restart checkpoint
+
+Hosted follow-up: both complete matrices passed for `f1f9547` ([PR](https://github.com/AsynchronousVentures/scrawl/actions/runs/36859424436), [push](https://github.com/AsynchronousVentures/scrawl/actions/runs/36859421398)) and `b267732` ([PR](https://github.com/AsynchronousVentures/scrawl/actions/runs/36860897948), [push](https://github.com/AsynchronousVentures/scrawl/actions/runs/36860891077)). Each includes PostgreSQL 17 and 18. The earlier failed runs remain recorded below; passing follow-up does not establish the intermittent external-link cause.
 
 Authorized document read/list responses now include `editingMode: "solo" | "live"`, derived from the existing epoch pointer. The generated browser client uses it to prevent solo editing of enrolled documents when collaboration is disabled. Such documents show only their saved revision, read-only, with a clear notice; live content/comments remain stored and unavailable. Saved history and exports remain usable, while Save and Restore are unavailable. Core still rejects crafted solo writes.
 

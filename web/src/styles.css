@@ -63,6 +63,10 @@
 .document-comments { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--line); min-width: 0; }
 .document-comments > summary { cursor: pointer; color: var(--muted); margin-bottom: 16px; }
 .document-comments .bn-thread { max-width: 100%; }
+/* Native actions remain keyboard reachable without covering author metadata. */
+.document-comments .bn-thread-comment > .absolute { position: static; align-self: flex-end; order: 1; }
+.document-comments .bn-thread-comment > .flex-row > .flex-row { flex-wrap: wrap; min-width: 0; }
+.document-comments .bn-thread-comment > .flex-row > .flex-row > span { overflow-wrap: anywhere; }
 .editor-mount .bn-editor { padding: 0 0 32px; min-height: 300px; font-size: 16px; line-height: 1.85; overflow-wrap: anywhere; }
 .editor-mount .bn-editor:focus-visible { outline: 2px solid var(--accent); outline-offset: 8px; }
 .editor-mount .bn-block-content[data-content-type="heading"] { scroll-margin-top: 28px; letter-spacing: -.25px; }
