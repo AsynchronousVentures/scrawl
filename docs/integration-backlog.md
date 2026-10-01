@@ -10,11 +10,11 @@ Navigation uses maintained [React Router navigation blocking](https://reactroute
 
 | Priority | Issue | State | Depends on |
 | --- | --- | --- | --- |
-| P0 | [Native BlockNote and finished private workflow](https://github.com/AsynchronousVentures/scrawl/issues/1) | Implemented on branch; current navigation iteration passed all 46 browser cases and 92 PostgreSQL 18 regressions | Existing P0-P4 |
+| P0 | [Native BlockNote and finished private workflow](https://github.com/AsynchronousVentures/scrawl/issues/1) | Implemented on branch; local navigation checks passed, hosted browser regressions are being stabilized | Existing P0-P4 |
 | P1 | [Private attachments and PDF/DOCX exports](https://github.com/AsynchronousVentures/scrawl/issues/2) | Implemented and verified on branch | Native content |
 | P1 | [PostgreSQL 18 and indexed authorized search](https://github.com/AsynchronousVentures/scrawl/issues/3) | Implemented and verified on branch; retained-data copy rehearsal passed | Saved native content/text |
 | P2 | [Selected-revision publishing](https://github.com/AsynchronousVentures/scrawl/issues/4) | Implemented and verified on branch; default off | Native content and attachment grants |
-| P3 | [Durable collaboration and comments](https://github.com/AsynchronousVentures/scrawl/issues/5) | Storage/auth/checkpoint/undo contract resolved; isolated runtime work remains | Stable document/attachment/checkpoint contracts |
+| P3 | [Durable collaboration and comments](https://github.com/AsynchronousVentures/scrawl/issues/5) | Native live-state validation prepared and tested in isolation; authorized storage and runtime remain unavailable | Stable document/attachment/checkpoint contracts |
 
 Optional AI is secondary. No paid provider calls are authorized and missing provider access is not a blocker. Search uses PostgreSQL, never embeddings or an external search service. Layout/export additions use available OSS BlockNote packages rather than a custom framework.
 
