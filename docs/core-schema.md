@@ -87,6 +87,14 @@ Each revision has a stored generated weighted `tsvector`, title weight A and bod
 
 Queries are parameterized, 1-200 trimmed characters, with optional space filtering and 1-50 results (20 by default). Rebuilding uses `REINDEX INDEX CONCURRENTLY`; it does not rewrite immutable revisions. Browser results render excerpts as text and reject stale asynchronous responses.
 
+## Private live storage, prepared on branch
+
+`Document.liveEpoch` is nullable. Existing solo documents keep a null pointer and unchanged history until explicit, authorized enrollment. `DocumentLive` stores the complete Yjs V1 state under a composite `(documentId, epoch)` primary key, with storage schema version 1, monotonic bigint sequence, and timestamps. A deferred composite foreign key requires the current epoch to belong to that document at commit. Old epochs remain private and retained after restore. Encoded state is limited to 8 MiB; update frames are limited to 1 MiB, with existing native content limits applied to their validated projection.
+
+Core operations own the transaction, taking space share locks before document locks, followed by current actor/session share locks and a fresh permission check. Enrollment derives state only from the saved head and advances the document lock once; readers cannot submit authored changes. Duplicate updates do not change sequence or timestamps. Live changes leave immutable revisions, indexed search, native export and selected publication unchanged. Ordinary snapshot update/restore refuse an enrolled document.
+
+Explicit checkpoints require document ETag, epoch and observed sequence. Canonical no-ops append nothing; changed content uses the existing immutable revision/attachment transaction. Restore requires a clean native checkpoint, appends a new revision, advances the document lock once and atomically selects a fresh epoch. Archive preserves room state and history while refusing live operations. No transport or live editor is enabled yet. Connected-recipient authorization, process ownership and commit-before-broadcast are remaining activation requirements in [ADR 0003](adr/0003-collaboration-checkpoints.md).
+
 ## Add only with the feature
 
 A document hierarchy adds a same-space parent reference, cycle protection and explicit archive-with-children policy. Reject archive of a page with active children initially; no silent recursive hide/move. Cross-space moves are deferred.

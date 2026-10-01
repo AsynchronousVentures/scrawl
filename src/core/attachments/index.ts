@@ -56,7 +56,17 @@ async function mediaType(bytes: Buffer, name: string) {
 
 export function createAttachments(prisma: PrismaClient, identity: Identity, spaces: Spaces, storageRoot: string) {
   const root = resolve(storageRoot);
+  async function ownedReferences(tx: Prisma.TransactionClient, documentId: string, parsedContent: unknown) {
+    const ids = attachmentReferences(parsedContent);
+    if (ids.length && await tx.attachment.count({ where: { id: { in: ids }, documentId } }) !== ids.length) {
+      throw new HttpProblem(400, 'INVALID_ATTACHMENT_REFERENCE');
+    }
+    return ids;
+  }
   return {
+    async validateReferences(tx: Prisma.TransactionClient, documentId: string, parsedContent: unknown) {
+      await ownedReferences(tx, documentId, parsedContent);
+    },
     async upload(headers: Headers, documentId: string, name: string, bytes: Buffer) {
       const principal = await identity.resolve(headers);
       if (!name || name.length > 200 || /[\u0000-\u001f\u007f/\\]/.test(name)) throw new HttpProblem(400, 'INVALID_ATTACHMENT');
@@ -110,10 +120,8 @@ export function createAttachments(prisma: PrismaClient, identity: Identity, spac
       return { ...approved, path: join(root, approved.id) };
     },
     async reference(tx: Prisma.TransactionClient, documentId: string, revisionId: string, parsedContent: unknown) {
-      const ids = attachmentReferences(parsedContent);
+      const ids = await ownedReferences(tx, documentId, parsedContent);
       if (!ids.length) return;
-      const count = await tx.attachment.count({ where: { id: { in: ids }, documentId } });
-      if (count !== ids.length) throw new HttpProblem(400, 'INVALID_ATTACHMENT_REFERENCE');
       await tx.revisionAttachment.createMany({ data: ids.map(attachmentId => ({ documentId, revisionId, attachmentId })) });
     },
   };

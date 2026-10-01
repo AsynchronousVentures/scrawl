@@ -34,6 +34,13 @@ export function createIdentity(prisma: PrismaClient, config: IdentityConfig) {
     origin: config.origin,
     resolve,
     actor,
+    async lockActor(db: Prisma.TransactionClient, principal: Principal) {
+      // Document/space locks precede these locks. Account recovery and logout
+      // must finish session deletion before a later live operation is accepted.
+      await db.$queryRaw`SELECT "id" FROM "user" WHERE "id" = ${principal.userId} FOR SHARE`;
+      await db.$queryRaw`SELECT "id" FROM "session" WHERE "id" = ${principal.sessionId} FOR SHARE`;
+      return actor(principal, db);
+    },
     async me(headers: Headers) { return actor(await resolve(headers)); },
     async requireUser(db: Prisma.TransactionClient, userId: string) {
       if (!await db.user.findUnique({ where: { id: userId }, select: { id: true } })) {

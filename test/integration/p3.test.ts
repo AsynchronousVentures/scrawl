@@ -3,7 +3,7 @@
 
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile, readdir } from 'node:fs/promises';
 import { createServer } from 'node:net';
@@ -14,6 +14,7 @@ import { parseEnv } from 'node:util';
 import { readConfig } from '../../src/config.js';
 import { createDatabase } from '../../src/db/client.js';
 import { validateContent } from '../../src/core/documents/content.js';
+import { createLiveState } from '../../src/core/live/content.js';
 import { readDemoCredentials } from '../../scripts/demo-config.js';
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -225,6 +226,14 @@ test('P3 Demo A uses real HTTP, repeatable isolated fixtures, guarded reset and 
 
   await t.test('explicit reset preserves migrations and permits a fresh setup and walkthrough', async () => {
     await stopServer();
+    const retained = await database!.prisma.document.findFirstOrThrow({ include: { head: true } });
+    const native = validateContent({ format: retained.head.contentFormat, schemaVersion: retained.head.contentSchemaVersion,
+      editorVersion: retained.head.contentEditorVersion, document: retained.head.body }).content;
+    await database!.prisma.$transaction(async tx => {
+      const room = await tx.documentLive.create({ data: { documentId: retained.id, epoch: randomUUID(), state: new Uint8Array(createLiveState(retained.head.title, native)) } });
+      await tx.document.update({ where: { id: retained.id }, data: { liveEpoch: room.epoch } });
+    });
+    assert.equal(await database!.prisma.documentLive.count(), 1);
     secrets.push(...(await database!.prisma.session.findMany({ select: { token: true } })).map((session) => session.token));
     const reset = await command('demo-fixtures.ts', ['reset', ...fixtureArgs]);
     outputs.push(reset.output);
@@ -233,10 +242,11 @@ test('P3 Demo A uses real HTTP, repeatable isolated fixtures, guarded reset and 
     assert.equal(await database!.prisma.session.count(), 0);
     assert.equal(await database!.prisma.document.count(), 0);
     assert.equal(await database!.prisma.documentRevision.count(), 0);
+    assert.equal(await database!.prisma.documentLive.count(), 0);
     await assert.rejects(stat(credentialPath), (error: unknown) =>
       error instanceof Error && 'code' in error && error.code === 'ENOENT');
-    const retained = await database!.pool.query(migrationLedger);
-    assert.deepEqual(retained.rows, migrations.rows, 'Explicit reset preserves every migration ledger record');
+    const retainedLedger = await database!.pool.query(migrationLedger);
+    assert.deepEqual(retainedLedger.rows, migrations.rows, 'Explicit reset preserves every migration ledger record');
     const reseed = await command('demo-fixtures.ts', ['setup', ...fixtureArgs]);
     outputs.push(reseed.output);
     assert.equal(reseed.code, 0);

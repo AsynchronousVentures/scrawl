@@ -122,6 +122,9 @@ model Document {
   currentRevisionNumber Int
   head                  DocumentRevision   @relation("DocumentHead", fields: [id, currentRevisionNumber], references: [documentId, revisionNumber], onDelete: NoAction, onUpdate: NoAction)
   lockVersion           Int                @default(1)
+  liveEpoch             String?            @db.Uuid
+  liveRoom              DocumentLive?      @relation("CurrentLiveRoom", fields: [id, liveEpoch], references: [documentId, epoch], onDelete: NoAction, onUpdate: NoAction)
+  liveRooms             DocumentLive[]     @relation("LiveRoomHistory")
   availabilityVersion   Int                @default(1)
   createdAt             DateTime           @default(now()) @db.Timestamptz(3)
   createdBy             String
@@ -136,6 +139,20 @@ model Document {
 
   @@unique([spaceId, slug])
   @@index([spaceId, archivedAt, id])
+}
+
+model DocumentLive {
+  documentId    String      @db.Uuid
+  epoch         String      @db.Uuid
+  document      Document    @relation("LiveRoomHistory", fields: [documentId], references: [id], onDelete: Restrict)
+  sequence      BigInt      @default(0)
+  schemaVersion Int         @default(1)
+  state         Bytes       @db.ByteA
+  createdAt     DateTime    @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime    @updatedAt @db.Timestamptz(3)
+  currentOf     Document[]  @relation("CurrentLiveRoom")
+
+  @@id([documentId, epoch])
 }
 
 model DocumentRevision {

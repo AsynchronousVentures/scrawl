@@ -2,13 +2,14 @@
 // Copyright (C) 2026 Asynchronous Ventures and contributors
 
 import { randomUUID } from 'node:crypto';
-import type { Document, DocumentRevision, Prisma, PrismaClient } from '../../generated/prisma/client.js';
+import type { Document, DocumentLive, DocumentRevision, Prisma, PrismaClient } from '../../generated/prisma/client.js';
 import type { Identity } from '../identity/index.js';
 import type { Spaces } from '../spaces/index.js';
 import { attachmentReferences, type Attachments } from '../attachments/index.js';
 import { HttpProblem } from '../../http/problems.js';
 import { ContentValidationError, validateContent } from './content.js';
 import { availableSlug, slugify, validSlug } from '../slugs.js';
+import { createLiveState, readLiveState, prepareLiveUpdate, LiveContentError, LIVE_SCHEMA_VERSION } from '../live/content.js';
 
 type Head = Document & { head: DocumentRevision; space: { slug: string } };
 type RevisionMetadata = Pick<DocumentRevision, 'id' | 'documentId' | 'revisionNumber' | 'title' | 'authorId' | 'createdAt' | 'changeNote'>;
@@ -113,6 +114,124 @@ function pageLimit(input: number | undefined) {
 }
 
 export function createDocuments(prisma: PrismaClient, identity: Identity, spaces: Spaces, attachments: Attachments) {
+  async function liveOperation<T>(headers: Headers, id: string, mode: 'read' | 'enroll' | 'write',
+    operation: (tx: Prisma.TransactionClient, document: Head, actor: Actor) => Promise<T>) {
+    const principal = await identity.resolve(headers);
+    const target = await prisma.document.findUnique({ where: { id }, select: { spaceId: true } });
+    if (!target) throw new HttpProblem(404, 'NOT_FOUND');
+    return prisma.$transaction(async tx => {
+      await spaces.lockForRead(tx, principal, target.spaceId);
+      if (mode === 'read') await tx.$queryRaw`SELECT "id" FROM "Document" WHERE "id" = ${id}::uuid FOR SHARE`;
+      else await tx.$queryRaw`SELECT "id" FROM "Document" WHERE "id" = ${id}::uuid FOR UPDATE`;
+      await identity.lockActor(tx, principal);
+      const actor = await spaces.authorize(tx, principal, target.spaceId, mode === 'write');
+      const document = await tx.document.findUniqueOrThrow({ where: { id }, include: { head: true, space: { select: { slug: true } } } });
+      if (document.archivedAt) throw new HttpProblem(409, 'DOCUMENT_ARCHIVED');
+      try { return await operation(tx, document, actor); }
+      catch (error) {
+        if (error instanceof LiveContentError) throw new HttpProblem(error.status, error.code);
+        throw error;
+      }
+    }, { timeout: 15_000, maxWait: 10_000 });
+  }
+
+  async function currentRoom(tx: Prisma.TransactionClient, document: Document) {
+    if (!document.liveEpoch) throw new HttpProblem(409, 'LIVE_DOCUMENT_NOT_ENROLLED');
+    const room = await tx.documentLive.findUniqueOrThrow({ where: {
+      documentId_epoch: { documentId: document.id, epoch: document.liveEpoch },
+    } });
+    if (room.schemaVersion !== LIVE_SCHEMA_VERSION) throw new HttpProblem(409, 'LIVE_SCHEMA_UNSUPPORTED');
+    return room;
+  }
+  function livePrecondition(room: DocumentLive, input: { epoch?: unknown; sequence?: unknown }, checkSequence: boolean) {
+    if (input.epoch === undefined || checkSequence && input.sequence === undefined) throw new HttpProblem(428, 'PRECONDITION_REQUIRED');
+    if (typeof input.epoch !== 'string' || !uuid.test(input.epoch)
+      || checkSequence && (typeof input.sequence !== 'string' || !/^(?:0|[1-9][0-9]{0,18})$/.test(input.sequence))) {
+      throw new HttpProblem(400, 'INVALID_PRECONDITION');
+    }
+    if (input.epoch !== room.epoch || checkSequence && input.sequence !== room.sequence.toString()) {
+      throw new HttpProblem(412, 'LIVE_VERSION_CONFLICT');
+    }
+  }
+  function roomSnapshot(document: Document, room: DocumentLive) {
+    return { documentId: document.id, epoch: room.epoch, sequence: room.sequence.toString(),
+      schemaVersion: LIVE_SCHEMA_VERSION, documentEtag: documentEtag(document), state: new Uint8Array(room.state) };
+  }
+  async function newRoom(tx: Prisma.TransactionClient, document: Head, lockVersion = document.lockVersion + 1) {
+    const native = revisionDto(document.head).content;
+    await attachments.validateReferences(tx, document.id, native.document);
+    const state = createLiveState(document.head.title, native);
+    const room = await tx.documentLive.create({ data: { documentId: document.id, epoch: randomUUID(), state: new Uint8Array(state) } });
+    const updated = await tx.document.update({ where: { id: document.id }, data: {
+      liveEpoch: room.epoch, lockVersion,
+    } });
+    return roomSnapshot(updated, room);
+  }
+
+  const live = {
+    enroll(headers: Headers, id: string, expectedEtag?: string) {
+      return liveOperation(headers, id, 'enroll', async (tx, document) => {
+        precondition(document, expectedEtag);
+        // Readers may initialize a server-derived representation, never authored content.
+        return document.liveEpoch ? roomSnapshot(document, await currentRoom(tx, document)) : newRoom(tx, document);
+      });
+    },
+    read(headers: Headers, id: string) {
+      return liveOperation(headers, id, 'read', async (tx, document) => roomSnapshot(document, await currentRoom(tx, document)));
+    },
+    update(headers: Headers, id: string, epoch: unknown, update: Uint8Array) {
+      return liveOperation(headers, id, 'write', async (tx, document) => {
+        const room = await currentRoom(tx, document);
+        livePrecondition(room, { epoch }, false);
+        const prepared = prepareLiveUpdate(room.state, update);
+        await attachments.validateReferences(tx, id, prepared.content.document);
+        // Duplicate delivery is a no-op. A CRDT-only change still advances live
+        // sequence, even when its native checkpoint content is unchanged.
+        if (Buffer.from(prepared.state).equals(Buffer.from(room.state))) return roomSnapshot(document, room);
+        if (room.sequence === 9_223_372_036_854_775_807n) throw new HttpProblem(409, 'LIVE_SEQUENCE_EXHAUSTED');
+        const saved = await tx.documentLive.update({ where: { documentId_epoch: { documentId: id, epoch: room.epoch } },
+          data: { state: new Uint8Array(prepared.state), sequence: { increment: 1 } } });
+        return roomSnapshot(document, saved);
+      });
+    },
+    checkpoint(headers: Headers, id: string, input: unknown, expectedEtag?: string) {
+      const fields = record(input, ['epoch', 'sequence', 'changeNote']);
+      const note = changeNote(fields.changeNote);
+      return liveOperation(headers, id, 'write', async (tx, document, actor) => {
+        precondition(document, expectedEtag);
+        const room = await currentRoom(tx, document);
+        livePrecondition(room, fields, true);
+        const projected = readLiveState(room.state);
+        const snapshot = { title: title(projected.title), content: content(projected.content), changeNote: note };
+        const previous = content(revisionDto(document.head).content).content;
+        if (snapshot.title === document.head.title && JSON.stringify(snapshot.content.content) === JSON.stringify(previous)) return documentDto(document);
+        return documentDto(await append(tx, document, actor, snapshot));
+      });
+    },
+    restore(headers: Headers, id: string, input: unknown, expectedEtag?: string) {
+      const fields = record(input, ['epoch', 'sequence', 'revisionId', 'changeNote']);
+      if (typeof fields.revisionId !== 'string' || !uuid.test(fields.revisionId)) throw new HttpProblem(400, 'INVALID_REQUEST');
+      const revisionId = fields.revisionId, note = changeNote(fields.changeNote);
+      return liveOperation(headers, id, 'write', async (tx, document, actor) => {
+        precondition(document, expectedEtag);
+        const room = await currentRoom(tx, document);
+        livePrecondition(room, fields, true);
+        const projected = readLiveState(room.state), previous = content(revisionDto(document.head).content).content;
+        if (projected.title.trim() !== document.head.title || JSON.stringify(projected.content) !== JSON.stringify(previous)) {
+          throw new HttpProblem(409, 'LIVE_CHECKPOINT_REQUIRED');
+        }
+        const revision = await tx.documentRevision.findFirst({ where: { id: revisionId, documentId: id } });
+        if (!revision) throw new HttpProblem(404, 'NOT_FOUND');
+        const restored = await append(tx, document, actor, {
+          title: revision.title, content: content(revisionDto(revision).content), changeNote: note,
+        });
+        // Appending the restored checkpoint already advanced this operation's lock.
+        const next = await newRoom(tx, restored, restored.lockVersion);
+        const head = await tx.document.findUniqueOrThrow({ where: { id }, include: { head: true, space: { select: { slug: true } } } });
+        return { document: documentDto(head), room: next };
+      });
+    },
+  };
   async function authorizeDocument(headers: Headers, id: string) {
     const principal = await identity.resolve(headers);
     const target = await prisma.document.findUnique({ where: { id }, select: { spaceId: true } });
@@ -176,6 +295,7 @@ export function createDocuments(prisma: PrismaClient, identity: Identity, spaces
   }
 
   return {
+    live,
     async publicationStatus(headers: Headers, id: string) {
       await authorizeDocument(headers, id);
       const document = await prisma.document.findUniqueOrThrow({ where: { id }, select: {
@@ -342,6 +462,7 @@ export function createDocuments(prisma: PrismaClient, identity: Identity, spaces
       const note = changeNote(fields.changeNote);
       return mutate(headers, id, expectedEtag, async (tx, document, actor) => {
         if (document.archivedAt) throw new HttpProblem(409, 'DOCUMENT_ARCHIVED');
+        if (document.liveEpoch) throw new HttpProblem(409, 'LIVE_DOCUMENT_REQUIRES_CHECKPOINT');
         const snapshot = { title: newTitle ?? document.head.title,
           content: newContent ?? content(revisionDto(document.head).content), changeNote: note };
         // Compare native canonical JSON, not PostgreSQL JSONB's object-key ordering.
@@ -377,6 +498,7 @@ export function createDocuments(prisma: PrismaClient, identity: Identity, spaces
       const note = changeNote(fields.changeNote);
       return mutate(headers, id, expectedEtag, async (tx, document, actor) => {
         if (document.archivedAt) throw new HttpProblem(409, 'DOCUMENT_ARCHIVED');
+        if (document.liveEpoch) throw new HttpProblem(409, 'LIVE_DOCUMENT_REQUIRES_CHECKPOINT');
         const revision = await tx.documentRevision.findFirst({ where: { id: revisionId, documentId: id } });
         if (!revision) throw new HttpProblem(404, 'NOT_FOUND');
         return append(tx, document, actor, {

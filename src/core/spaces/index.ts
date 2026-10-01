@@ -45,6 +45,11 @@ export function createSpaces(prisma: PrismaClient, identity: Identity) {
 
   return {
     authorize,
+    async lockForRead(db: Prisma.TransactionClient, principal: Principal, spaceId: string) {
+      // Membership changes take an exclusive lock on this same space row.
+      await db.$queryRaw`SELECT "id" FROM "Space" WHERE "id" = ${spaceId}::uuid FOR SHARE`;
+      return authorize(db, principal, spaceId);
+    },
     async lockForWrite(db: Prisma.TransactionClient, principal: Principal, spaceId: string) {
       await db.$queryRaw`SELECT "id" FROM "Space" WHERE "id" = ${spaceId}::uuid FOR UPDATE`;
       return authorize(db, principal, spaceId, true);
