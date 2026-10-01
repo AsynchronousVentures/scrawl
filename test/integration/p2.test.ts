@@ -169,7 +169,8 @@ test('P2 documents and immutable history against PostgreSQL and authenticated HT
     etag = String(result.headers.etag);
     assert.equal(result.headers.location, documentPath());
     assert.equal(etag, `"doc-${documentId}-bn1-v1"`);
-    assert.deepEqual(Object.keys(result.data).sort(), ['id', 'slug', 'spaceId', 'spaceSlug', 'currentRevisionNumber', 'lockVersion',
+    assert.equal(result.data.editingMode, 'solo');
+    assert.deepEqual(Object.keys(result.data).sort(), ['id', 'slug', 'spaceId', 'spaceSlug', 'editingMode', 'currentRevisionNumber', 'lockVersion',
       'createdAt', 'createdBy', 'updatedAt', 'archivedAt', 'archivedBy', 'revision'].sort());
     assert.deepEqual(Object.keys(result.data.revision).sort(), ['id', 'documentId', 'revisionNumber', 'title',
       'content', 'plainText', 'authorId', 'createdAt', 'changeNote'].sort());

@@ -912,6 +912,8 @@ export interface operations {
                         createdAt: string;
                         createdBy: string;
                         currentRevisionNumber: number;
+                        /** @enum {string} */
+                        editingMode: "solo" | "live";
                         /** Format: uuid */
                         id: string;
                         lockVersion: number;
@@ -1026,6 +1028,8 @@ export interface operations {
                         createdAt: string;
                         createdBy: string;
                         currentRevisionNumber: number;
+                        /** @enum {string} */
+                        editingMode: "solo" | "live";
                         /** Format: uuid */
                         id: string;
                         lockVersion: number;
@@ -1127,6 +1131,8 @@ export interface operations {
                         createdAt: string;
                         createdBy: string;
                         currentRevisionNumber: number;
+                        /** @enum {string} */
+                        editingMode: "solo" | "live";
                         /** Format: uuid */
                         id: string;
                         lockVersion: number;
@@ -1645,6 +1651,8 @@ export interface operations {
                         createdAt: string;
                         createdBy: string;
                         currentRevisionNumber: number;
+                        /** @enum {string} */
+                        editingMode: "solo" | "live";
                         /** Format: uuid */
                         id: string;
                         lockVersion: number;
@@ -1752,6 +1760,8 @@ export interface operations {
                             createdAt: string;
                             createdBy: string;
                             currentRevisionNumber: number;
+                            /** @enum {string} */
+                            editingMode: "solo" | "live";
                             /** Format: uuid */
                             id: string;
                             lockVersion: number;
@@ -2841,6 +2851,8 @@ export interface operations {
                         createdAt: string;
                         createdBy: string;
                         currentRevisionNumber: number;
+                        /** @enum {string} */
+                        editingMode: "solo" | "live";
                         /** Format: uuid */
                         id: string;
                         lockVersion: number;
@@ -3087,6 +3099,8 @@ export interface operations {
                         createdAt: string;
                         createdBy: string;
                         currentRevisionNumber: number;
+                        /** @enum {string} */
+                        editingMode: "solo" | "live";
                         /** Format: uuid */
                         id: string;
                         lockVersion: number;
@@ -3569,6 +3583,8 @@ export interface operations {
                             createdAt: string;
                             createdBy: string;
                             currentRevisionNumber: number;
+                            /** @enum {string} */
+                            editingMode: "solo" | "live";
                             /** Format: uuid */
                             id: string;
                             lockVersion: number;
@@ -3659,6 +3675,8 @@ export interface operations {
                         createdAt: string;
                         createdBy: string;
                         currentRevisionNumber: number;
+                        /** @enum {string} */
+                        editingMode: "solo" | "live";
                         /** Format: uuid */
                         id: string;
                         lockVersion: number;
@@ -3753,6 +3771,8 @@ export interface operations {
                         createdAt: string;
                         createdBy: string;
                         currentRevisionNumber: number;
+                        /** @enum {string} */
+                        editingMode: "solo" | "live";
                         /** Format: uuid */
                         id: string;
                         lockVersion: number;

@@ -47,7 +47,7 @@ npm run test:db
 npm run test:browser -- test/browser/live.spec.ts
 ```
 
-Run database and browser suites sequentially; Demo A and the browser harness reserve the same explicit disposable database name. Normal application configuration uses `COLLABORATION_ENABLED=false`. Setting it true requires one owner process per database/schema and `DB_POOL_MAX >= 2`; it does not enroll documents automatically. Authenticated `/api/v1/collaboration` reports actual availability.
+Run database and browser suites sequentially; Demo A and the browser harness reserve the same explicit disposable database name. Normal application configuration uses `COLLABORATION_ENABLED=false`. Setting it true requires one owner process per database/schema and `DB_POOL_MAX >= 2`; it does not enroll documents automatically. Authenticated `/api/v1/collaboration` reports actual availability. If the runtime is disabled after a document was enrolled, its saved revision remains readable with an explicit read-only notice. Live changes/comments stay stored, and solo Save/Restore are unavailable. Re-enabling and opening a fresh authorized tab loads that retained live state; use explicit Save to checkpoint it. Disabling is not a conversion or reset.
 
 In an explicitly enabled local synthetic workspace, open a clean saved document and choose Document actions, Enable shared editing. Open it in another tab. The supplied editor synchronizes authorized title/body changes, while Save creates immutable history. "Syncing" and "Shared changes" are not successful checkpoints. Undo/Redo affect this tab's changes and retain peer contributions; a whole-document baseline discard is unavailable in shared mode.
 

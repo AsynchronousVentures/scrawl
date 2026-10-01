@@ -147,20 +147,23 @@ export async function createBrowserDemo(options: { collaboration?: boolean } = {
     if ((await stat(join(repository, 'web/dist/index.html'))).isFile() !== true) throw new Error('Build the frontend before browser acceptance');
 
     setupStage = 'server startup and readiness';
-    server = spawn(process.execPath, ['--import', 'tsx', join(repository, 'scripts/demo-server.ts')], {
-      cwd, env: process.env, stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    server.stdout!.on('data', (chunk: Buffer) => { output += chunk.toString(); });
-    server.stderr!.on('data', (chunk: Buffer) => { output += chunk.toString(); });
-    server.once('error', () => { output += 'Browser demo server could not start'; });
-    let ready = false;
-    for (let attempt = 0; attempt < 100; attempt++) {
-      try { if ((await fetch(origin + '/health/ready')).status === 200) { ready = true; break; } }
-      catch { /* Only readiness reads are retried. */ }
-      if (server.exitCode !== null) throw new Error('Browser demo server exited before readiness');
-      await delay(100);
+    async function startServer() {
+      server = spawn(process.execPath, ['--import', 'tsx', join(repository, 'scripts/demo-server.ts')], {
+        cwd, env: process.env, stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      server.stdout!.on('data', (chunk: Buffer) => { output += chunk.toString(); });
+      server.stderr!.on('data', (chunk: Buffer) => { output += chunk.toString(); });
+      server.once('error', () => { output += 'Browser demo server could not start'; });
+      let ready = false;
+      for (let attempt = 0; attempt < 100; attempt++) {
+        try { if ((await fetch(origin + '/health/ready')).status === 200) { ready = true; break; } }
+        catch { /* Only readiness reads are retried. */ }
+        if (server.exitCode !== null) throw new Error('Browser demo server exited before readiness');
+        await delay(100);
+      }
+      if (!ready) throw new Error('Browser demo server did not become ready');
     }
-    if (!ready) throw new Error('Browser demo server did not become ready');
+    await startServer();
 
     let loginCount = 0;
     let lastLogin = 0;
@@ -214,6 +217,14 @@ export async function createBrowserDemo(options: { collaboration?: boolean } = {
           || !('revisionId' in result) || typeof result.revisionId !== 'string'
           || !('revisionNumber' in result) || result.revisionNumber !== 1) throw new Error('Browser seed result is invalid');
         return { spaceId: result.spaceId, documentId: result.documentId, revisionId: result.revisionId, revisionNumber: 1 };
+      },
+      async restart(collaboration: boolean) {
+        // Only this owned fixture process/configuration changes. Its database,
+        // credentials and sessions survive, so restart tests exercise real recovery.
+        await stopServer();
+        values.COLLABORATION_ENABLED = String(collaboration);
+        await writeFile(environmentPath, Object.entries(values).map(([name, value]) => `${name}=${value}`).join('\n') + '\n', { mode: 0o600 });
+        await startServer();
       },
       async runDemoA() { await command('demo-a.ts'); },
       close,

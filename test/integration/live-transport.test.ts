@@ -154,6 +154,12 @@ test('prepared same-origin live transport commits before actual socket delivery 
     const metadata = await enrolled.json() as { epoch: string; sequence: string; documentEtag: string; canWrite: boolean };
     assert.deepEqual(Object.keys(metadata).sort(), ['canWrite', 'documentEtag', 'documentId', 'epoch', 'schemaVersion', 'sequence']);
     assert.equal(metadata.canWrite, false); assert.equal(enrolled.headers.get('etag'), metadata.documentEtag);
+    const savedHead = await fetch(address + `/api/v1/documents/${doc.id}`, { headers: editor });
+    assert.equal(savedHead.status, 200);
+    assert.equal((await savedHead.json()).editingMode, 'live');
+    const savedList = await fetch(address + `/api/v1/spaces/${space.id}/documents`, { headers: reader });
+    assert.equal(savedList.status, 200);
+    assert.equal((await savedList.json()).items.find((item: { id: string }) => item.id === doc.id)?.editingMode, 'live');
     assert.equal((await http(editor, '', 'POST', undefined, documentEtag(doc))).status, 412);
     const names = await http(reader, '/users', 'POST', { userIds: [administrator.id, editorUser.id, readerUser.id, outsiderUser.id, 'unknown-user'] });
     assert.equal(names.status, 200);

@@ -41,13 +41,14 @@ const revisionSchema = {
 const documentProperties = {
   id: { type: 'string', format: 'uuid' }, spaceId: { type: 'string', format: 'uuid' },
   slug: slugSchema, spaceSlug: slugSchema,
+  editingMode: { type: 'string', enum: ['solo', 'live'] },
   currentRevisionNumber: { type: 'integer', minimum: 1 }, lockVersion: { type: 'integer', minimum: 1 },
   createdAt: { type: 'string', format: 'date-time' }, createdBy: { type: 'string' },
   updatedAt: { type: 'string', format: 'date-time' },
   archivedAt: { type: ['string', 'null'], format: 'date-time' }, archivedBy: { type: ['string', 'null'] },
 } as const;
 const documentRequired = [
-  'id', 'slug', 'spaceId', 'spaceSlug', 'currentRevisionNumber', 'lockVersion', 'createdAt', 'createdBy', 'updatedAt', 'archivedAt', 'archivedBy',
+  'id', 'slug', 'spaceId', 'spaceSlug', 'editingMode', 'currentRevisionNumber', 'lockVersion', 'createdAt', 'createdBy', 'updatedAt', 'archivedAt', 'archivedBy',
 ] as const;
 export const documentSchema = {
   type: 'object', additionalProperties: false, required: [...documentRequired, 'revision'],

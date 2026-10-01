@@ -119,7 +119,9 @@ export function App() {
     || JSON.stringify(draft.content) !== JSON.stringify(discardBaseline.content)));
   const hasUnsavedWork = commentState.dirty || Boolean(retainedLiveDraft) || (liveState ? liveState.pending > 0 || liveState.localChanges && dirty : dirty);
   const dirtyRef = useRef(hasUnsavedWork); dirtyRef.current = hasUnsavedWork;
+  const sharedEditingUnavailable = Boolean(base?.document.editingMode === 'live' && collaborationKnown && !collaborationEnabled);
   const mayEdit = Boolean(user && !accessIssue && collaborationKnown && !liveChecking && !liveCheckError && space?.access === 'editor' && !base?.document.archivedAt
+    && (!base || base.document.editingMode === 'solo' || collaborationEnabled && liveState?.initialized)
     && (!live || liveState?.phase === 'connected' && liveState.metadata.canWrite));
   const blocked = busy || uploading > 0 || commentState.pending;
   const blockedRef = useRef(blocked); blockedRef.current = blocked;
@@ -657,6 +659,7 @@ export function App() {
             </div>}
             {!accessIssue && saveError && <div className="notice" role="alert"><strong>{saveError}</strong>{dirty && <p>Your complete local draft is retained. It has not been saved.</p>}{!draft && <button onClick={() => { if(requestedDocument.current)void loadDocument(requestedDocument.current); }}>Retry</button>}</div>}
             {liveCheckError && !accessIssue && <button disabled={blocked} onClick={() => { setSaveError(''); setLiveRetry(value => value + 1); }}>Retry shared document</button>}
+            {sharedEditingUnavailable && !accessIssue && <p className="notice" role="status">Shared editing is disabled. Showing saved revision {base?.document.currentRevisionNumber} read-only. Live changes and comments remain stored but are unavailable.</p>}
             {notice && <p className="notice" role="status">{notice}</p>}
             {uploadError && !accessIssue && <p className="notice" role="alert">{uploadError}</p>}
             {uploadMessage && !accessIssue && <p className="notice" role="status">{uploadMessage}</p>}

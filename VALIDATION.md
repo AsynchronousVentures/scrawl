@@ -1,5 +1,23 @@
 # Validation
 
+## Disabled collaboration and retained-state restart checkpoint
+
+Authorized document read/list responses now include `editingMode: "solo" | "live"`, derived from the existing epoch pointer. The generated browser client uses it to prevent solo editing of enrolled documents when collaboration is disabled. Such documents show only their saved revision, read-only, with a clear notice; live content/comments remain stored and unavailable. Saved history and exports remain usable, while Save and Restore are unavailable. Core still rejects crafted solo writes.
+
+Observed results, without retries or skips:
+
+- `npm run check` passed 91 cases, strict types, boundaries, both builds and OpenAPI/client drift. Log: `artifacts/live-disabled-check.log`.
+- Complete `npm run test:db` passed 136/136 on PostgreSQL 18 and 136/136 on separately owned disposable PostgreSQL 17. Logs: `artifacts/live-disabled-db18.log`, `artifacts/live-disabled-db17.log`, `artifacts/live-disabled-17-run.log`. The temporary 17 container/configuration were removed; retained databases were not reset.
+- Complete `npm run test:browser` passed 59/59 against real HTTP, cookie sessions and PostgreSQL. Log: `artifacts/live-disabled-full-browser.log`. The focused restart case also passed before the full run.
+
+The new browser case creates native comments and uncheckpointed live title/body edits, gracefully stops the owned application, and restarts with collaboration disabled. Existing connections close and retain local content. A fresh tab sees only the original saved revision and no live comments or mutation controls. A real crafted solo PATCH returns 409, the stored live record remains byte-for-byte unchanged, and history remains revision 1. Re-enabling and opening a fresh authenticated tab recovers live content/comments; explicit Save creates revision 2 without putting comments into its native content. This verifies graceful restart, not a browser crash/process-kill recovery claim.
+
+No migration, new database field, content format, dependency, retained reset or enrollment is required. Deploy the existing eight migrations normally and regenerate Prisma/client artifacts through the documented commands. The additional response field is permission-filtered metadata and does not expose live bytes, thread records, session data or epochs.
+
+The existing synthetic preview was restarted with collaboration still disabled. Fresh administrator, reader, outsider and anonymous-publication checks passed, without revisions or resets: `artifacts/demo18/verification-editing-mode-ready.log`. An earlier verification attempt during the shared frontend build failed at administrator login; it is recorded in `verification-editing-mode.log`, not counted as passing, and its exact cause remains unverified. The preceding committed undo/comment checkpoint `f1f9547` also passed fresh preview checks, with all 147 source-archive members matching its checkout and the served archive SHA-256.
+
+Remaining activation work includes authenticated presence, nested-block peer undo, native reply/reaction/resolve and failed-action states, browser downgrade/expiry/recovery, hard-restart browser recovery, live-only rendered export/publication isolation and create/anchor failure usability. Collaboration remains disabled in the retained preview. Hosted results for the current response-field change are unverified until recorded.
+
 ## Native undo and comment draft checkpoint
 
 The native client now preserves normal typing capture in its shared UndoManager and guards unsent comment text independently of document edits. Comment submissions freeze their supplied composer and block leaving until the response; failed submissions retain text. Cancelling navigation returns focus to the composer. Restore refuses pending comment drafts, and Archive waits for native updates to be acknowledged. A late initial metadata read cannot replace an explicitly joined session or its checkpoint baseline.

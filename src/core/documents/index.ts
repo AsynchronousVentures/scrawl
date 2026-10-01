@@ -86,6 +86,7 @@ function revisionDto(revision: DocumentRevision) {
 function documentSummary(document: Document & { head: Pick<DocumentRevision, 'title'>; space: { slug: string } }) {
   return {
     id: document.id, slug: document.slug, spaceId: document.spaceId, spaceSlug: document.space.slug,
+    editingMode: document.liveEpoch ? 'live' as const : 'solo' as const,
     currentRevisionNumber: document.currentRevisionNumber,
     lockVersion: document.lockVersion, title: document.head.title, createdAt: document.createdAt.toISOString(),
     createdBy: document.createdBy, updatedAt: document.updatedAt.toISOString(),

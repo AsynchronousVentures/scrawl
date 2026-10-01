@@ -390,3 +390,60 @@ test('separate authenticated users merge concurrent native title/body edits and 
     await expect(body(page)).toContainText('administrator body'); await expect(body(peer)).toContainText('administrator body');
   } finally { hold = false; for (const send of queued.splice(0)) send(); await administrator.close(); }
 });
+
+test('restart preserves live content and comments; a disabled runtime shows only the saved revision and never offers solo writes', async ({ page, context }) => {
+  await login(page); await expect(title(page)).toBeVisible(); const original = await latest(context); await enroll(page);
+  await body(page).focus(); await page.keyboard.press('ControlOrMeta+Home'); await page.keyboard.press('Shift+End');
+  await page.getByRole('button', { name: 'Add comment', exact: true }).click();
+  await page.locator('.bn-comment-editor [contenteditable="true"]').fill('Durable private comment across process restart.');
+  await page.locator('.bn-thread').getByRole('button', { name: 'Save', exact: true }).click();
+  await page.locator('.document-comments > summary').click();
+  await expect(page.locator('.document-comments')).toContainText('Durable private comment across process restart.');
+  await title(page).fill('Durable live title, not yet checkpointed');
+  await body(page).focus(); await page.keyboard.press('ControlOrMeta+End'); await page.keyboard.type(' Live-only durable body.');
+  await expect(save(page)).toBeEnabled();
+  const before = await demo.database.prisma.documentLive.findFirstOrThrow({ where: { documentId: seeded.documentId } });
+  expect((await latest(context)).currentRevisionNumber).toBe(1);
+  let enabled = false;
+  try {
+    await demo.restart(false);
+    await expect(page.getByText('The shared connection closed.', { exact: true })).toBeVisible();
+    await expect(title(page)).toHaveValue('Durable live title, not yet checkpointed');
+    await expect(body(page)).toContainText('Live-only durable body.'); await expect(body(page)).not.toBeEditable();
+    const disabled = await context.newPage();
+    try {
+      await disabled.goto(page.url());
+      await expect(disabled.getByRole('status').filter({ hasText: 'Shared editing is disabled.' })).toBeVisible();
+      await expect(title(disabled)).toHaveValue(original.revision.title); await expect(title(disabled)).not.toBeEditable();
+      await expect(body(disabled)).not.toContainText('Live-only durable body.'); await expect(body(disabled)).not.toBeEditable();
+      await expect(save(disabled)).toHaveCount(0); await expect(disabled.locator('.document-comments')).toHaveCount(0);
+      await expect(disabled.getByText('Durable private comment across process restart.')).toHaveCount(0);
+      await disabled.getByRole('button', { name: 'History', exact: true }).click();
+      await disabled.getByRole('button', { name: /^Revision 1\b/ }).click();
+      await expect(disabled.getByRole('button', { name: /Restore revision/ })).toHaveCount(0);
+      const response = await context.request.get(`${demo.origin}/api/v1/documents/${seeded.documentId}`);
+      expect(response.status()).toBe(200); expect((await response.json()).editingMode).toBe('live');
+      const rejected = await context.request.patch(`${demo.origin}/api/v1/documents/${seeded.documentId}`, {
+        headers: { Origin: demo.origin, 'If-Match': response.headers().etag! }, data: { title: 'Denied solo write' },
+      }); expect(rejected.status()).toBe(409);
+      expect(await demo.database.prisma.documentLive.findFirstOrThrow({ where: { documentId: seeded.documentId } })).toEqual(before);
+      expect((await latest(context)).currentRevisionNumber).toBe(1);
+      await demo.restart(true); enabled = true;
+      const recovered = await context.newPage();
+      try {
+        await recovered.goto(disabled.url()); await expect(body(recovered)).toBeEditable();
+        await expect(title(recovered)).toHaveValue('Durable live title, not yet checkpointed');
+        await expect(body(recovered)).toContainText('Live-only durable body.');
+        await recovered.locator('.document-comments > summary').click();
+        await expect(recovered.locator('.document-comments')).toContainText('Durable private comment across process restart.');
+        await expect(save(recovered)).toBeEnabled(); await save(recovered).click();
+        await expect(recovered.getByText('Saved revision 2.', { exact: true })).toBeVisible();
+        const checkpoint = await latest(context); expect(checkpoint.currentRevisionNumber).toBe(2);
+        expect(checkpoint.revision.title).toBe('Durable live title, not yet checkpointed');
+        expect(checkpoint.revision.plainText).toContain('Live-only durable body.');
+        expect(checkpoint.revision.plainText).not.toContain('Durable private comment');
+        expect(await recovered.evaluate(() => localStorage.length + sessionStorage.length)).toBe(0);
+      } finally { await recovered.close(); }
+    } finally { await disabled.close(); }
+  } finally { if (!enabled) await demo.restart(true); }
+});
