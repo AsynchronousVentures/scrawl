@@ -10,6 +10,7 @@ export type AppConfig = Readonly<{
   logLevel: LogLevel;
   apiDocsEnabled: boolean;
   publicPublishingEnabled: boolean;
+  collaborationEnabled: boolean;
   databaseUrl: string;
   databasePoolMax: number;
   attachmentStorageDir: string;
@@ -82,6 +83,10 @@ export function readConfig(env: Environment): AppConfig {
   } catch {
     throw new Error('DATABASE_URL must be a PostgreSQL URL with a host and database');
   }
+  const collaborationEnabled = boolean('COLLABORATION_ENABLED', env.COLLABORATION_ENABLED, false);
+  const databasePoolMax = integer('DB_POOL_MAX', env.DB_POOL_MAX, 5, 1, 100);
+  // The ownership lease holds one connection for the process lifetime.
+  if (collaborationEnabled && databasePoolMax < 2) throw new Error('DB_POOL_MAX must be at least 2 when collaboration is enabled');
   return Object.freeze({
     nodeEnv,
     host,
@@ -89,8 +94,9 @@ export function readConfig(env: Environment): AppConfig {
     logLevel: logLevel as LogLevel,
     apiDocsEnabled: boolean('API_DOCS_ENABLED', env.API_DOCS_ENABLED, nodeEnv === 'development'),
     publicPublishingEnabled: boolean('PUBLIC_PUBLISHING_ENABLED', env.PUBLIC_PUBLISHING_ENABLED, false),
+    collaborationEnabled,
     databaseUrl,
     attachmentStorageDir: env.ATTACHMENT_STORAGE_DIR ?? 'var/private-attachments',
-    databasePoolMax: integer('DB_POOL_MAX', env.DB_POOL_MAX, 5, 1, 100),
+    databasePoolMax,
   });
 }

@@ -400,6 +400,7 @@ test('P1 identity and space acceptance against migrated PostgreSQL and real HTTP
   await t.test('live OpenAPI retains P1 and includes only implemented packet routes', async () => {
     const result = await admin.send('GET', '/openapi.json');
     assert.deepEqual(Object.keys(result.data.paths).sort(), [
+      '/api/v1/collaboration',
       '/api/v1/search', '/api/v1/attachments/{id}/content', '/api/v1/documents/{id}/attachments',
       '/api/v1/spaces/by-slug/{slug}', '/api/v1/spaces/{id}/documents/by-slug/{slug}',
       '/api/v1/documents/{id}', '/api/v1/documents/{id}/archive', '/api/v1/documents/{id}/restore',
@@ -408,6 +409,8 @@ test('P1 identity and space acceptance against migrated PostgreSQL and real HTTP
       '/api/v1/me', '/api/v1/spaces', '/api/v1/spaces/{id}', '/api/v1/spaces/{id}/members/{userId}', '/health/live', '/health/ready',
       '/api/v1/spaces/{id}/documents',
     ].sort());
+    assert.deepEqual((await admin.send('GET', '/api/v1/collaboration')).data, { enabled: false });
+    assert.equal((await anonymous.send('GET', '/api/v1/collaboration')).status, 401);
   });
 
   await t.test('real auth logging excludes passwords, cookies, callback URLs, and submitted/query content', async () => {

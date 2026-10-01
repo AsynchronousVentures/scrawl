@@ -9,6 +9,8 @@ import { createExporting } from './capabilities/exporting/index.js';
 import { createCore } from './core/index.js';
 import { fileURLToPath } from 'node:url';
 import { frontendRootIfBuilt } from './http/frontend.js';
+import { claimLiveOwner } from './db/live-owner.js';
+import { createCollaboration } from './capabilities/collaboration/index.js';
 
 async function main(): Promise<void> {
   // Only this composition root reads the environment.
@@ -19,10 +21,23 @@ async function main(): Promise<void> {
     console.error('An idle database connection failed');
   });
   const core = createCore(database.prisma, identityConfig, { attachmentStorageDir: config.attachmentStorageDir });
-  const app = await buildApp({ config, core, publishing: createPublishing(core.documents, core.identity, { enabled: config.publicPublishingEnabled }), exporting: createExporting(core.documents, core.attachments, { origin: identityConfig.origin }), checkDatabase: () => database.ping(),
+  let owner: Awaited<ReturnType<typeof claimLiveOwner>> | undefined;
+  try { if (config.collaborationEnabled) owner = await claimLiveOwner(database.pool); }
+  catch { await database.close(); throw new Error('Collaboration ownership unavailable'); }
+  const collaboration = owner ? createCollaboration(core, owner, identityConfig.origin) : undefined;
+  const app = await buildApp({ config, core, publishing: createPublishing(core.documents, core.identity, { enabled: config.publicPublishingEnabled }), exporting: createExporting(core.documents, core.attachments, { origin: identityConfig.origin }), checkDatabase: async () => { owner?.assertHeld(); await database.ping(); owner?.assertHeld(); },
     ...(frontendRoot ? { frontendRoot } : {}),
+    ...(collaboration ? { collaboration } : {}),
+  }).catch(async () => {
+    await collaboration?.close(); await owner?.close(); await database.close();
+    throw new Error('API composition failed');
   });
-  app.addHook('onClose', async () => database.close());
+  if (collaboration && owner) {
+    collaboration.attach(app.server);
+    // WebSocket shutdown must precede HTTP server closing, which otherwise waits on upgrades.
+    app.addHook('preClose', async () => collaboration.close(app.server));
+  }
+  app.addHook('onClose', async () => { await owner?.close(); await database.close(); });
 
   let stopping = false;
   const shutdown = async (): Promise<void> => {
@@ -40,6 +55,7 @@ async function main(): Promise<void> {
   };
   process.once('SIGTERM', () => { void shutdown(); });
   process.once('SIGINT', () => { void shutdown(); });
+  void owner?.lost.then(() => { process.exitCode = 1; void shutdown(); });
   try {
     await app.listen({ host: config.host, port: config.port });
   } catch {

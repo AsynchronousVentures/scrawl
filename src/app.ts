@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import Fastify from 'fastify';
 import swagger from '@fastify/swagger';
 import type { AppConfig } from './config.js';
-import { registerProblemHandlers } from './http/problems.js';
+import { registerProblemHandlers, problemSchema } from './http/problems.js';
 import { registerSystemRoutes } from './modules/system/routes.js';
 import { registerAuthRoutes, registerCoreRoutes } from './http/core-routes.js';
 import type { Core } from './core/index.js';
@@ -19,6 +19,7 @@ import type { Exporting } from './capabilities/exporting/index.js';
 import { registerFrontend } from './http/frontend.js';
 import { registerLiveRoutes } from './http/live-routes.js';
 import type { Collaboration } from './capabilities/collaboration/index.js';
+import { fromNodeHeaders } from 'better-auth/node';
 
 type BuildOptions = {
   config: AppConfig;
@@ -105,6 +106,15 @@ export async function buildApp({ config, checkDatabase, logging = true, core, fr
     registerDocumentRoutes(app, core, collaboration);
     registerAttachmentRoutes(app, core);
     registerSearchRoutes(app, core);
+    app.get('/api/v1/collaboration', { schema: {
+      operationId: 'getCollaborationAvailability', tags: ['Collaboration'], response: {
+        200: { type: 'object', additionalProperties: false, required: ['enabled'], properties: { enabled: { type: 'boolean' } } },
+        '4xx': problemSchema, '5xx': problemSchema,
+      },
+    } }, async request => {
+      await core.identity.me(fromNodeHeaders(request.headers));
+      return { enabled: Boolean(collaboration) };
+    });
   }
   if (exporting) registerExportRoutes(app, exporting);
   if (collaboration && core) registerLiveRoutes(app, collaboration);

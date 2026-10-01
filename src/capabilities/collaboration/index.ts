@@ -392,8 +392,8 @@ export function createCollaboration(core: Core, owner: Owner, origin: string) {
         return accepted.result;
       });
     },
-    async close(server: Server) {
-      server.removeListener('upgrade', upgrade); clearInterval(audit);
+    async close(server?: Server) {
+      server?.removeListener('upgrade', upgrade); clearInterval(audit);
       const pending = [...processing];
       stop();
       for (const context of sockets) context.socket.terminate();

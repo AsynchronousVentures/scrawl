@@ -31,6 +31,8 @@ Selected-revision publishing is implemented in the API and web application and d
 
 The current sequence is native/private documents, attachments/export, PostgreSQL 18/search, selected-revision publishing, isolated durable collaboration/comments, then optional AI. Collaboration/comments and AI are not enabled in the working demo. Bulk import/export, document hierarchies, SSO and API keys remain separate work. Missing AI provider access does not block the demo, and no paid provider calls are authorized. Use synthetic documentation during this pre-release work.
 
+Experimental shared-document startup is available with `COLLABORATION_ENABLED=true`, default off in every environment. It requires one application owner per database/schema and `DB_POOL_MAX` of at least 2. Authenticated `/api/v1/collaboration` reports actual availability; enabling the process does not enroll or change existing documents. The retained preview remains in solo mode while the remaining activation checks are completed. See [ADR 0003](docs/adr/0003-collaboration-checkpoints.md) and [validation](VALIDATION.md).
+
 The incoming archive's history is recorded in [changes-v3.md](docs/changes-v3.md). Current checks and foundation fixes are recorded in [VALIDATION.md](VALIDATION.md).
 
 ## Local development

@@ -14,6 +14,7 @@ test('development defaults are local and explicit', () => {
   assert.equal(config.apiDocsEnabled, true);
   assert.equal(config.databasePoolMax, 5);
   assert.equal(config.publicPublishingEnabled, false);
+  assert.equal(config.collaborationEnabled, false);
 });
 test('production disables API docs by default', () => {
   assert.equal(readConfig({ ...base, NODE_ENV: 'production' }).apiDocsEnabled, false);
@@ -33,11 +34,21 @@ test('publishing requires an explicit valid boolean in every environment', () =>
 test('fractional port rejected', () => {
   assert.throws(() => readConfig({ ...base, PORT: '3000.5' }), /PORT/);
 });
+test('collaboration requires an explicit valid boolean and defaults off in production', () => {
+  assert.equal(readConfig({ ...base, NODE_ENV: 'production' }).collaborationEnabled, false);
+  assert.equal(readConfig({ ...base, COLLABORATION_ENABLED: 'true' }).collaborationEnabled, true);
+  assert.throws(() => readConfig({ ...base, COLLABORATION_ENABLED: 'yes' }), /COLLABORATION_ENABLED/);
+});
 test('out of range ports rejected', () => {
   for (const PORT of ['0', '65536', '-1']) assert.throws(() => readConfig({ ...base, PORT }), /PORT/);
 });
 test('invalid pool size rejected', () => {
   assert.throws(() => readConfig({ ...base, DB_POOL_MAX: '0' }), /DB_POOL_MAX/);
+});
+test('enabled collaboration reserves a pool slot without starving application queries', () => {
+  assert.equal(readConfig({ ...base, DB_POOL_MAX: '1' }).databasePoolMax, 1);
+  assert.throws(() => readConfig({ ...base, COLLABORATION_ENABLED: 'true', DB_POOL_MAX: '1' }), /DB_POOL_MAX/);
+  assert.equal(readConfig({ ...base, COLLABORATION_ENABLED: 'true', DB_POOL_MAX: '2' }).databasePoolMax, 2);
 });
 test('missing database URL rejected', () => {
   assert.throws(() => readConfig({}), /DATABASE_URL/);
