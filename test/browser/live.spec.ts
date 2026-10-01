@@ -100,6 +100,70 @@ test('native two-tab title/body convergence, peer-safe undo, explicit checkpoint
   } finally { second.on('dialog', dialog => dialog.accept()); await second.close(); }
 });
 
+test('a pending structural move preserves incoming peer edits and checkpoints them only on explicit save', async ({ page, context, browser }) => {
+  const administrator = await browser.newContext();
+  let release: (() => void) | undefined;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  let moves = 0;
+  try {
+    await login(page); await expect(title(page)).toBeVisible();
+    const original = await latest(context);
+    const created = await context.request.post(`${demo.origin}/api/v1/spaces/${seeded.spaceId}/documents`, {
+      headers: { origin: demo.origin },
+      data: { title: 'Move destination', content: original.revision.content },
+    });
+    expect(created.status()).toBe(201);
+    const parent = await created.json() as operations['createDocument']['responses'][201]['content']['application/json'];
+    await page.reload(); await expect(title(page)).toHaveValue(original.revision.title);
+    await enroll(page);
+    const peer = await administrator.newPage(); await login(peer, 'administrator');
+    await expect(body(peer)).toBeEditable();
+    const location = page.url();
+    await page.route(`**/api/v1/documents/${seeded.documentId}/move`, async route => {
+      moves++; await gate; await route.continue();
+    });
+    await page.getByLabel('Document actions', { exact: true }).click();
+    await page.getByRole('button', { name: 'Move document', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Move document', exact: true });
+    await dialog.getByLabel('Parent document').selectOption(parent.id);
+    await dialog.getByRole('button', { name: 'Move document', exact: true }).click();
+    await expect(dialog.getByRole('status')).toHaveText('Moving document…');
+    await expect.poll(() => moves).toBe(1);
+
+    await title(peer).fill('Peer title during move');
+    await body(peer).focus(); await peer.keyboard.press('ControlOrMeta+End');
+    await peer.keyboard.press('Enter'); await peer.keyboard.type('Peer contribution while the move is pending.');
+    // The move dialog makes background controls inert, but native peer updates
+    // must still reach the mounted editor before the HTTP request is released.
+    await expect(page.locator('input#title')).toHaveValue('Peer title during move');
+    await expect(page.locator('[role="textbox"][aria-label="Document body"]')).toContainText('Peer contribution while the move is pending.');
+    expect((await latest(context)).revision).toEqual(original.revision);
+    const response = page.waitForResponse(value => value.url().endsWith(`/documents/${seeded.documentId}/move`) && value.request().method() === 'POST');
+    release?.();
+    expect((await response).status()).toBe(200);
+    await expect(dialog).toHaveCount(0);
+    await expect(page.getByText('Document moved.', { exact: true })).toBeVisible();
+    await expect(title(page)).toHaveValue('Peer title during move');
+    await expect(body(page)).toContainText('Peer contribution while the move is pending.');
+    await expect(page).toHaveURL(location);
+    const moved = await latest(context);
+    expect(moved.parentDocumentId).toBe(parent.id);
+    expect(moved.revision).toEqual(original.revision);
+    expect(moved.currentRevisionNumber).toBe(original.currentRevisionNumber);
+    await expect(page.getByRole('status').filter({ hasText: 'Shared changes · not saved as a revision' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Undo my changes', exact: true })).toBeDisabled();
+    await expect(save(page)).toBeEnabled(); await save(page).click();
+    await expect(page.getByText('Saved revision 2.', { exact: true })).toBeVisible();
+    const checkpoint = await latest(context);
+    expect(checkpoint.parentDocumentId).toBe(parent.id);
+    expect(checkpoint.currentRevisionNumber).toBe(original.currentRevisionNumber + 1);
+    expect(checkpoint.revision.title).toBe('Peer title during move');
+    expect(checkpoint.revision.plainText).toContain('Peer contribution while the move is pending.');
+    await expect(page.getByRole('button', { name: 'Undo my changes', exact: true })).toBeDisabled();
+    expect(moves).toBe(1);
+  } finally { release?.(); await administrator.close(); }
+});
+
 test('native participant cursors show authenticated names, stay private and disappear after access revocation', async ({ page, context, browser }) => {
   const administrator = await browser.newContext(), reader = await browser.newContext(), outsider = await browser.newContext();
   const runtimeErrors: string[] = []; page.on('pageerror', error => runtimeErrors.push(error.message));
