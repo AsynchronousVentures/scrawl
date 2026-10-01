@@ -31,19 +31,24 @@ export function createSpaces(prisma: PrismaClient, identity: Identity) {
   }
 
   // Narrow cross-module access operation. Documents never query membership tables directly.
-  async function authorize(db: Prisma.TransactionClient, principal: Principal, spaceId: string, write = false) {
+  async function access(db: Prisma.TransactionClient, principal: Principal, spaceId: string) {
     const actor = await identity.actor(principal, db);
     const space = await db.space.findUnique({ where: { id: spaceId }, select: {
       id: true, memberships: { where: { userId: actor.id }, select: { role: true } },
     } });
-    if (!space || (actor.role !== 'administrator'
-      && !space.memberships.some((m) => !write || m.role === 'editor'))) {
+    if (!space || (actor.role !== 'administrator' && !space.memberships.length)) {
       throw new HttpProblem(404, 'NOT_FOUND');
     }
-    return actor;
+    return { actor, canWrite: actor.role === 'administrator' || space.memberships.some(membership => membership.role === 'editor') };
+  }
+  async function authorize(db: Prisma.TransactionClient, principal: Principal, spaceId: string, write = false) {
+    const permission = await access(db, principal, spaceId);
+    if (write && !permission.canWrite) throw new HttpProblem(404, 'NOT_FOUND');
+    return permission.actor;
   }
 
   return {
+    access,
     authorize,
     async lockForRead(db: Prisma.TransactionClient, principal: Principal, spaceId: string) {
       // Membership changes take an exclusive lock on this same space row.

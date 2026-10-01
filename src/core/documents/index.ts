@@ -3,7 +3,7 @@
 
 import { randomUUID } from 'node:crypto';
 import type { Document, DocumentLive, DocumentRevision, Prisma, PrismaClient } from '../../generated/prisma/client.js';
-import type { Identity } from '../identity/index.js';
+import type { Identity, Principal } from '../identity/index.js';
 import type { Spaces } from '../spaces/index.js';
 import { attachmentReferences, type Attachments } from '../attachments/index.js';
 import { HttpProblem } from '../../http/problems.js';
@@ -14,6 +14,7 @@ import { createLiveState, readLiveState, prepareLiveUpdate, LiveContentError, LI
 type Head = Document & { head: DocumentRevision; space: { slug: string } };
 type RevisionMetadata = Pick<DocumentRevision, 'id' | 'documentId' | 'revisionNumber' | 'title' | 'authorId' | 'createdAt' | 'changeNote'>;
 type Actor = Awaited<ReturnType<Identity['actor']>>;
+export type LiveConnection = Readonly<{ connectionId: string; principal: Principal }>;
 
 /** Internal coordinated persistence, never an HTTP or frontend contract. */
 export type PublicationMutationContext = {
@@ -115,7 +116,11 @@ function pageLimit(input: number | undefined) {
 
 export function createDocuments(prisma: PrismaClient, identity: Identity, spaces: Spaces, attachments: Attachments) {
   async function liveOperation<T>(headers: Headers, id: string, mode: 'read' | 'enroll' | 'write',
-    operation: (tx: Prisma.TransactionClient, document: Head, actor: Actor) => Promise<T>) {
+    operation: (tx: Prisma.TransactionClient, document: Head, actor: Actor,
+      recipients: { connectionId: string; canWrite: boolean }[]) => Promise<T>, connections: readonly LiveConnection[] = []) {
+    if (connections.length > 128 || new Set(connections.map(connection => connection.connectionId)).size !== connections.length) {
+      throw new HttpProblem(400, 'INVALID_LIVE_AUDIENCE');
+    }
     const principal = await identity.resolve(headers);
     const target = await prisma.document.findUnique({ where: { id }, select: { spaceId: true } });
     if (!target) throw new HttpProblem(404, 'NOT_FOUND');
@@ -123,11 +128,22 @@ export function createDocuments(prisma: PrismaClient, identity: Identity, spaces
       await spaces.lockForRead(tx, principal, target.spaceId);
       if (mode === 'read') await tx.$queryRaw`SELECT "id" FROM "Document" WHERE "id" = ${id}::uuid FOR SHARE`;
       else await tx.$queryRaw`SELECT "id" FROM "Document" WHERE "id" = ${id}::uuid FOR UPDATE`;
-      await identity.lockActor(tx, principal);
+      await identity.lockActors(tx, [principal, ...connections.map(connection => connection.principal)]);
       const actor = await spaces.authorize(tx, principal, target.spaceId, mode === 'write');
       const document = await tx.document.findUniqueOrThrow({ where: { id }, include: { head: true, space: { select: { slug: true } } } });
       if (document.archivedAt) throw new HttpProblem(409, 'DOCUMENT_ARCHIVED');
-      try { return await operation(tx, document, actor); }
+      const recipients: { connectionId: string; canWrite: boolean }[] = [];
+      for (const connection of connections) {
+        try {
+          const permission = await spaces.access(tx, connection.principal, target.spaceId);
+          recipients.push({ connectionId: connection.connectionId, canWrite: permission.canWrite });
+        } catch (error) {
+          // A revoked/expired recipient is omitted, not a reason to accept an
+          // unchecked audience or to fail another authorized editor's update.
+          if (!(error instanceof HttpProblem && [401, 403, 404].includes(error.status))) throw error;
+        }
+      }
+      try { return await operation(tx, document, actor, recipients); }
       catch (error) {
         if (error instanceof LiveContentError) throw new HttpProblem(error.status, error.code);
         throw error;
@@ -179,20 +195,27 @@ export function createDocuments(prisma: PrismaClient, identity: Identity, spaces
     read(headers: Headers, id: string) {
       return liveOperation(headers, id, 'read', async (tx, document) => roomSnapshot(document, await currentRoom(tx, document)));
     },
-    update(headers: Headers, id: string, epoch: unknown, update: Uint8Array) {
-      return liveOperation(headers, id, 'write', async (tx, document) => {
+    authorizeConnections(headers: Headers, id: string, epoch: unknown, connections: readonly LiveConnection[]) {
+      return liveOperation(headers, id, 'read', async (tx, document, _actor, recipients) => {
+        const room = await currentRoom(tx, document);
+        livePrecondition(room, { epoch }, false);
+        return { epoch: room.epoch, sequence: room.sequence.toString(), documentEtag: documentEtag(document), recipients };
+      }, connections);
+    },
+    update(headers: Headers, id: string, epoch: unknown, update: Uint8Array, connections: readonly LiveConnection[] = []) {
+      return liveOperation(headers, id, 'write', async (tx, document, _actor, recipients) => {
         const room = await currentRoom(tx, document);
         livePrecondition(room, { epoch }, false);
         const prepared = prepareLiveUpdate(room.state, update);
         await attachments.validateReferences(tx, id, prepared.content.document);
         // Duplicate delivery is a no-op. A CRDT-only change still advances live
         // sequence, even when its native checkpoint content is unchanged.
-        if (Buffer.from(prepared.state).equals(Buffer.from(room.state))) return roomSnapshot(document, room);
+        if (Buffer.from(prepared.state).equals(Buffer.from(room.state))) return { ...roomSnapshot(document, room), recipients };
         if (room.sequence === 9_223_372_036_854_775_807n) throw new HttpProblem(409, 'LIVE_SEQUENCE_EXHAUSTED');
         const saved = await tx.documentLive.update({ where: { documentId_epoch: { documentId: id, epoch: room.epoch } },
           data: { state: new Uint8Array(prepared.state), sequence: { increment: 1 } } });
-        return roomSnapshot(document, saved);
-      });
+        return { ...roomSnapshot(document, saved), recipients };
+      }, connections);
     },
     checkpoint(headers: Headers, id: string, input: unknown, expectedEtag?: string) {
       const fields = record(input, ['epoch', 'sequence', 'changeNote']);

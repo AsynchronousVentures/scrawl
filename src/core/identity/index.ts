@@ -29,18 +29,21 @@ export function createIdentity(prisma: PrismaClient, config: IdentityConfig) {
     return { id, name, email, role };
   }
 
+  async function lockActors(db: Prisma.TransactionClient, principals: readonly Principal[]) {
+    const users = [...new Set(principals.map(principal => principal.userId))];
+    const sessions = [...new Set(principals.map(principal => principal.sessionId))];
+    // Match recovery's user-before-session order. Stable batch ordering also
+    // covers several connections belonging to the same account.
+    await db.$queryRaw`SELECT "id" FROM "user" WHERE "id" = ANY(${users}::text[]) ORDER BY "id" FOR SHARE`;
+    await db.$queryRaw`SELECT "id" FROM "session" WHERE "id" = ANY(${sessions}::text[]) ORDER BY "id" FOR SHARE`;
+  }
+
   return {
     handle: auth.handler,
     origin: config.origin,
     resolve,
     actor,
-    async lockActor(db: Prisma.TransactionClient, principal: Principal) {
-      // Document/space locks precede these locks. Account recovery and logout
-      // must finish session deletion before a later live operation is accepted.
-      await db.$queryRaw`SELECT "id" FROM "user" WHERE "id" = ${principal.userId} FOR SHARE`;
-      await db.$queryRaw`SELECT "id" FROM "session" WHERE "id" = ${principal.sessionId} FOR SHARE`;
-      return actor(principal, db);
-    },
+    lockActors,
     async me(headers: Headers) { return actor(await resolve(headers)); },
     async requireUser(db: Prisma.TransactionClient, userId: string) {
       if (!await db.user.findUnique({ where: { id: userId }, select: { id: true } })) {

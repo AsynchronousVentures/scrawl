@@ -89,6 +89,12 @@ test('private native live storage uses PostgreSQL and genuine authenticated sess
   const admin = await login(adminUser.email, '127.0.0.21'), editor = await login(editorUser.email, '127.0.0.22');
   const peer = await login(peerUser.email, '127.0.0.23'), reader = await login(readerUser.email, '127.0.0.24');
   const outsider = await login(outsiderUser.email, '127.0.0.25');
+  const anotherReader = await login(readerUser.email, '127.0.0.26');
+  const connections = await Promise.all([['administrator', admin], ['editor', editor], ['peer', peer],
+    ['reader', reader], ['another-reader', anotherReader], ['outsider', outsider]].map(async ([connectionId, headers]) => {
+    assert(typeof connectionId === 'string' && headers instanceof Headers);
+    return { connectionId, principal: await core.identity.resolve(headers) };
+  }));
   let space = await core.spaces.create(admin, 'Synthetic live storage');
   for (const [user, role] of [[editorUser, 'editor'], [peerUser, 'editor'], [readerUser, 'reader']] as const) {
     space = await core.spaces.changeMembership(admin, { spaceId: space.id, userId: user.id, role, expectedEtag: spaceEtag(space) });
@@ -100,11 +106,12 @@ test('private native live storage uses PostgreSQL and genuine authenticated sess
   const count = () => database.prisma.documentRevision.count({ where: { documentId: id } });
   const read = () => core.documents.read(editor, id);
   const savedRoom = () => database.prisma.documentLive.findUniqueOrThrow({ where: { documentId_epoch: { documentId: id, epoch: room.epoch } } });
-  const waitForLock = async (table: 'Document' | 'Space') => {
+  const waitForLock = async (table: 'Document' | 'Space' | 'DocumentLive' | 'user') => {
     for (let i = 0; ; i++) {
       const waiting = await database.pool.query<{ count: string }>(`SELECT count(DISTINCT activity.pid)::text
         FROM pg_stat_activity activity JOIN pg_locks lock ON lock.pid=activity.pid
-        WHERE activity.wait_event_type='Lock' AND lock.relation=$1::regclass AND activity.pid<>pg_backend_pid()`, [`"${schema}"."${table}"`]);
+        WHERE activity.wait_event_type='Lock' AND lock.relation=$1::regclass
+          AND activity.query LIKE $2 AND activity.pid<>pg_backend_pid()`, [`"${schema}"."${table}"`, `%"${table}"%`]);
       if (Number(waiting.rows[0]?.count)) return;
       assert(i < 200, 'The authenticated operation must reach its guarded row lock'); await delay(10);
     }
@@ -147,6 +154,25 @@ test('private native live storage uses PostgreSQL and genuine authenticated sess
     assert(!JSON.stringify(await core.documents.exportNative(reader, id)).includes('checkpointmarker'));
     await problem(core.documents.update(editor, id, { title: 'Bypass' }, documentEtag(document)), 409, 'LIVE_DOCUMENT_REQUIRES_CHECKPOINT');
     await problem(core.documents.restore(editor, id, { revisionId: firstRevision }, documentEtag(document)), 409, 'LIVE_DOCUMENT_REQUIRES_CHECKPOINT');
+  });
+  await t.test('current recipient grants and session validity are authoritative, including multiple sessions and downgrade', async () => {
+    const authorized = await core.documents.live.authorizeConnections(editor, id, room.epoch, connections);
+    assert.deepEqual(authorized.recipients, connections.filter(connection => connection.connectionId !== 'outsider').map(connection => ({
+      connectionId: connection.connectionId, canWrite: !['reader', 'another-reader'].includes(connection.connectionId),
+    })));
+    assert(!('state' in authorized)); assert(!JSON.stringify(authorized).includes('@example.test'));
+    space = await core.spaces.changeMembership(admin, { spaceId: space.id, userId: peerUser.id, role: 'reader', expectedEtag: spaceEtag(space) });
+    const downgraded = await core.documents.live.authorizeConnections(editor, id, room.epoch, connections);
+    assert.equal(downgraded.recipients.find(connection => connection.connectionId === 'peer')?.canWrite, false);
+    await problem(core.documents.live.update(peer, id, room.epoch, room.state, connections), 404);
+    space = await core.spaces.changeMembership(admin, { spaceId: space.id, userId: peerUser.id, role: 'editor', expectedEtag: spaceEtag(space) });
+    const secondSession = connections.find(connection => connection.connectionId === 'another-reader'); assert(secondSession);
+    await database.prisma.session.update({ where: { id: secondSession.principal.sessionId }, data: { expiresAt: new Date(0) } });
+    const receipt = await core.documents.live.update(editor, id, room.epoch, frame(room.state, () => {}), connections);
+    assert.deepEqual(receipt.recipients.map(connection => connection.connectionId), ['administrator', 'editor', 'peer', 'reader']);
+    assert.equal(receipt.sequence, room.sequence);
+    await problem(core.documents.live.authorizeConnections(outsider, id, room.epoch, connections), 404);
+    await problem(core.documents.live.authorizeConnections(editor, id, randomUUID(), connections), 412);
   });
   await t.test('checkpoint requires exact versions and concurrent saves append exactly one immutable revision', async () => {
     await problem(core.documents.live.checkpoint(editor, id, { epoch: room.epoch, sequence: room.sequence }), 428);
@@ -230,6 +256,38 @@ test('private native live storage uses PostgreSQL and genuine authenticated sess
     await problem(core.documents.live.update(editor, id, room.epoch, frame(room.state, doc => doc.getMap('threads').set('forged', 'author'))), 403);
     await problem(core.documents.live.update(editor, id, room.epoch, frame(room.state, doc => doc.getMap('unknown').set('hidden', 'content'))), 400);
     assert.deepEqual(await savedRoom(), before); assert.equal(await count(), 4);
+  });
+  await t.test('recipient account recovery waits for durable acceptance, then is excluded from subsequent delivery receipts', async () => {
+    const gate = await database.pool.connect();
+    await gate.query('SELECT pg_advisory_lock(7242031, hashtext($1))', [schema]);
+    await database.pool.query(`CREATE FUNCTION pause_live_acceptance() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN PERFORM pg_advisory_xact_lock(7242031, hashtext('${schema}')); RETURN NEW; END $$;
+      CREATE TRIGGER acceptance_gate BEFORE UPDATE ON "DocumentLive" FOR EACH ROW EXECUTE FUNCTION pause_live_acceptance()`);
+    let released = false;
+    const pending: Promise<unknown>[] = [];
+    try {
+      const accepted = core.documents.live.update(editor, id, room.epoch, frame(room.state, doc => text(doc).insert(0, 'Durably accepted ')), connections);
+      pending.push(accepted);
+      await waitForLock('DocumentLive');
+      let recovered = false;
+      const recovery = operator.recover(readerUser.email, randomBytes(24).toString('base64url')).then(() => { recovered = true; });
+      pending.push(recovery);
+      await waitForLock('user'); assert.equal(recovered, false);
+      await gate.query('SELECT pg_advisory_unlock(7242031, hashtext($1))', [schema]); released = true;
+      const receipt = await accepted; room = receipt;
+      assert.equal(receipt.recipients.find(connection => connection.connectionId === 'reader')?.canWrite, false);
+      await recovery;
+      assert(Buffer.from((await savedRoom()).state).equals(Buffer.from(receipt.state)));
+      assert.match(readLiveState(room.state).plainText, /Durably accepted/); assert.equal(await count(), 4);
+      const current = await core.documents.live.authorizeConnections(editor, id, room.epoch, connections);
+      assert.deepEqual(current.recipients.map(connection => connection.connectionId), ['administrator', 'editor', 'peer']);
+      await problem(core.documents.live.read(reader, id), 401);
+    } finally {
+      if (!released) await gate.query('SELECT pg_advisory_unlock(7242031, hashtext($1))', [schema]);
+      await Promise.allSettled(pending);
+      gate.release();
+      await database.pool.query('DROP TRIGGER acceptance_gate ON "DocumentLive"; DROP FUNCTION pause_live_acceptance()');
+    }
   });
   await t.test('revoked grants and recovered sessions are rechecked after waiting for locks', async () => {
     const blocked = async (headers: Headers, revoke: () => Promise<unknown>, expected: number) => {
