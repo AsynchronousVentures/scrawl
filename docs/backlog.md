@@ -2,7 +2,7 @@
 
 P0-P4 below record the completed historical checkpoints and their acceptance criteria. [Status](status.md) distinguishes current implementation from verified behavior. The maintainer authorized this integration session to cross the earlier packet review boundaries, using small reviewable commits rather than another redesign. No calendar estimates are implied.
 
-The current dependency sequence is native BlockNote/private workflow, private attachments and supplied exporters, PostgreSQL 18 with 17 compatibility and authorized search, selected-revision publishing, isolated durable collaboration/comments, then optional AI. [The integration backlog](integration-backlog.md) tracks that work and its review state. The historical packet numbering does not override this sequence. Integration-branch pushes and a draft PR are authorized; merging, a public tunnel and production deployment are not.
+The current dependency sequence is native BlockNote/private workflow, private attachments and supplied exporters, PostgreSQL 18 with 17 compatibility and authorized search, selected-revision publishing, isolated durable collaboration/comments, then optional AI. [The integration backlog](integration-backlog.md) tracks that work and its review state. The historical packet numbering does not override this sequence. Integration-branch pushes and a draft PR are authorized; the existing synthetic preview's public Tailscale Funnel on port 10000 is also explicitly authorized. Merging, new public exposure and production deployment are not.
 
 ## P0 — Verify and lock the existing foundation
 

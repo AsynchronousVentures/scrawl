@@ -43,6 +43,12 @@ export function createIdentity(prisma: PrismaClient, config: IdentityConfig) {
     origin: config.origin,
     resolve,
     actor,
+    async connectionSession(principal: Principal) {
+      await actor(principal);
+      const session = await prisma.session.findUnique({ where: { id: principal.sessionId }, select: { expiresAt: true } });
+      if (!session || session.expiresAt <= new Date()) throw new HttpProblem(401, 'AUTHENTICATION_REQUIRED');
+      return { expiresAt: session.expiresAt.getTime() };
+    },
     lockActors,
     async me(headers: Headers) { return actor(await resolve(headers)); },
     async requireUser(db: Prisma.TransactionClient, userId: string) {
