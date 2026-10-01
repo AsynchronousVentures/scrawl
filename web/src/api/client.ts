@@ -72,6 +72,7 @@ async function auth(path: 'sign-in/email' | 'sign-out', body: object) {
 }
 
 export const api = {
+  async collaboration() { return (await checked(client.GET('/api/v1/collaboration'))).data; },
   async me() { return (await checked(client.GET('/api/v1/me'))).data; },
   async login(email: string, password: string) { await auth('sign-in/email', { email, password }); return this.me(); },
   logout() { return auth('sign-out', {}); },
@@ -103,6 +104,12 @@ export const api = {
   async liveUsers(id: string, userIds: string[]) {
     return (await checked(client.POST('/api/v1/documents/{id}/live/users', {
       params: { path: { id } }, body: { userIds },
+    }))).data;
+  },
+  async anchorLiveComment(id: string, epoch: string, threadId: string,
+    selection: operations['anchorLiveCommentThread']['requestBody']['content']['application/json']['selection']['yjs']) {
+    return (await checked(client.POST('/api/v1/documents/{id}/live/{epoch}/threads/{threadId}/addToDocument', {
+      params: { path: { id, epoch, threadId } }, body: { selection: { yjs: selection } },
     }))).data;
   },
   async checkpointLive(id: string, etag: string, snapshot: Pick<LiveMetadata, 'epoch' | 'sequence'>) {

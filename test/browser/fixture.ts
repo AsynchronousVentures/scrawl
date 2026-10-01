@@ -19,7 +19,7 @@ import type { DemoBResult } from '../../scripts/demo-b.js';
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
 /** Owns one explicit, disposable database. Run after test:db, never alongside it. */
-export async function createBrowserDemo() {
+export async function createBrowserDemo(options: { collaboration?: boolean } = {}) {
   const baseConfig = readConfig(process.env);
   const target = new URL(baseConfig.databaseUrl);
   if (baseConfig.nodeEnv === 'production' || !['localhost', '127.0.0.1', '[::1]'].includes(target.hostname)
@@ -136,6 +136,7 @@ export async function createBrowserDemo() {
       // This newly owned disposable database exercises explicit publication;
       // the application default and every non-demo target remain disabled.
       PUBLIC_PUBLISHING_ENABLED: 'true',
+      COLLABORATION_ENABLED: String(options.collaboration ?? false),
     });
     secrets.push(values.AUTH_SECRET);
     await writeFile(environmentPath, Object.entries(values).map(([name, value]) => `${name}=${value}`).join('\n') + '\n', { mode: 0o600 });

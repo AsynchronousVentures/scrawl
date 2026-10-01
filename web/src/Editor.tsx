@@ -2,9 +2,12 @@
 // Copyright (C) 2026 Asynchronous Ventures and contributors
 
 import { createContext, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import type { DefaultInlineContentSchema, DefaultStyleSchema } from '@blocknote/core';
+import type { BlockNoteEditorOptions, DefaultInlineContentSchema, DefaultStyleSchema } from '@blocknote/core';
 import { EmbedTab, FilePanel, FilePanelController, useCreateBlockNote, useDictionary, useEditorState, type FilePanelProps } from '@blocknote/react';
 import { BlockNoteView } from '@blocknote/shadcn';
+import { withCollaboration } from '@blocknote/core/yjs';
+import { PrivateComments } from './PrivateComments';
+import type { LiveSession } from './live';
 import { contentSchema, isSafeLinkUrl, validateContent, type ContentEnvelope, type NativeBlock, type NativeBlockSchema } from '@scrawl/content';
 
 type Heading = { id: string; text: string; level: number; depth: number };
@@ -29,7 +32,7 @@ function documentHeadings(blocks: NativeBlock[], depth = 0): Heading[] {
   });
 }
 
-export function Editor({ initialContent, editable, onChange, onValidationChange, uploadFile, uploadAvailable = false, resolveFileUrl, header, label = 'Document body' }: {
+export function Editor({ initialContent, editable, onChange, onValidationChange, uploadFile, uploadAvailable = false, resolveFileUrl, header, label = 'Document body', live }: {
   initialContent: ContentEnvelope;
   editable: boolean;
   onChange: (content: ContentEnvelope) => void;
@@ -39,6 +42,7 @@ export function Editor({ initialContent, editable, onChange, onValidationChange,
   resolveFileUrl?: (url: string) => Promise<string>;
   header?: ReactNode;
   label?: string;
+  live?: LiveSession;
 }) {
   const identifier = `editor-${useId().replace(/[^a-zA-Z0-9_-]/g, '-')}`;
   const container = useRef<HTMLDivElement>(null);
@@ -51,7 +55,8 @@ export function Editor({ initialContent, editable, onChange, onValidationChange,
   // The parent remounts for an intentional navigation, restore, or discard.
   const [initial] = useState(() => validateContent(initialContent).content);
   const [initialEditable] = useState(editable);
-  const editor = useCreateBlockNote({
+  const [extensions] = useState(() => live?.extensions() ?? []);
+  const options = {
     schema: contentSchema,
     initialContent: initial.document,
     domAttributes: {
@@ -70,7 +75,10 @@ export function Editor({ initialContent, editable, onChange, onValidationChange,
       return upload(file);
     } } : {}),
     resolveFileUrl: async url => callbacks.current.resolveFileUrl?.(url) ?? url,
-  });
+  } satisfies Partial<BlockNoteEditorOptions<NativeBlockSchema, DefaultInlineContentSchema, DefaultStyleSchema>>;
+  const editor = useCreateBlockNote(live ? withCollaboration({ ...options, extensions,
+    collaboration: { fragment: live.fragment, user: { name: live.user.name, color: '#91ad95' } },
+  }) : options);
   const headings = useEditorState({
     editor,
     on: 'change',
@@ -120,7 +128,7 @@ export function Editor({ initialContent, editable, onChange, onValidationChange,
       <div ref={container} className="editor-mount">
         <UploadAvailability.Provider value={uploadAvailable}>
           <BlockNoteView<NativeBlockSchema, DefaultInlineContentSchema, DefaultStyleSchema>
-          editor={editor} theme="dark" editable={initialEditable} filePanel={false} onChange={(current, { getChanges }) => {
+          editor={editor} theme="dark" editable={initialEditable} filePanel={false} {...(live ? { comments: false } : {})} onChange={(current, { getChanges }) => {
           // The library also emits updates when editability changes during Save.
           // Those are not user edits and must not clear failure/access notices.
           if (getChanges().length === 0) return;
@@ -132,11 +140,14 @@ export function Editor({ initialContent, editable, onChange, onValidationChange,
           callbacks.current.onChange(content);
           let message: string | null = null;
           try { validateContent(content); }
-          catch { message = 'This document cannot be saved because its content is invalid or exceeds the document limits. Your complete local edits are retained. Undo the change or discard your unsaved edits.'; }
+          catch { message = live
+            ? 'This document cannot be saved because its content is invalid or exceeds the limits. Your complete local work is retained. Undo your changes before reconnecting.'
+            : 'This document cannot be saved because its content is invalid or exceeds the document limits. Your complete local edits are retained. Undo the change or discard your unsaved edits.'; }
           setError(message);
           callbacks.current.onValidationChange?.(message);
         }}>
           {editable && <FilePanelController filePanel={DocumentFilePanel} />}
+          {live && <PrivateComments writable={editable} />}
         </BlockNoteView>
         </UploadAvailability.Provider>
       </div>

@@ -60,6 +60,9 @@
   --bn-colors-shadow: #0006;
 }
 .editor-mount { min-width: 0; padding-left: 0; }
+.document-comments { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--line); min-width: 0; }
+.document-comments > summary { cursor: pointer; color: var(--muted); margin-bottom: 16px; }
+.document-comments .bn-thread { max-width: 100%; }
 .editor-mount .bn-editor { padding: 0 0 32px; min-height: 300px; font-size: 16px; line-height: 1.85; overflow-wrap: anywhere; }
 .editor-mount .bn-editor:focus-visible { outline: 2px solid var(--accent); outline-offset: 8px; }
 .editor-mount .bn-block-content[data-content-type="heading"] { scroll-margin-top: 28px; letter-spacing: -.25px; }
@@ -103,3 +106,8 @@
 @media (max-width: 700px) { .header-search { order: 3; width: 100%; min-height: 40px; } }
 
 .documents a:hover{background:var(--raised)}.documents a[aria-disabled="true"]{opacity:.5;cursor:default}
+
+.retained-draft-text { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 240px; overflow: auto; font: inherit; }
+
+.document-comments .bn-editor, .bn-thread .bn-comment-editor .bn-editor { min-height: 0; padding-bottom: 0; font-size: 14px; line-height: 1.65; }
+@media (max-width: 700px) { .save-actions { flex-wrap: wrap; max-width: 100%; flex-shrink: 1; } }
