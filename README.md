@@ -81,23 +81,13 @@ curl http://127.0.0.1:3000/openapi.json
 
 Use `npm start` after `npm run build` to run the compiled backend. `docker compose --project-name scrawl-dev18 -f compose.yaml stop postgres` stops only that development service and preserves its volume.
 
-### PostgreSQL 17 compatibility
+### Retained databases
 
-For a fresh compatibility check, stop the PostgreSQL 18 project created above, then start a separate PostgreSQL 17 project on the same loopback port. Run database and browser suites sequentially:
+Development and CI use the existing PostgreSQL 18 target only. Multi-version compatibility development and testing have stopped. Historical results in validation do not create an ongoing compatibility commitment.
 
-```sh
-docker compose --project-name scrawl-dev18 -f compose.yaml stop postgres
-docker compose --project-name scrawl-compat17 -f compose.postgres17.yaml up -d --wait postgres
-npm run db:migrate
-NODE_ENV=test npm run test:db
-npm run test:browser
-docker compose --project-name scrawl-compat17 -f compose.postgres17.yaml stop postgres
-docker compose --project-name scrawl-dev18 -f compose.yaml up -d --wait postgres
-```
+Original retained databases and volumes remain intact. The legacy `compose.postgres17.yaml` and `compose.demo.postgres17.yaml` files preserve their original mounts and project/environment requirements; they are retained for data preservation, not a second development target. Do not attach retained volumes to a different major image, delete them or reset their data.
 
-These commands assume the fresh `.env` settings above and preserve both volumes. Install the browser with `PLAYWRIGHT_SKIP_BROWSER_GC=1 npx playwright install --with-deps chromium` before its first run. The harness reserves its own `scrawl_demo_a` database on the ordinary test server; do not run a separate demo or another browser/database suite against that reserved database at the same time.
-
-For retained PostgreSQL 17 data, use `compose.postgres17.yaml` with its original Compose project name and unchanged private environment. For the original 17 demo, use `compose.demo.postgres17.yaml` with its original project/environment, not the new demo defaults. These files retain the `/var/lib/postgresql/data` mount and original volume names. Never mount a 17 volume into an 18 image, run `down -v`, or reset retained data to resolve a migration problem. Rehearse major-version upgrades through a dump restored into a fresh disposable 18 database; the retained source database and volume stay intact.
+Install the browser with `PLAYWRIGHT_SKIP_BROWSER_GC=1 npx playwright install --with-deps chromium` before its first run. The harness reserves its own `scrawl_demo_a` database on the ordinary test server; run database and browser suites sequentially, and do not run a separate demo against that reserved name.
 
 ### Native content migration and private files
 
