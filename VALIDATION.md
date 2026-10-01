@@ -1,5 +1,11 @@
 # Validation
 
+## Native reaction readiness and accessible restrictions
+
+Reaction badges now expose their existing disabled state to assistive technology, including reader mode and pending commands. The browser regression waits for the complete native add command before keyboard removal, since its accepted Yjs badge can arrive before the HTTP response body is consumed. It also verifies that an authenticated reader cannot activate a reaction or access Add reaction.
+
+`npm run check` passed all 91 cases, typechecks, builds, boundaries and generated API verification (`artifacts/live-reaction-readiness-check.log`). Three independent real-browser repetitions passed without retries in 41.6 seconds (`artifacts/live-reaction-readiness-repetitions.log`). No migration, dependency or retained content changed. This focused result does not establish resolution of every hosted failure: initial comment selection and graceful child-process shutdown also failed in subsequent hosted runs and remain unresolved. The complete local 69-case browser run has not been performed.
+
 ## Operator recovery across live sessions
 
 A new disposable-fixture operation invokes the same core recovery command as the host CLI with a locally generated password, updates only that fixture's owner-only credentials, and includes the rotated secret in its output audit. It does not drive the interactive CLI or change retained preview credentials.

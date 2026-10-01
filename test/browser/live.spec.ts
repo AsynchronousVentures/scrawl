@@ -797,7 +797,7 @@ test('nested native list undo/redo preserves another account\'s child and checkp
   } finally { await administrator.close(); }
 });
 
-test('native reaction failures stay visible, preserve accepted threads and require deliberate retry', async ({ page, context }) => {
+test('native reaction failures stay visible, preserve accepted threads and require deliberate retry', async ({ page, context, browser }) => {
   const runtimeErrors: string[] = []; page.on('pageerror', error => runtimeErrors.push(error.message));
   await login(page); await expect(title(page)).toBeVisible();
   const original = await latest(context);
@@ -847,11 +847,23 @@ test('native reaction failures stay visible, preserve accepted threads and requi
   expect((await added).status()).toBe(200); await page.unroute(endpoint);
   const reaction = sidebar.locator('.bn-comment-reaction'); await expect(reaction).toHaveCount(1); await expect(reaction).toContainText('1');
   await expect(error).toHaveCount(0);
+  // The accepted Yjs badge can arrive before the POST body is consumed.
+  // Wait for the complete command, not just response headers or its badge.
+  await expect(page.getByRole('status').filter({ hasText: 'Submitting comment…' })).toHaveCount(0);
+  await expect(reaction).toBeEnabled();
+  const reader = await browser.newContext();
+  try {
+    const readOnly = await reader.newPage(); await login(readOnly, 'reader');
+    await readOnly.locator('.document-comments > summary').click();
+    await expect(readOnly.locator('.document-comments .bn-comment-reaction')).toBeDisabled();
+    await expect(readOnly.getByRole('button', { name: 'Add reaction', exact: true })).toHaveCount(0);
+  } finally { await reader.close(); }
   const accepted = await demo.database.prisma.documentLive.findFirstOrThrow({ where: { documentId: seeded.documentId } });
   const removal = `${endpoint}/*`;
   await page.route(removal, route => route.fulfill({ status: 500, contentType: 'application/json', body: '{}' }));
   await reaction.press('Enter'); await expect(error).toBeVisible(); await expect(reaction).toContainText('1');
   expect(await demo.database.prisma.documentLive.findFirstOrThrow({ where: { documentId: seeded.documentId } })).toEqual(accepted);
+  await expect(reaction).toBeEnabled();
   await page.unroute(removal); await reaction.press('Enter'); await expect(reaction).toHaveCount(0); await expect(error).toHaveCount(0);
   expect((await latest(context)).currentRevisionNumber).toBe(1); expect(runtimeErrors).toEqual([]);
   // The supplied picker stores only recent emoji IDs/counts, never documents,

@@ -61,10 +61,10 @@ function CommentMenuItem(props: ComponentProps['Generic']['Menu']['Item']) {
 }
 function CommentBadge(props: ComponentProps['Generic']['Badge']['Root']) {
   const { writable } = useContext(Authority);
-  return <supplied.Generic.Badge.Root {...props} onClick={event => {
+  return <span aria-disabled={!writable}><supplied.Generic.Badge.Root {...props} onClick={event => {
     if (!writable) { event.preventDefault(); event.stopPropagation(); return; }
     props.onClick?.(event);
-  }} />;
+  }} /></span>;
 }
 function CommentView(props: ComponentProps['Comments']['Comment']) {
   const { writable } = useContext(Authority);
