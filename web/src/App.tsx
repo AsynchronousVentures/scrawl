@@ -850,7 +850,7 @@ export function App() {
     {accessOpen && space && user?.role === 'administrator' && !accessIssue && <SpaceAccess key={`${user.id}:${space.id}`} space={space} onClose={() => setAccessOpen(false)}
       onCloseFocus={() => { if (accessTrigger.current?.isConnected) accessTrigger.current.focus(); else titleInput.current?.focus(); }} onBusyChange={setAccessBusy}
       onChanged={updated => { if (accessTicket === generation.current && updated.id === space.id) { setSpace(updated); setSpaces(previous => previous.map(item => item.id === updated.id ? updated : item)); } }} onPermissionFailure={async error => { if (accessTicket === generation.current) await recheckAccess(error); }} />}
-    {searchOpen && user && !accessIssue && <SearchDialog onClose={() => setSearchOpen(false)} onPick={pickSearchResult} onFailure={unavailable} />}
+    {searchOpen && user && !accessIssue && <SearchDialog spaces={spaces} onClose={() => setSearchOpen(false)} onPick={pickSearchResult} onFailure={unavailable} />}
     <Dialog.Root open={Boolean(publicationPrompt)} onOpenChange={open => { if (!open) setPublicationPrompt(null); }}><Dialog.Portal><Dialog.Overlay className="dialog-overlay" /><Dialog.Content className="dialog" onCloseAutoFocus={event => { event.preventDefault(); titleInput.current?.focus(); }}>
       <Dialog.Title>{publicationPrompt?.action === 'publish' ? `Publish revision ${publicationPrompt.revision.revisionNumber}?` : 'Withdraw publication?'}</Dialog.Title>
       <Dialog.Description>{publicationPrompt?.action === 'publish'

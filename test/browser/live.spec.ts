@@ -896,7 +896,7 @@ test('live-only title, body and comments stay out of native/PDF/DOCX snapshots, 
     const search = page.getByRole('dialog', { name: 'Search documents', exact: true });
     await search.getByRole('combobox', { name: 'Search accessible documents', exact: true }).fill('LiveOnlyExportBoundary');
     await expect(search.getByRole('heading', { name: 'No matching documents', exact: true })).toBeVisible();
-    await expect(search.getByRole('option')).toHaveCount(0); await search.getByRole('button', { name: 'Close', exact: true }).click();
+    await expect(search.getByRole('listbox', { name: 'Search results', exact: true }).getByRole('option')).toHaveCount(0); await search.getByRole('button', { name: 'Close', exact: true }).click();
     await expect(title(page)).toHaveValue('LiveOnlyExportBoundary title');
     await expect(body(page)).toContainText('LiveOnlyExportBoundary body');
     expect((await latest(context)).currentRevisionNumber).toBe(2);

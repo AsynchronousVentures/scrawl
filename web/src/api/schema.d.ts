@@ -3478,6 +3478,7 @@ export interface operations {
                             id: string;
                             /** Format: uuid */
                             spaceId: string;
+                            spaceName: string;
                             title: string;
                         }[];
                     };

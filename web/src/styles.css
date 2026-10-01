@@ -88,6 +88,8 @@
 .search-heading button { min-height: 30px; padding: 3px 8px; font-size: 12px; }
 .search-form { padding: 0 22px 18px; }
 .search-form input { width: 100%; background: var(--bg); font-size: 16px; padding: 12px; }
+.search-space-filter { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+.search-space-filter select { flex: 1; min-width: 0; }
 .search-status { padding: 0 22px 10px; margin: 0; color: var(--muted); font-size: 12px; }
 .search-results { list-style: none; padding: 0 12px 16px; margin: 0; max-height: min(45dvh, 400px); overflow: auto; }
 .search-results button { width: 100%; text-align: left; border: 0; border-radius: 3px; padding: 12px 10px; background: transparent; line-height: 1.6; overflow-wrap: anywhere; }

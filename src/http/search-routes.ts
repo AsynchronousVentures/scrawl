@@ -21,8 +21,9 @@ export function registerSearchRoutes(app: FastifyInstance, core: Core) {
     response: {
       200: { type: 'object', additionalProperties: false, required: ['items'], properties: {
         items: { type: 'array', maxItems: SEARCH_LIMITS.maxResults, items: {
-          type: 'object', additionalProperties: false, required: ['id', 'spaceId', 'title', 'excerpt'], properties: {
+          type: 'object', additionalProperties: false, required: ['id', 'spaceId', 'spaceName', 'title', 'excerpt'], properties: {
             id: { type: 'string', format: 'uuid' }, spaceId: { type: 'string', format: 'uuid' },
+            spaceName: { type: 'string' },
             title: { type: 'string' }, excerpt: { type: 'string', maxLength: SEARCH_LIMITS.maxExcerptLength },
           },
         } },

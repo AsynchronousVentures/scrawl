@@ -104,8 +104,13 @@ async function main() {
           stage = `${role} indexed search`;
           await page.getByRole('button', { name: 'Search documents', exact: true }).click();
           const search = page.getByRole('dialog', { name: 'Search documents', exact: true });
-          await search.getByRole('combobox').fill('runbook');
-          await expect(search.getByRole('option').first()).toContainText('Service runbook');
+          await search.getByRole('combobox', { name: 'Search accessible documents', exact: true }).fill('runbook');
+          await expect(search.getByRole('listbox', { name: 'Search results', exact: true }).getByRole('option').first()).toContainText('Service runbook');
+          const scoped = page.waitForResponse(response => new URL(response.url()).pathname === '/api/v1/search'
+            && new URL(response.url()).searchParams.get('spaceId') === manifest.spaceId);
+          await search.getByRole('combobox', { name: 'Search in', exact: true }).selectOption(manifest.spaceId);
+          assert.equal((await scoped).status(), 200);
+          await expect(search.getByRole('listbox', { name: 'Search results', exact: true }).getByRole('option').first()).toContainText('Scrawl field guide');
           if (role === 'administrator') await page.screenshot({ path: `${evidenceDirectory}/search.png`, mask: [page.locator('.account')], maskColor: '#1b1e20' });
           await page.keyboard.press('Escape');
           stage = `${role} immutable history`;

@@ -74,7 +74,7 @@ The snapshot is selected by an authorized current-head read or an explicit docum
 
 ## Search contract
 
-`GET /api/v1/search` requires an authenticated session and accepts `q` (1-200 characters, containing a non-whitespace character), optional UUID `spaceId`, and `limit` (1-50, default 20). Unknown query fields are rejected. The response is `{items: [{id, spaceId, title, excerpt}]}`, without counts, cursors, versions, or historical snapshots. Excerpts are plain text bounded to 320 characters, not HTML highlighting.
+`GET /api/v1/search` requires an authenticated session and accepts `q` (1-200 characters, containing a non-whitespace character), optional UUID `spaceId`, and `limit` (1-50, default 20). Unknown query fields are rejected. The response is `{items: [{id, spaceId, spaceName, title, excerpt}]}`, without counts, cursors, versions, or historical snapshots. The canonical space name comes from the same authorized SQL read as the result. Excerpts are plain text bounded to 320 characters, not HTML highlighting.
 
 The query applies current session, role, and membership inside SQL and searches only current nonarchived heads. Results sort by weighted title/body rank, then document ID. Plain words use PostgreSQL's language-neutral `simple` configuration and AND semantics, without stemming, prefix matching, or a custom Boolean query language. An inaccessible or nonexistent space filter returns the same empty list. `search:rebuild` rebuilds the derived GIN index without rewriting content or revision metadata.
 

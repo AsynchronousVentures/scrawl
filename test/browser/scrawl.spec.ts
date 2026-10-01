@@ -396,8 +396,9 @@ test('keyboard login/logout uses real sessions and protected same-origin respons
 });
 
 test('real search finds authorized saved text across spaces and keeps dirty edits until deliberate navigation', async ({ page, context }) => {
-  await login(page);
   const other = await demo.seed();
+  await demo.database.prisma.space.update({ where: { id: other.spaceId }, data: { name: 'Synthetic engineering' } });
+  await login(page);
   const token = `search${randomUUID().replaceAll('-', '')}`;
   const targetTitle = `Synthetic search target ${token}`;
   const created = await apiRequest(context, `/api/v1/spaces/${other.spaceId}/documents`, {
@@ -406,6 +407,12 @@ test('real search finds authorized saved text across spaces and keeps dirty edit
     },
   });
   expect(created.status()).toBe(201);
+  const local = await apiRequest(context, `/api/v1/spaces/${seeded.spaceId}/documents`, {
+    method: 'POST', headers: { Origin: demo.origin }, data: {
+      title: targetTitle, content: nativeContent([paragraph('local-search-target', `Local saved body ${token}.`)]),
+    },
+  });
+  expect(local.status()).toBe(201);
   const target: unknown = await created.json();
   if (!target || typeof target !== 'object' || !('id' in target) || typeof target.id !== 'string') throw new Error('Search fixture was not created');
   const baseline = await readDocument(context);
@@ -417,7 +424,42 @@ test('real search finds authorized saved text across spaces and keeps dirty edit
   const query = search.getByRole('combobox', { name: 'Search accessible documents', exact: true });
   await expect(query).toBeFocused();
   await query.fill(token);
-  const option = search.getByRole('option').filter({ hasText: targetTitle });
+  const results = search.getByRole('listbox', { name: 'Search results', exact: true });
+  await expect(results.getByRole('option')).toHaveCount(2);
+  const scope = search.getByRole('combobox', { name: 'Search in', exact: true });
+  await query.press('Tab');
+  await expect(scope).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await expect(scope).not.toHaveValue('');
+  await expect(scope).toBeFocused();
+  await scope.selectOption(seeded.spaceId);
+  await expect(results.getByRole('option')).toHaveCount(1);
+  await expect(results.getByRole('option')).toContainText('Demo B handbook');
+  await expect(results.getByRole('option')).toContainText('Local saved body');
+  const option = results.getByRole('option').filter({ hasText: targetTitle }).filter({ hasText: 'Synthetic engineering' });
+  let release: () => void = () => {}, completed: () => void = () => {}, captured = false;
+  const delayed = new Promise<void>(resolve => { release = resolve; });
+  const settled = new Promise<void>(resolve => { completed = resolve; });
+  await page.route(/\/api\/v1\/search\?/, async route => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get('q') !== token || url.searchParams.has('spaceId')) return route.continue();
+    const response = await route.fetch(); captured = true;
+    await delayed;
+    try { await route.fulfill({ response }); } catch { /* The obsolete scope request can already be canceled. */ }
+    finally { completed(); }
+  });
+  try {
+    await scope.selectOption('');
+    await expect.poll(() => captured).toBe(true);
+    await expect(results.getByRole('option')).toHaveCount(0);
+    await scope.selectOption(other.spaceId);
+    await expect(option).toBeVisible();
+    release(); await settled;
+    await expect(results.getByRole('option')).toHaveCount(1);
+    await expect(scope).toHaveValue(other.spaceId);
+  } finally { release(); await page.unroute(/\/api\/v1\/search\?/); }
+  await expect(option).toContainText('Synthetic engineering');
+  await query.focus();
   await expect(option).toBeVisible();
   await expect(option).toContainText(`Saved body ${token}`);
   await evidence(page, 'search');
@@ -429,14 +471,23 @@ test('real search finds authorized saved text across spaces and keeps dirty edit
   await expect(title(page)).toHaveValue('Unsaved title retained while searching');
   await expect(body(page)).toHaveText('The full unsaved body survives search and cancel.');
   expect(await readDocument(context)).toEqual(baseline);
+  await page.setViewportSize({ width: 375, height: 812 });
   await page.getByRole('button', { name: 'Search documents', exact: true }).click();
   await query.fill('Unsaved title retained while searching');
   await expect(search.getByRole('heading', { name: 'No matching documents', exact: true })).toBeVisible();
   await query.fill(token);
   await expect(option).toBeVisible();
+  await scope.selectOption(other.spaceId);
+  await expect(results.getByRole('option')).toHaveCount(1);
+  const bounds = await search.boundingBox();
+  expect(bounds).not.toBeNull();
+  expect(bounds!.x).toBeGreaterThanOrEqual(0);
+  expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(376);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await option.click();
   await discard.getByRole('button', { name: 'Discard changes', exact: true }).click();
   await expect(title(page)).toHaveValue(targetTitle);
+  await page.setViewportSize({ width: 1440, height: 1000 });
   await expect(page.getByRole('combobox', { name: 'Space', exact: true })).toHaveValue(other.spaceId);
   const destination = await readDocument(context, target.id);
   expect(new URL(page.url()).pathname).toBe(`/spaces/${destination.data.spaceSlug}/documents/${destination.data.slug}`);
@@ -471,10 +522,10 @@ test('search shows real loading, empty and failure states and ignores an obsolet
   await query.fill(`nomatch${randomUUID().replaceAll('-', '')}`);
   await expect(search.getByRole('heading', { name: 'No matching documents', exact: true })).toBeVisible();
   release();
-  await expect(search.getByRole('option')).toHaveCount(0);
+  await expect(search.getByRole('listbox', { name: 'Search results', exact: true }).getByRole('option')).toHaveCount(0);
   await query.fill('temporary-failure');
   await expect(search.getByRole('alert')).toHaveText(/Search could not complete/);
-  await expect(search.getByRole('option')).toHaveCount(0);
+  await expect(search.getByRole('listbox', { name: 'Search results', exact: true }).getByRole('option')).toHaveCount(0);
   await page.unroute(/\/api\/v1\/search\?/);
   await search.getByRole('button', { name: 'Retry search', exact: true }).click();
   await expect(search.getByRole('heading', { name: 'No matching documents', exact: true })).toBeVisible();
@@ -493,7 +544,7 @@ test('outsider search returns no private titles or excerpts through the real int
   expect(result.status()).toBe(200);
   expect(await result.json()).toEqual({ items: [] });
   await expect(search.getByRole('heading', { name: 'No matching documents', exact: true })).toBeVisible();
-  await expect(search.getByRole('option')).toHaveCount(0);
+  await expect(search.getByRole('listbox', { name: 'Search results', exact: true }).getByRole('option')).toHaveCount(0);
   await expect(page.getByText('Release checklist', { exact: true })).toHaveCount(0);
 });
 
@@ -1115,6 +1166,15 @@ test('outsider sees an empty private interface and cannot discover document, his
     expect(response.headers().etag).toBeUndefined();
     expect(JSON.stringify(problem)).not.toContain('Release checklist');
   }
+  await page.getByRole('button', { name: 'Search documents', exact: true }).click();
+  const search = page.getByRole('dialog', { name: 'Search documents', exact: true });
+  const scope = search.getByRole('combobox', { name: 'Search in', exact: true });
+  await expect(scope.locator('option')).toHaveCount(1);
+  await expect(scope).toHaveValue('');
+  await search.getByRole('combobox', { name: 'Search accessible documents', exact: true }).fill('release');
+  await expect(search.getByRole('heading', { name: 'No matching documents', exact: true })).toBeVisible();
+  await expect(search.getByRole('listbox', { name: 'Search results', exact: true }).getByRole('option')).toHaveCount(0);
+  await page.keyboard.press('Escape');
   await assertNoBrowserPersistence(page);
 });
 

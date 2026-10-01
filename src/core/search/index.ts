@@ -6,7 +6,7 @@ import type { Identity } from '../identity/index.js';
 import { HttpProblem } from '../../http/problems.js';
 
 export type SearchInput = { query: string; spaceId?: string; limit?: number };
-export type SearchResult = { id: string; spaceId: string; title: string; excerpt: string };
+export type SearchResult = { id: string; spaceId: string; spaceName: string; title: string; excerpt: string };
 export const SEARCH_LIMITS = { maxQueryLength: 200, maxResults: 50, defaultResults: 20, maxExcerptLength: 320 } as const;
 
 export function parseSearchInput(input: unknown) {
@@ -37,7 +37,7 @@ export function parseSearchInput(input: unknown) {
 
 type SearchRow = {
   authenticated: boolean; id: string | null; spaceId: string | null;
-  title: string | null; excerpt: string | null;
+  spaceName: string | null; title: string | null; excerpt: string | null;
 };
 
 export function createSearch(prisma: PrismaClient, identity: Identity) {
@@ -61,14 +61,15 @@ export function createSearch(prisma: PrismaClient, identity: Identity) {
           SELECT plainto_tsquery('simple'::regconfig, ${query.query}) AS value
         )
         SELECT EXISTS(SELECT 1 FROM actor) AS authenticated,
-          result."id", result."spaceId", result."title", result."excerpt"
+          result."id", result."spaceId", result."spaceName", result."title", result."excerpt"
         FROM (SELECT 1) anchor
         LEFT JOIN LATERAL (
-          SELECT d."id", d."spaceId", r."title",
+          SELECT d."id", d."spaceId", space."name" AS "spaceName", r."title",
             left(ts_headline('simple'::regconfig, r."plainText", query.value,
               'StartSel="", StopSel="", MaxFragments=1, MaxWords=40, MinWords=10'), ${SEARCH_LIMITS.maxExcerptLength}) AS excerpt,
             ts_rank_cd(r."searchVector", query.value) AS rank
           FROM actor CROSS JOIN query CROSS JOIN "Document" d
+          JOIN "Space" space ON space."id" = d."spaceId"
           JOIN "DocumentRevision" r ON r."documentId" = d."id"
             AND r."revisionNumber" = d."currentRevisionNumber"
           WHERE d."archivedAt" IS NULL
@@ -88,10 +89,10 @@ export function createSearch(prisma: PrismaClient, identity: Identity) {
       const items: SearchResult[] = [];
       for (const row of rows) {
         if (row.id === null) continue;
-        if (row.spaceId === null || row.title === null || row.excerpt === null) throw new Error('Invalid search read model');
+        if (row.spaceId === null || row.spaceName === null || row.title === null || row.excerpt === null) throw new Error('Invalid search read model');
         // Excerpts are bounded text, never generated HTML. Clients must render
         // them as text even when a document literally contains HTML/code.
-        items.push({ id: row.id, spaceId: row.spaceId, title: row.title, excerpt: row.excerpt.trim() });
+        items.push({ id: row.id, spaceId: row.spaceId, spaceName: row.spaceName, title: row.title, excerpt: row.excerpt.trim() });
       }
       return { items };
     },

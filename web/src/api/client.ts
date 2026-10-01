@@ -114,8 +114,10 @@ export const api = {
       : client.PUT('/api/v1/spaces/{id}/members/{userId}', { params, body: { role } }));
     return { space: data, etag: spaceEtag(response) };
   },
-  async search(q: string, signal: AbortSignal) {
-    return (await checked(client.GET('/api/v1/search', { params: { query: { q, limit: 20 } }, signal }))).data;
+  async search(q: string, signal: AbortSignal, spaceId?: string) {
+    return (await checked(client.GET('/api/v1/search', {
+      params: { query: { q, limit: 20, ...(spaceId ? { spaceId } : {}) } }, signal,
+    }))).data;
   },
   async documents(id: string, includeArchived: boolean, cursor?: string) {
     return (await checked(client.GET('/api/v1/spaces/{id}/documents', {

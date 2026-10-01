@@ -3,17 +3,19 @@
 
 import { useEffect, useId, useRef, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
-import { api, type SearchResult } from './api/client';
+import { api, type SearchResult, type Space } from './api/client';
 
 type State = { status: 'idle' | 'loading' | 'error'; items: SearchResult[] }
   | { status: 'ready'; items: SearchResult[] };
 
-export function SearchDialog({ onClose, onPick, onFailure }: {
+export function SearchDialog({ spaces, onClose, onPick, onFailure }: {
+  spaces: Space[];
   onClose: () => void;
   onPick: (result: SearchResult) => void;
   onFailure: (error: unknown) => boolean;
 }) {
   const [query, setQuery] = useState('');
+  const [spaceId, setSpaceId] = useState('');
   const [retry, setRetry] = useState(0);
   const [state, setState] = useState<State>({ status: 'idle', items: [] });
   const [selected, setSelected] = useState(0);
@@ -29,7 +31,7 @@ export function SearchDialog({ onClose, onPick, onFailure }: {
     const abort = new AbortController();
     setState({ status: 'loading', items: [] });
     const timer = setTimeout(() => {
-      void api.search(value, abort.signal).then(result => {
+      void api.search(value, abort.signal, spaceId || undefined).then(result => {
         if (abort.signal.aborted || request !== ticket.current) return;
         setSelected(0); setState({ status: 'ready', items: result.items });
       }).catch(error => {
@@ -38,7 +40,7 @@ export function SearchDialog({ onClose, onPick, onFailure }: {
       });
     }, 300);
     return () => { clearTimeout(timer); abort.abort(); };
-  }, [query, retry]);
+  }, [query, spaceId, retry]);
   useEffect(() => {
     document.getElementById(`${identifier}-result-${selected}`)?.scrollIntoView({ block: 'nearest' });
   }, [identifier, selected, state.items]);
@@ -54,12 +56,13 @@ export function SearchDialog({ onClose, onPick, onFailure }: {
         onOpenAutoFocus={event => { event.preventDefault(); input.current?.focus(); }}
         onCloseAutoFocus={event => { if (navigating.current) event.preventDefault(); }}
         onKeyDown={event => {
-          if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && state.items.length) {
+          const selectingResult = event.target === input.current
+            || (event.target instanceof HTMLElement && event.target.getAttribute('role') === 'option');
+          if (selectingResult && (event.key === 'ArrowDown' || event.key === 'ArrowUp') && state.items.length) {
             event.preventDefault();
             setSelected(previous => (previous + (event.key === 'ArrowDown' ? 1 : -1) + state.items.length) % state.items.length);
             input.current?.focus();
-          } else if (event.key === 'Enter' && state.status === 'ready' && state.items[selected]
-            && (event.target === input.current || (event.target instanceof HTMLElement && event.target.getAttribute('role') === 'option'))) {
+          } else if (selectingResult && event.key === 'Enter' && state.status === 'ready' && state.items[selected]) {
             event.preventDefault(); pick(state.items[selected]);
           }
         }}>
@@ -72,6 +75,16 @@ export function SearchDialog({ onClose, onPick, onFailure }: {
             aria-activedescendant={state.items[selected] ? `${identifier}-result-${selected}` : undefined}
             placeholder="Search accessible documents" autoComplete="off" maxLength={200} value={query}
             onChange={event => { ticket.current++; setSelected(0); setState({ status: event.target.value.trim() ? 'loading' : 'idle', items: [] }); setQuery(event.target.value); }} />
+          <div className="search-space-filter">
+            <label htmlFor={`${identifier}-space`}>Search in</label>
+            <select id={`${identifier}-space`} value={spaceId} onChange={event => {
+              if (event.target.value === spaceId) return;
+              ticket.current++; setSelected(0); setState({ status: query.trim() ? 'loading' : 'idle', items: [] }); setSpaceId(event.target.value);
+            }}>
+              <option value="">All accessible spaces</option>
+              {spaces.map(space => <option key={space.id} value={space.id}>{space.name}</option>)}
+            </select>
+          </div>
         </form>
         <p className="search-status" role="status" aria-live="polite">
           {state.status === 'idle' ? 'Search titles and saved document text.'
@@ -82,7 +95,7 @@ export function SearchDialog({ onClose, onPick, onFailure }: {
           {state.items.map((result, index) => <li key={result.id} role="presentation"><button type="button" role="option"
             id={`${identifier}-result-${index}`} aria-selected={selected === index} tabIndex={-1}
             onFocus={() => setSelected(index)} onPointerMove={() => setSelected(index)} onClick={() => pick(result)}>
-            <span>{result.title}</span><small>{result.excerpt}</small>
+            <span>{result.title}</span><small>{result.spaceName}</small><small>{result.excerpt}</small>
           </button></li>)}
         </ul>
         {state.status === 'ready' && !state.items.length && <div className="search-empty"><h3>No matching documents</h3><p>Try another word or title.</p></div>}

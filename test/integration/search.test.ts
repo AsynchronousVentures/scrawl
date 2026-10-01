@@ -117,9 +117,9 @@ test('real authenticated PostgreSQL search filters current content before rank, 
     assert.equal(response.status, 200);
     const data = object(response.data); assert.deepEqual(Object.keys(data), ['items']); assert(Array.isArray(data.items));
     return { response, items: data.items.map(item => {
-      const result = object(item); assert.deepEqual(Object.keys(result).sort(), ['id', 'spaceId', 'title', 'excerpt'].sort());
+      const result = object(item); assert.deepEqual(Object.keys(result).sort(), ['id', 'spaceId', 'spaceName', 'title', 'excerpt'].sort());
       assert(string(result.excerpt).length <= 320);
-      return { id: string(result.id), spaceId: string(result.spaceId), title: string(result.title), excerpt: string(result.excerpt) };
+      return { id: string(result.id), spaceId: string(result.spaceId), spaceName: string(result.spaceName), title: string(result.title), excerpt: string(result.excerpt) };
     }) };
   }
 
@@ -127,6 +127,8 @@ test('real authenticated PostgreSQL search filters current content before rank, 
     const first = await search(reader, 'NEBULA');
     assert.deepEqual(first.items.map(item => item.id), [titleHit.id, bodyHit.id]);
     assert(first.items[1]?.excerpt.includes('nebula'));
+    assert(first.items.every(item => item.spaceName === 'Synthetic permitted space'));
+    assert.equal((await search(editor, 'nebula', secondary.id)).items[0]?.spaceName, 'Synthetic secondary space');
     assert.deepEqual((await search(reader, 'nebula', main.id, 1)).items.map(item => item.id), [titleHit.id]);
     assert.deepEqual((await search(editor, 'nebula', secondary.id)).items.map(item => item.id), [elsewhere.id]);
     assert.equal((await search(reader, 'nebula', secondary.id)).items.length, 0);
