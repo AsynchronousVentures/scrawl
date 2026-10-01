@@ -1,5 +1,21 @@
 # Validation
 
+## Native undo and comment draft checkpoint
+
+The native client now preserves normal typing capture in its shared UndoManager and guards unsent comment text independently of document edits. Comment submissions freeze their supplied composer and block leaving until the response; failed submissions retain text. Cancelling navigation returns focus to the composer. Restore refuses pending comment drafts, and Archive waits for native updates to be acknowledged. A late initial metadata read cannot replace an explicitly joined session or its checkpoint baseline.
+
+Observed results without retries or skips:
+
+- `npm run check` passed 91 cases, strict types, boundaries, both builds and generated OpenAPI drift. Log: `artifacts/live-comment-drafts-final-check.log`.
+- `npm run test:browser` passed all 58 real API/PostgreSQL browser workflows. Log: `artifacts/live-comment-drafts-full-browser.log`. The two added cases exercise separate authenticated accounts merging concurrent UTF-16 title/body edits with peer-safe undo/redo, and complete unsent comment retention through Back, cancelled reload and a deliberately held real submission.
+- The backend/persistence code is unchanged from the preceding complete 136/136 PostgreSQL 17 and 18 regressions recorded below. No migration, dependency, reset, retained enrollment or public-access change occurred.
+
+Failed intermediate checks are not counted as passing. The native binding stopped capture on every metadata refresh carrying `addToHistory: false`; removing that inappropriate flag restores grouped typing without creating body updates. The route guard previously reset using only document-body dirtiness; it now checks comment drafts and retained reconnect work too. The cancelled reload step needs a bounded navigation timeout, as in the existing solo-draft test; its real beforeunload warning and complete text retention are asserted.
+
+Hosted checkpoint `c97b9c7` [passed its full push matrix](https://github.com/AsynchronousVentures/scrawl/actions/runs/36854987457) on both PostgreSQL versions. Its [PR matrix failed](https://github.com/AsynchronousVentures/scrawl/actions/runs/36854994281): 17 did not show the native external-link toolbar, and 18 did not reach Archived after shared restore. Both interactions pass in the new complete local run. The archive synchronization/metadata ownership fixes are now covered locally; hosted resolution and the intermittent external-link cause remain unverified. No assertions were weakened.
+
+The retained demo remains collaboration-disabled. Normal separate-account merge/undo and pending-comment navigation now have browser evidence. Remaining gates include authenticated presence, nested-block peer undo, reply/reaction/resolve failures, browser downgrade/expiry/recovery/restart, default-off handling of enrolled documents, rendered live-only export/publication isolation and two-operation create/anchor failure usability.
+
 ## Opt-in native collaboration client checkpoint
 
 Application runtime `3c8b923` and supplied-client integration `9668e01` connect native BlockNote/Yjs editing and the official shadcn comment UI. `COLLABORATION_ENABLED` defaults to `false`; the retained preview is still a solo saved-document workspace. Enabling the experimental capability requires one database/schema owner and `DB_POOL_MAX >= 2`. Enrollment is an explicit action on a clean saved document, never a startup conversion.

@@ -9,6 +9,7 @@ import { extractPlainText, validateContent } from '@scrawl/content';
 import { Editor } from './Editor';
 import { SearchDialog } from './SearchDialog';
 import { LiveSession, type LiveState } from './live';
+import type { CommentState } from './PrivateComments';
 import { api, ApiError } from './api/client';
 import type { DocumentSummary, Draft, ExportFormat, LoadedDocument, LiveMetadata, PublicationStatus, PublishingAvailability, Revision, RevisionSummary, SearchResult, Space, User } from './api/client';
 
@@ -100,6 +101,7 @@ export function App() {
   const [live, setLive] = useState<LiveSession | null>(null);
   const [liveState, setLiveState] = useState<LiveState | null>(null);
   const [retainedLiveDraft, setRetainedLiveDraft] = useState<Draft | null>(null);
+  const [commentState, setCommentState] = useState<CommentState>({ dirty: false, pending: false });
   const liveRef = useRef<LiveSession | null>(null);
   const draftRef = useRef(draft); draftRef.current = draft;
   const generation = useRef(0);
@@ -115,10 +117,12 @@ export function App() {
   const discardBaseline = base ? draftFrom(base) : newDraftBaseline.current;
   const hasDraftChanges = Boolean(draft && discardBaseline && (draft.title !== discardBaseline.title
     || JSON.stringify(draft.content) !== JSON.stringify(discardBaseline.content)));
-  const dirtyRef = useRef(dirty); dirtyRef.current = Boolean(retainedLiveDraft) || (liveState ? liveState.pending > 0 || liveState.localChanges && dirty : dirty);
+  const hasUnsavedWork = commentState.dirty || Boolean(retainedLiveDraft) || (liveState ? liveState.pending > 0 || liveState.localChanges && dirty : dirty);
+  const dirtyRef = useRef(hasUnsavedWork); dirtyRef.current = hasUnsavedWork;
   const mayEdit = Boolean(user && !accessIssue && collaborationKnown && !liveChecking && !liveCheckError && space?.access === 'editor' && !base?.document.archivedAt
     && (!live || liveState?.phase === 'connected' && liveState.metadata.canWrite));
-  const blocked = busy || uploading > 0;
+  const blocked = busy || uploading > 0 || commentState.pending;
+  const blockedRef = useRef(blocked); blockedRef.current = blocked;
   const mayPublish = Boolean(publishing?.mayPublish && user && !accessIssue && base && !base.document.archivedAt && !conflict);
   const uploadContext = useRef({ id: base?.document.id ?? null, editable: mayEdit });
   uploadContext.current = { id: base?.document.id ?? null, editable: mayEdit };
@@ -195,10 +199,11 @@ export function App() {
     }
     let current = true; setLiveChecking(true); setLiveCheckError(false);
     void api.liveDocument(base.document.id).then(async metadata => {
+      if (!current || liveRef.current?.id === base.document.id) return;
       const saved = await api.document(base.document.id);
-      if (current) { setBase(saved); joinLive(metadata, user); }
+      if (current && liveRef.current?.id !== base.document.id) { setBase(saved); joinLive(metadata, user); }
     }).catch(error => {
-      if (current && !(error instanceof ApiError && error.status === 409) && !unavailable(error)) {
+      if (current && liveRef.current?.id !== base.document.id && !(error instanceof ApiError && error.status === 409) && !unavailable(error)) {
         setLiveCheckError(true); setSaveError('Shared document state could not be checked. Your local work is retained. Retry before editing.');
       }
     }).finally(() => { if (current) setLiveChecking(false); });
@@ -364,8 +369,8 @@ export function App() {
   }
   useEffect(() => { void start(); }, []);
   useEffect(() => {
-    if (navigationBlocker.state === 'blocked' && !dirty && !blocked && !pending) navigationBlocker.reset();
-  }, [navigationBlocker, dirty, blocked, pending]);
+    if (navigationBlocker.state === 'blocked' && !hasUnsavedWork && !blocked && !pending) navigationBlocker.reset();
+  }, [navigationBlocker, hasUnsavedWork, blocked, pending]);
   useEffect(() => {
     const href = routeLocation.pathname + routeLocation.search;
     if (!user || href === handledHref.current) return;
@@ -379,7 +384,7 @@ export function App() {
     media.addEventListener('change', change); return () => media.removeEventListener('change', change);
   }, []);
   useEffect(() => {
-    const unload = (event: BeforeUnloadEvent) => { if (dirtyRef.current) { event.preventDefault(); event.returnValue = ''; } };
+    const unload = (event: BeforeUnloadEvent) => { if (dirtyRef.current || blockedRef.current) { event.preventDefault(); event.returnValue = ''; } };
     addEventListener('beforeunload', unload); return () => removeEventListener('beforeunload', unload);
   }, []);
   useEffect(() => {
@@ -470,7 +475,7 @@ export function App() {
       guarded(() => { void mutate(() => api.restore(base.document.id, base.etag, revisionId), 'Restoring…'); });
       return;
     }
-    if (dirty || liveState.pending || retainedLiveDraft || liveState.phase !== 'connected') return;
+    if (dirty || commentState.dirty || liveState.pending || retainedLiveDraft || liveState.phase !== 'connected') return;
     setBusy(true); setBusyLabel('Restoring…'); setSaveError('');
     try {
       const restored = await api.restoreLive(base.document.id, base.etag, liveState.metadata, revisionId);
@@ -643,7 +648,7 @@ export function App() {
                   {(['pdf', 'docx'] as const).map(format => <button key={format} disabled={blocked} onClick={event => { event.currentTarget.closest('details')?.removeAttribute('open'); void exportDocument(format); }}>Export {format.toUpperCase()}</button>)}
                   {mayPublish && <button disabled={blocked || !publication} onClick={event => { event.currentTarget.closest('details')?.removeAttribute('open'); setPublicationPrompt({ action: 'publish', revision: base.document.revision }); }}>Publish saved revision</button>}
                   {mayPublish && publication?.publication?.active && <button disabled={blocked} onClick={event => { event.currentTarget.closest('details')?.removeAttribute('open'); setPublicationPrompt({ action: 'withdraw' }); }}>Withdraw publication</button>}
-                  {space?.access === 'editor' && !conflict && <button disabled={blocked} onClick={event => { event.currentTarget.closest('details')?.removeAttribute('open'); guarded(() => { void mutate(() => api.archive(base.document.id,base.etag,Boolean(base.document.archivedAt)),base.document.archivedAt ? 'Unarchiving…' : 'Archiving…'); }); }}>{base.document.archivedAt ? 'Unarchive' : 'Archive'}</button>}
+                  {space?.access === 'editor' && !conflict && <button disabled={blocked || Boolean(liveState?.pending)} onClick={event => { event.currentTarget.closest('details')?.removeAttribute('open'); guarded(() => { void mutate(() => api.archive(base.document.id,base.etag,Boolean(base.document.archivedAt)),base.document.archivedAt ? 'Unarchiving…' : 'Archiving…'); }); }}>{base.document.archivedAt ? 'Unarchive' : 'Archive'}</button>}
                 </div></details></>}
               {mayEdit && <div className="save-actions">{live ? <><button disabled={blocked || !liveState?.canUndo} aria-label="Undo my changes" onClick={() => live.undo()}>Undo</button><button disabled={blocked || !liveState?.canRedo} aria-label="Redo my changes" onClick={() => live.redo()}>Redo</button></> : <button disabled={blocked || (!hasDraftChanges && !contentError)} onClick={discardChanges}>Discard changes</button>}<button className="primary" disabled={blocked || !dirty || Boolean(conflict) || Boolean(contentError) || Boolean(liveState?.pending)} onClick={save}>Save</button></div>}
             </div>}
@@ -660,14 +665,14 @@ export function App() {
               ? <>Published revision {publication.publication.revisionNumber} · <a href={`/publications/${publication.publication.publicId}`} target="_blank" rel="noopener noreferrer">View public document</a></>
               : 'Publication inactive. Publishing again requires explicit approval.'}</p>}
             {loadingDocument ? <p role="status">Loading document…</p> : draft ? <div className={`document-grid${historyOpen || conflict ? ' with-panel' : ''}`}>
-              {liveState && !liveState.initialized && liveState.phase === 'connecting' ? <p role="status">Connecting shared document…</p> : <Editor key={editorKey} initialContent={draft.content} editable={mayEdit && !busy} {...(liveState?.initialized && live ? { live } : {})}
+              {liveState && !liveState.initialized && liveState.phase === 'connecting' ? <p role="status">Connecting shared document…</p> : <Editor key={editorKey} initialContent={draft.content} editable={mayEdit && !busy} {...(liveState?.initialized && live ? { live, onCommentStateChange: setCommentState } : {})}
                 {...(mayEdit ? { uploadFile: uploadAttachment } : {})} uploadAvailable={Boolean(base && mayEdit && !busy && !conflict)}
                 resolveFileUrl={api.resolveFileUrl} onValidationChange={setContentError} onChange={content => { setDraft(previous => previous ? { ...previous, content } : previous); if (!live) { setSaveError(''); setNotice(''); } }} header={<>
                 <p className="meta">{accessIssue ? 'Retained local draft · not a saved server document' : `${space?.name ?? ''} · ${base?.document.archivedAt ? 'archived' : space?.access === 'reader' ? 'reader access' : 'editor access'}`}</p>
                 <label className="sr" htmlFor="title">Document title</label><input ref={titleInput} id="title" className="title" aria-label="Document title" value={draft.title} readOnly={!mayEdit} disabled={blocked} onKeyDown={event => { if (live && (event.ctrlKey || event.metaKey) && !event.altKey && ['z', 'y'].includes(event.key.toLowerCase())) { event.preventDefault(); if (event.shiftKey || event.key.toLowerCase() === 'y') live.redo(); else live.undo(); } }} onChange={event => { if (live) live.writeTitle(event.target.value); else setDraft(previous => previous ? { ...previous,title:event.target.value } : previous); setSaveError(''); setNotice(''); }} />
                 {mayEdit && !base && <p className="attachment-help">Save this document before uploading attachments.</p>}
               </>} />}
-              {liveState?.phase === 'closed' && !accessIssue && <aside className="notice" role="alert"><strong>The shared connection closed.</strong><p>Your complete local title and body remain in this tab. No rejected work will be retried. Reconnecting keeps a separate copy for deliberate comparison.</p>{retainedLiveDraft && <p>Download or discard the earlier retained draft before reconnecting again.</p>}<button disabled={blocked || Boolean(retainedLiveDraft)} onClick={() => { void reconnectLive(); }}>Reconnect and compare</button></aside>}
+              {liveState?.phase === 'closed' && !accessIssue && <aside className="notice" role="alert"><strong>The shared connection closed.</strong><p>Your complete local title and body remain in this tab. No rejected work will be retried. Reconnecting keeps a separate copy for deliberate comparison.</p>{retainedLiveDraft && <p>Download or discard the earlier retained draft before reconnecting again.</p>}<button disabled={blocked || Boolean(retainedLiveDraft)} onClick={() => { if (commentState.dirty) guarded(() => { void reconnectLive(); }); else void reconnectLive(); }}>Reconnect and compare</button></aside>}
               {retainedLiveDraft && <aside className="notice" aria-label="Retained local draft"><h2>Retained local draft</h2><p>{retainedLiveDraft.title}</p><p>Your previous title and body are kept separately. Review the shared document before reapplying any unsent edits.</p><pre className="retained-draft-text">{extractPlainText(retainedLiveDraft.content.document)}</pre><button onClick={() => downloadFile(new Blob([JSON.stringify(retainedLiveDraft, null, 2)], { type: 'application/json' }), 'scrawl-local-draft.json')}>Download retained local draft</button><button onClick={() => guarded(() => setRetainedLiveDraft(null))}>Discard retained draft</button></aside>}
               {conflict && <aside className="side-panel conflict" aria-label="Save conflict"><h2>Save conflict</h2><p>Compare your local title and body with the latest server version, then choose how to reconcile. No write will be retried automatically.</p>
                 {conflict.loading && <p role="status">Loading latest server version…</p>}
@@ -681,7 +686,7 @@ export function App() {
                 {historyError && <div role="alert"><p>{historyError}</p><button onClick={() => { void openHistory(); }}>Retry</button></div>}
                 <ol className="revisions">{revisions.map(item => <li key={item.id}><button aria-label={`Revision ${item.revisionNumber}`} aria-pressed={revision?.id===item.id} disabled={blocked} onClick={() => { void selectRevision(item); }}><span>Revision {item.revisionNumber}</span><small>{new Date(item.createdAt).toLocaleString()}</small></button></li>)}</ol>
                 {revisionsCursor && <button disabled={historyLoading} onClick={() => { void openHistory(revisionsCursor); }}>More revisions</button>}
-                {revision && !historyLoading && <Editor key={revision.id} initialContent={revision.content} label="Revision content" editable={false} resolveFileUrl={api.resolveFileUrl} onChange={() => {}} header={<><h3>{revision.title}</h3>{mayEdit && !conflict && <button className="restore" disabled={blocked || revision.id===base?.document.revision.id || Boolean(live && (dirty || liveState?.pending || retainedLiveDraft))} onClick={() => { void restoreRevision(revision.id); }}>Restore revision {revision.revisionNumber}</button>}{mayPublish && <button disabled={blocked || !publication} onClick={() => setPublicationPrompt({ action: 'publish', revision })}>Publish revision {revision.revisionNumber}</button>}<div className="revision-exports"><button disabled={blocked} onClick={() => { void exportDocument('pdf', revision.id); }}>Export PDF</button><button disabled={blocked} onClick={() => { void exportDocument('docx', revision.id); }}>Export DOCX</button></div></>} />}
+                {revision && !historyLoading && <Editor key={revision.id} initialContent={revision.content} label="Revision content" editable={false} resolveFileUrl={api.resolveFileUrl} onChange={() => {}} header={<><h3>{revision.title}</h3>{mayEdit && !conflict && <button className="restore" disabled={blocked || revision.id===base?.document.revision.id || Boolean(live && (dirty || commentState.dirty || liveState?.pending || retainedLiveDraft))} onClick={() => { void restoreRevision(revision.id); }}>Restore revision {revision.revisionNumber}</button>}{mayPublish && <button disabled={blocked || !publication} onClick={() => setPublicationPrompt({ action: 'publish', revision })}>Publish revision {revision.revisionNumber}</button>}<div className="revision-exports"><button disabled={blocked} onClick={() => { void exportDocument('pdf', revision.id); }}>Export PDF</button><button disabled={blocked} onClick={() => { void exportDocument('docx', revision.id); }}>Export DOCX</button></div></>} />}
               </aside>}
             </div> : !loadingDocument && !saveError && !accessIssue && !listLoading && <section className="state"><h1>{space ? 'No documents yet' : 'No accessible spaces'}</h1><p>{space ? 'Create a document when you are ready.' : 'Ask an administrator for space access.'}</p></section>}
           </main>
@@ -689,7 +694,11 @@ export function App() {
       </>}
     <Dialog.Root open={Boolean(pending) || navigationBlocker.state === 'blocked'} onOpenChange={open => {
       if (!open) { setPending(null); if (navigationBlocker.state === 'blocked') navigationBlocker.reset(); }
-    }}><Dialog.Portal><Dialog.Overlay className="dialog-overlay" /><Dialog.Content className="dialog" onCloseAutoFocus={event => { event.preventDefault();titleInput.current?.focus(); }}><Dialog.Title>{blocked ? 'Please wait' : 'Unsaved changes'}</Dialog.Title><Dialog.Description>{blocked ? 'The current request must finish before leaving this document.' : live ? 'Your shared edits have not been saved as a revision. Accepted changes remain shared; leaving discards only unsent work in this tab.' : 'Your title and body have not been saved. Continuing will discard your local changes.'}</Dialog.Description><div className="actions"><Dialog.Close className="primary">Keep editing</Dialog.Close><button disabled={blocked} onClick={() => {
+    }}><Dialog.Portal><Dialog.Overlay className="dialog-overlay" /><Dialog.Content className="dialog" onCloseAutoFocus={event => {
+      event.preventDefault();
+      const composer = commentState.dirty && document.querySelector<HTMLElement>('.bn-comment-editor .bn-editor[contenteditable="true"]');
+      if (composer) composer.focus(); else titleInput.current?.focus();
+    }}><Dialog.Title>{blocked ? 'Please wait' : 'Unsaved changes'}</Dialog.Title><Dialog.Description>{blocked ? 'The current request must finish before leaving this document.' : commentState.dirty ? 'Continuing discards your unsent comment text and any other local draft. Accepted document changes remain shared.' : live ? 'Your shared edits have not been saved as a revision. Accepted changes remain shared; leaving discards only unsent work in this tab.' : 'Your title and body have not been saved. Continuing will discard your local changes.'}</Dialog.Description><div className="actions"><Dialog.Close className="primary">Keep editing</Dialog.Close><button disabled={blocked} onClick={() => {
       const action = pending?.action; setPending(null); resetDraftToBaseline();
       if (navigationBlocker.state === 'blocked') navigationBlocker.proceed(); else action?.();
     }}>Discard changes</button></div></Dialog.Content></Dialog.Portal></Dialog.Root>

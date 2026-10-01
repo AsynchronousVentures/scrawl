@@ -288,3 +288,105 @@ test('a successful enrollment followed by a failed head read cannot fall back to
   await title(page).fill('Checkpoint after deliberate enrollment recovery'); await expect(save(page)).toBeEnabled(); await save(page).click();
   await expect(page.getByText('Saved revision 2.', { exact: true })).toBeVisible(); expect((await latest(context)).currentRevisionNumber).toBe(2);
 });
+
+test('unsent native comment text blocks navigation and reload; in-flight submission freezes the composer and cannot be abandoned', async ({ page, context }) => {
+  await login(page); await expect(title(page)).toBeVisible();
+  const originalResponse = await context.request.get(`${demo.origin}/api/v1/documents/${seeded.documentId}`);
+  expect(originalResponse.status()).toBe(200);
+  const original = await originalResponse.json() as { revision: { title: string; content: unknown } };
+  const other = await context.request.post(`${demo.origin}/api/v1/spaces/${seeded.spaceId}/documents`, {
+    headers: { Origin: demo.origin }, data: { title: 'Comment navigation target', content: original.revision.content },
+  }); expect(other.status()).toBe(201);
+  await page.reload(); await page.getByRole('link', { name: 'Comment navigation target', exact: true }).click();
+  await expect(title(page)).toHaveValue('Comment navigation target');
+  await page.getByRole('link', { name: original.revision.title, exact: true }).click();
+  await expect(title(page)).toHaveValue(original.revision.title); await enroll(page);
+  await body(page).focus(); await page.keyboard.press('ControlOrMeta+Home'); await page.keyboard.press('Shift+End');
+  await page.getByRole('button', { name: 'Add comment', exact: true }).click();
+  const composer = page.locator('.bn-comment-editor .bn-editor');
+  await composer.fill('Complete unsent native comment draft.');
+  await expect(page.getByRole('status').filter({ hasText: 'Unsaved comment text.' })).toBeVisible();
+  expect((await latest(context)).currentRevisionNumber).toBe(1);
+  // Keep the supplied controller's own outside-click confirmation, too.
+  page.on('dialog', dialog => dialog.dismiss());
+  await page.evaluate(() => history.back());
+  const guard = page.getByRole('dialog', { name: 'Unsaved changes', exact: true });
+  await expect(guard).toBeVisible(); await expect(guard).toContainText('unsent comment text');
+  await guard.getByRole('button', { name: 'Keep editing', exact: true }).click();
+  await expect(composer).toHaveText('Complete unsent native comment draft.');
+  const unload = page.waitForEvent('dialog'); await page.reload({ timeout: 5_000 }).catch(() => {});
+  expect((await unload).type()).toBe('beforeunload');
+  await expect(composer).toHaveText('Complete unsent native comment draft.');
+  const endpoint = `**/api/v1/documents/${seeded.documentId}/live/*/threads`;
+  let release: (() => void) | undefined;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  await page.route(endpoint, async route => { await gate; await route.continue(); });
+  try {
+    await page.locator('.bn-thread').getByRole('button', { name: 'Save', exact: true }).click();
+    await expect(page.getByRole('status').filter({ hasText: 'Submitting comment…' })).toBeVisible();
+    await expect(page.locator('.bn-comment-editor [contenteditable="true"]')).toHaveCount(0);
+    await composer.press('x'); await expect(composer).toHaveText('Complete unsent native comment draft.');
+    await expect(page.locator('.listhead button')).toBeDisabled();
+    await page.evaluate(() => history.back());
+    const waiting = page.getByRole('dialog', { name: 'Please wait', exact: true });
+    await expect(waiting).toBeVisible(); await expect(waiting.getByRole('button', { name: 'Discard changes', exact: true })).toBeDisabled();
+    await waiting.getByRole('button', { name: 'Keep editing', exact: true }).click();
+    expect((await latest(context)).currentRevisionNumber).toBe(1);
+  } finally { release?.(); }
+  await page.locator('.document-comments > summary').click();
+  await expect(page.locator('.document-comments')).toContainText('Complete unsent native comment draft.');
+  await expect(page.getByRole('status').filter({ hasText: /Unsaved comment text\.|Submitting comment/ })).toHaveCount(0);
+  expect((await latest(context)).currentRevisionNumber).toBe(1);
+  expect(await page.evaluate(() => localStorage.length + sessionStorage.length)).toBe(0);
+  await page.getByRole('button', { name: 'New document', exact: true }).click();
+  await expect(title(page)).toHaveValue('Untitled document'); await expect(guard).toHaveCount(0);
+});
+
+test('separate authenticated users merge concurrent native title/body edits and undo only their own contribution', async ({ page, context, browser }) => {
+  const administrator = await browser.newContext();
+  let hold = false;
+  const queued: Array<() => void> = [];
+  const routeSocket = (socket: WebSocketRoute) => {
+    const server = socket.connectToServer();
+    server.onMessage(message => { if (hold) queued.push(() => socket.send(message)); else socket.send(message); });
+  };
+  await context.routeWebSocket('**/api/v1/live', routeSocket);
+  await administrator.routeWebSocket('**/api/v1/live', routeSocket);
+  try {
+    await login(page); await expect(title(page)).toBeVisible(); const original = await latest(context); await enroll(page);
+    const peer = await administrator.newPage(); await login(peer, 'administrator'); await expect(body(peer)).toBeEditable();
+    await body(page).focus(); await page.keyboard.press('ControlOrMeta+End');
+    await expect(peer.locator('.document-comments > summary')).toBeVisible();
+    hold = true;
+    await Promise.all([
+      title(page).press('End').then(() => title(page).pressSequentially(' editor 🚀')),
+      title(peer).press('End').then(() => title(peer).pressSequentially(' administrator 🌱')),
+    ]);
+    await Promise.all([
+      body(page).press('ControlOrMeta+End').then(() => body(page).pressSequentially(' editor body')),
+      body(peer).press('ControlOrMeta+End').then(() => body(peer).pressSequentially(' administrator body')),
+    ]);
+    await expect.poll(() => queued.length).toBeGreaterThan(0);
+    hold = false; for (const send of queued.splice(0)) send();
+    for (const tab of [page, peer]) {
+      await expect(title(tab)).toHaveValue(new RegExp(`${original.revision.title}.*editor.*administrator|${original.revision.title}.*administrator.*editor`));
+      await expect(body(tab)).toContainText('editor body'); await expect(body(tab)).toContainText('administrator body');
+    }
+    await expect.poll(async () => title(page).inputValue()).toBe(await title(peer).inputValue());
+    // The native manager may group title and body as separate editing steps.
+    // Each step must preserve the other account's contribution.
+    let undone = 0;
+    while ((await title(page).inputValue()).includes('editor 🚀') && undone < 3) {
+      await page.getByRole('button', { name: 'Undo my changes', exact: true }).click(); undone++;
+      for (const tab of [page, peer]) {
+        await expect(title(tab)).toHaveValue(/administrator 🌱/);
+        await expect(body(tab)).toContainText('administrator body');
+      }
+    }
+    for (const tab of [page, peer]) await expect(title(tab)).toHaveValue(`${original.revision.title} administrator 🌱`);
+    expect((await latest(context)).currentRevisionNumber).toBe(1);
+    for (let step = 0; step < undone; step++) await page.getByRole('button', { name: 'Redo my changes', exact: true }).click();
+    await expect(title(page)).toHaveValue(/editor 🚀/); await expect(title(peer)).toHaveValue(/editor 🚀/);
+    await expect(body(page)).toContainText('administrator body'); await expect(body(peer)).toContainText('administrator body');
+  } finally { hold = false; for (const send of queued.splice(0)) send(); await administrator.close(); }
+});

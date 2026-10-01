@@ -117,7 +117,9 @@ export class LiveSession {
         queueMicrotask(() => {
           refreshingUndo = false;
           const view = !session.disposed && editor.prosemirrorView;
-          if (view && !view.isDestroyed) view.dispatch(view.state.tr.setMeta(yUndoPluginKey, {}).setMeta('addToHistory', false));
+          // No document change is made. addToHistory:false would force the
+          // supplied binding to stop capturing after every typed character.
+          if (view && !view.isDestroyed) view.dispatch(view.state.tr.setMeta(yUndoPluginKey, {}));
         });
       });
       return { key: 'yUndo', dependsOn: ['yCursor', 'ySync'],

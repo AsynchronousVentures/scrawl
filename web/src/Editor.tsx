@@ -6,7 +6,7 @@ import type { BlockNoteEditorOptions, DefaultInlineContentSchema, DefaultStyleSc
 import { EmbedTab, FilePanel, FilePanelController, useCreateBlockNote, useDictionary, useEditorState, type FilePanelProps } from '@blocknote/react';
 import { BlockNoteView } from '@blocknote/shadcn';
 import { withCollaboration } from '@blocknote/core/yjs';
-import { PrivateComments } from './PrivateComments';
+import { PrivateComments, type CommentState } from './PrivateComments';
 import type { LiveSession } from './live';
 import { contentSchema, isSafeLinkUrl, validateContent, type ContentEnvelope, type NativeBlock, type NativeBlockSchema } from '@scrawl/content';
 
@@ -32,7 +32,7 @@ function documentHeadings(blocks: NativeBlock[], depth = 0): Heading[] {
   });
 }
 
-export function Editor({ initialContent, editable, onChange, onValidationChange, uploadFile, uploadAvailable = false, resolveFileUrl, header, label = 'Document body', live }: {
+export function Editor({ initialContent, editable, onChange, onValidationChange, uploadFile, uploadAvailable = false, resolveFileUrl, header, label = 'Document body', live, onCommentStateChange }: {
   initialContent: ContentEnvelope;
   editable: boolean;
   onChange: (content: ContentEnvelope) => void;
@@ -43,6 +43,7 @@ export function Editor({ initialContent, editable, onChange, onValidationChange,
   header?: ReactNode;
   label?: string;
   live?: LiveSession;
+  onCommentStateChange?: (state: CommentState) => void;
 }) {
   const identifier = `editor-${useId().replace(/[^a-zA-Z0-9_-]/g, '-')}`;
   const container = useRef<HTMLDivElement>(null);
@@ -147,7 +148,7 @@ export function Editor({ initialContent, editable, onChange, onValidationChange,
           callbacks.current.onValidationChange?.(message);
         }}>
           {editable && <FilePanelController filePanel={DocumentFilePanel} />}
-          {live && <PrivateComments writable={editable} />}
+          {live && <PrivateComments writable={editable} {...(onCommentStateChange ? { onStateChange: onCommentStateChange } : {})} />}
         </BlockNoteView>
         </UploadAvailability.Provider>
       </div>
