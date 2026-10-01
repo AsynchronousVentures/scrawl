@@ -55,6 +55,13 @@ export function registerCoreRoutes(app: FastifyInstance, core: Core) {
     operationId: 'getMe', tags: ['Identity'], response: { 200: userSchema, ...errors },
   } }, (request) => core.identity.me(fromNodeHeaders(request.headers)));
 
+  app.post<{ Body: { email: string } }>('/api/v1/users/lookup', { schema: {
+    operationId: 'lookupUser', tags: ['Identity'], description: 'Administrator-only exact lookup of an existing account. Does not provision users.',
+    body: { type: 'object', additionalProperties: false, required: ['email'], properties: {
+      email: { type: 'string', format: 'email', maxLength: 254 },
+    } }, response: { 200: userSchema, ...errors },
+  } }, request => core.identity.lookupUser(fromNodeHeaders(request.headers), request.body.email));
+
   app.post<{ Body: { name: string } }>('/api/v1/spaces', { schema: {
     operationId: 'createSpace', tags: ['Spaces'],
     body: { type: 'object', additionalProperties: false, required: ['name'], properties: {
@@ -81,6 +88,23 @@ export function registerCoreRoutes(app: FastifyInstance, core: Core) {
   } }, async (request, reply) => {
     const space = await core.spaces.read(fromNodeHeaders(request.headers), request.params.id);
     return reply.header('etag', spaceEtag(space)).send(space);
+  });
+
+  app.get<{ Params: { id: string }; Querystring: { limit?: number; cursor?: string } }>('/api/v1/spaces/:id/members', { schema: {
+    operationId: 'listSpaceMembers', tags: ['Spaces'], description: 'Administrator-only current member grants. Administrators also have implicit space access.',
+    params: spaceParams,
+    querystring: { type: 'object', additionalProperties: false, properties: {
+      limit: { type: 'integer', minimum: 1, maximum: 100 }, cursor: { type: 'string', minLength: 1, maxLength: 128 },
+    } },
+    response: { 200: { type: 'object', additionalProperties: false, required: ['spaceId', 'lockVersion', 'items', 'nextCursor'], properties: {
+      spaceId: { type: 'string', format: 'uuid' }, lockVersion: { type: 'integer', minimum: 1 },
+      items: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['user', 'role'], properties: {
+        user: userSchema, role: { type: 'string', enum: ['reader', 'editor'] },
+      } } }, nextCursor: { type: ['string', 'null'] },
+    } }, ...errors },
+  } }, async (request, reply) => {
+    const result = await core.spaces.listMembers(fromNodeHeaders(request.headers), { spaceId: request.params.id, ...request.query });
+    return reply.header('etag', spaceEtag({ id: result.spaceId, lockVersion: result.lockVersion })).send(result);
   });
 
   app.put<{ Params: { id: string; userId: string }; Body: { role: 'reader' | 'editor' } }>(

@@ -14,14 +14,18 @@ P1 mounts only `POST /api/auth/sign-in/email`, `GET /api/auth/get-session`, and 
 
 Space listing returns `{items, nextCursor}`, filters visibility in the query, and accepts `limit` (1-100, default 50) and a UUID `cursor`. Ordering is by immutable ID. Instances with no accessible spaces return an empty list, with no hidden totals. Authenticated unauthorized resource requests return the same 404 as missing resources. Anonymous product requests are denied. Cookie-based product writes require the exact configured Origin.
 
+Administrator access management uses two read operations. `POST /api/v1/users/lookup` accepts only `{email}` and returns the same minimal account profile as `/me`, normalized by exact email. The POST keeps the email out of request URLs; it does not create accounts, change roles or recover credentials. Missing accounts and non-admin callers both receive 404; unauthenticated callers receive 401. `GET /api/v1/spaces/{id}/members` returns `{spaceId, lockVersion, items: [{user, role}], nextCursor}` with the corresponding strong space ETag. Limits are 1-100 (default 50); cursors are auth user IDs of up to 128 characters. Profiles contain only ID, name, email and instance role. Neither response includes credentials, auth accounts, sessions or tokens. Membership reads acquire the space lock before checking and stabilizing the current administrator; writes retain their existing space preconditions and lock order.
+
 ## Resource surface
 
 | Method and path | Behavior |
 | --- | --- |
 | `GET /api/v1/me` | Effective authenticated user and instance role |
+| `POST /api/v1/users/lookup` | Administrator exact-email lookup of an existing account, without provisioning or credential fields |
 | `POST /api/v1/spaces` | Administrator creates a space |
 | `GET /api/v1/spaces` | Only spaces the actor can access |
 | `GET /api/v1/spaces/{id}` | Read authorized space |
+| `GET /api/v1/spaces/{id}/members` | Administrator bounded current grant list with space ETag; no member-directory access for readers/editors |
 | `PUT /api/v1/spaces/{id}/members/{userId}` | Administrator grants/changes access; require space version precondition |
 | `DELETE /api/v1/spaces/{id}/members/{userId}` | Administrator revokes access; require space version precondition |
 | `POST /api/v1/spaces/{id}/documents` | Editor creates a document and first revision atomically |

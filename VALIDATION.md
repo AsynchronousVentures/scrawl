@@ -1,5 +1,14 @@
 # Validation
 
+## Space access API reads
+
+Two operations support the next connected private-space workflow: administrator-only exact lookup of an existing account and bounded current membership reads with the space ETag. They expose only safe account/profile fields; registration, provisioning, role assignment and recovery remain host-only. Profiles stay in identity, and authorization/locking stay in core. No migration or dependency change is required. The UI is not wired at this checkpoint and the retained backend has not been restarted for these routes.
+
+The focused real PostgreSQL 18/P1 HTTP acceptance passed 23/23 in 8.9 seconds (`artifacts/space-access-api.log`). New coverage proves minimal response keys, no credential/session records, non-admin and unknown-account nondiscovery, uppercase exact-email normalization, no-store, bounded pagination, current ETag and core-call policy. A real space-lock wait followed by an administrator role downgrade returns 404 without profiles or ETag. The test fixture uses its unique application name to identify the actual blocked SQL read. The complete database regression passed 141/141 in 50.0 seconds with zero skips (`artifacts/space-access-full-database.log`), preserving all migration, rollback, concurrency, session and Demo A checks. Complete checks passed all 91 cases, types, boundaries, builds and generated API verification (`artifacts/space-access-api-complete-check.log`). Strict source types passed (`artifacts/space-access-types.log`), and OpenAPI browser types were regenerated from implemented routes (`artifacts/space-access-generate.log`).
+
+The preceding final space-creation browser rerun on 1e27343 finished 76/77 in 10.9 minutes, zero retries/skips (`artifacts/space-create-focus-full-browser.log`). The delayed-read focus correction and all private workflows passed. The same isolated nested-list native caret case failed before undo assertions; retained collaboration stays disabled. The run completed before adding the new API implementation.
+
+
 ## Administrator space creation
 
 The existing administrator-only create-space API is now available as New space in desktop navigation and the mobile drawer. The typed client uses implemented OpenAPI; no route, dependency, schema or migration changes are required. Creating a space leaves an open title/body draft, native editor undo stack, save error, conflict comparison and ETag intact. Only a workspace with neither a selected space nor a draft enters the new empty space automatically. Feedback reports space creation separately from document saving. New spaces grant no reader/editor access automatically.

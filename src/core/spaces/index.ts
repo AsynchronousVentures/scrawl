@@ -99,6 +99,33 @@ export function createSpaces(prisma: PrismaClient, identity: Identity) {
       if (!validSlug(slug)) throw new HttpProblem(400, 'INVALID_REQUEST');
       return read(headers, { slug });
     },
+    async listMembers(headers: Headers, input: { spaceId: string; limit?: number; cursor?: string }) {
+      const limit = input.limit ?? 50;
+      if (!Number.isInteger(limit) || limit < 1 || limit > 100 || input.cursor !== undefined && (!input.cursor || input.cursor.length > 128)) {
+        throw new HttpProblem(400, 'INVALID_REQUEST');
+      }
+      const principal = await identity.resolve(headers);
+      return prisma.$transaction(async db => {
+        // Reads share the same space lock as grant/revoke and hold current
+        // actor credentials stable while projecting the member page.
+        await db.$queryRaw`SELECT "id" FROM "Space" WHERE "id" = ${input.spaceId}::uuid FOR SHARE`;
+        await identity.lockActors(db, [principal]);
+        if ((await identity.actor(principal, db)).role !== 'administrator') throw new HttpProblem(404, 'NOT_FOUND');
+        const space = await db.space.findUnique({ where: { id: input.spaceId }, select: { id: true, lockVersion: true } });
+        if (!space) throw new HttpProblem(404, 'NOT_FOUND');
+        const members = await db.spaceMembership.findMany({ where: {
+          spaceId: space.id, ...(input.cursor ? { userId: { gt: input.cursor } } : {}),
+        }, orderBy: { userId: 'asc' }, take: limit + 1 });
+        const page = members.slice(0, limit);
+        const profiles = new Map((await identity.memberProfiles(db, principal, page.map(member => member.userId))).map(user => [user.id, user]));
+        const items = page.map(member => {
+          const user = profiles.get(member.userId);
+          if (!user || member.role !== 'reader' && member.role !== 'editor') throw new HttpProblem(500, 'INVALID_MEMBER_PROFILE');
+          return { user, role: member.role };
+        });
+        return { spaceId: space.id, lockVersion: space.lockVersion, items, nextCursor: members.length > limit ? page.at(-1)!.userId : null };
+      });
+    },
     async changeMembership(headers: Headers, input: {
       spaceId: string; userId: string; role: 'reader' | 'editor' | null; expectedEtag: string | undefined;
     }) {

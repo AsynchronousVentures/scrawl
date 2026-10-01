@@ -12,6 +12,8 @@ Use the authentication library's user, session, account and verification records
 
 P1 uses PostgreSQL UUIDs for Space IDs, UTC timestamps, a positive `lockVersion` starting at 1, and a composite membership primary key with a reader/editor role check. Every successful grant/change/revoke advances the space version, including repeated same-role grants or revocation of an already-absent membership.
 
+Administrator member-list reads share the space lock used by grant/revoke, then stabilize and recheck the actor's user/session before projecting grants. Identity owns the narrow profile lookup; spaces never query auth-owned user tables directly. No new model or migration is required for the access-management reads.
+
 Use text-compatible foreign keys for auth user IDs rather than assuming the library emits UUIDs. Product-owned IDs may use UUIDs represented as strings externally. User deletion is out of the demo scope; deactivation/revocation must not cascade-delete document history.
 
 ## P2: document identity and snapshots
