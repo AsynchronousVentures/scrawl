@@ -30,8 +30,12 @@ export type LoadedDocument = { document: Document; etag: string };
 export type Draft = { title: string; content: ContentEnvelope };
 
 export class ApiError extends Error {
-  constructor(readonly status: number) {
-    super(status === 0 ? 'Cannot reach Scrawl. Check your connection and try again.'
+  constructor(readonly status: number, readonly code?: string) {
+    super(code === 'DOCUMENT_HAS_ACTIVE_CHILDREN' ? 'Move or archive child documents before archiving this document.'
+      : code === 'PARENT_DOCUMENT_ARCHIVED' ? 'The parent document is archived. Choose an active location.'
+      : code === 'DOCUMENT_HIERARCHY_CYCLE' ? 'A document cannot be moved inside itself or one of its children.'
+      : code === 'DOCUMENT_HIERARCHY_TOO_DEEP' ? 'Choose a shallower location. Documents can be nested up to 32 levels.'
+      : status === 0 ? 'Cannot reach Scrawl. Check your connection and try again.'
       : status === 401 ? 'Your session expired. Sign in again.'
       : status === 403 ? 'Your access has changed. This action is unavailable.'
       : status === 404 ? 'This document or space is unavailable.'
@@ -50,7 +54,11 @@ const client = createClient<paths>({ baseUrl: location.origin, credentials: 'sam
 async function checked<T>(request: Promise<{ data?: T; error?: unknown; response: Response }>) {
   let result: Awaited<typeof request>;
   try { result = await request; } catch { throw new ApiError(0); }
-  if (!result.response.ok) throw new ApiError(result.response.status);
+  if (!result.response.ok) {
+    const problem = result.error;
+    const code = problem && typeof problem === 'object' && 'code' in problem && typeof problem.code === 'string' ? problem.code : undefined;
+    throw new ApiError(result.response.status, code);
+  }
   if (result.data === undefined) throw new ApiError(502);
   return { data: result.data, response: result.response };
 }
@@ -155,9 +163,15 @@ export const api = {
     }));
     return loaded(data, response);
   },
-  async create(id: string, draft: Draft) {
+  async create(id: string, draft: Draft, parentDocumentId: string | null = null) {
     const { data, response } = await checked(client.POST('/api/v1/spaces/{id}/documents', {
-      params: { path: { id } }, body: draft,
+      params: { path: { id } }, body: { ...draft, parentDocumentId },
+    }));
+    return loaded(data, response);
+  },
+  async move(id: string, etag: string, parentDocumentId: string | null) {
+    const { data, response } = await checked(client.POST('/api/v1/documents/{id}/move', {
+      params: { path: { id }, header: { 'if-match': etag } }, body: { parentDocumentId },
     }));
     return loaded(data, response);
   },

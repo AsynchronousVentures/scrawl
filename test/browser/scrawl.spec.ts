@@ -300,14 +300,14 @@ async function confirmDiscard(page: Page) {
 }
 
 async function evidence(page: Page, name: 'editing' | 'conflict' | 'history' | 'access-loss' | 'mobile'
-  | 'editor-toolbar' | 'link-editor' | 'discard-changes' | 'search' | 'attachments' | 'publication' | 'public-document') {
+  | 'organization' | 'editor-toolbar' | 'link-editor' | 'discard-changes' | 'search' | 'attachments' | 'publication' | 'public-document') {
   if (process.env.SCRAWL_BROWSER_EVIDENCE !== '1') return;
   const password = page.getByLabel('Password', { exact: true });
   if (await password.isVisible() && await password.inputValue() !== '') {
     throw new Error('Screenshot refused while private credentials are present');
   }
   await mkdir('artifacts/browser-evidence', { recursive: true, mode: 0o700 });
-  await page.screenshot({ path: `artifacts/browser-evidence/${name}.png`, fullPage: false });
+  await page.screenshot({ path: `artifacts/browser-evidence/${name}.png`, fullPage: false, mask: [page.locator('.account')], maskColor: '#1a1d20' });
 }
 
 test('keyboard login/logout uses real sessions and protected same-origin responses', async ({ page, context }) => {
@@ -1926,7 +1926,7 @@ test('administrator space creation preserves the complete draft and saves it onl
   await expect(dialog.getByLabel('Space name')).toBeFocused();
   await dialog.getByLabel('Space name').fill('Product engineering');
   await mkdir('artifacts/screenshots', { recursive: true });
-  await page.screenshot({ path: 'artifacts/screenshots/space-create-desktop.png', mask: [page.locator('.account')] });
+  await page.screenshot({ path: 'artifacts/screenshots/space-create-desktop.png', mask: [page.locator('.account')], maskColor: '#1a1d20' });
   const createdResponse = page.waitForResponse(response => response.request().method() === 'POST'
     && new URL(response.url()).pathname === '/api/v1/spaces');
   await dialog.getByRole('button', { name: 'Create space', exact: true }).click();
@@ -2054,7 +2054,7 @@ test('mobile space creation blocks dismissal and duplicate submission while its 
     await page.keyboard.press('Escape'); await expect(dialog).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await mkdir('artifacts/screenshots', { recursive: true });
-    await page.screenshot({ path: 'artifacts/screenshots/space-create-mobile.png', mask: [page.locator('.account')] });
+    await page.screenshot({ path: 'artifacts/screenshots/space-create-mobile.png', mask: [page.locator('.account')], maskColor: '#1a1d20' });
     release(); await expect(dialog).toBeHidden();
     await expect(title(page)).toHaveValue('Mobile local draft');
     await expect(body(page)).toContainText('Complete mobile draft.');
@@ -2361,4 +2361,175 @@ test('an authorized structural move preserves readable links and forces delibera
     const response = await apiRequest(outsider, `/api/v1/documents/${seeded.documentId}`); expect(response.status()).toBe(404);
     expect(await response.text()).not.toContain('parentDocumentId'); expect(await response.text()).not.toContain('Organization API parent');
   } finally { await reader.close(); await outsider.close(); }
+});
+
+test('organization creates a native child with guarded drafts, breadcrumbs and a persistent nested location', async ({ page, context }) => {
+  await login(page);
+  const original = await readDocument(context);
+  await title(page).fill('Retained parent draft');
+  await page.getByLabel('Document actions').click();
+  await page.getByRole('button', { name: 'New child document', exact: true }).click();
+  const confirmation = page.getByRole('dialog', { name: 'Unsaved changes', exact: true });
+  await confirmation.getByRole('button', { name: 'Keep editing', exact: true }).click();
+  await expect(title(page)).toHaveValue('Retained parent draft');
+  await page.getByLabel('Document actions').click();
+  await page.getByRole('button', { name: 'New child document', exact: true }).click();
+  await confirmation.getByRole('button', { name: 'Discard changes', exact: true }).click();
+  await expect(page.getByLabel('New document location')).toHaveValue(original.data.id);
+  await title(page).fill('Nested onboarding guide');
+  await body(page).fill('Native child body survives its first explicit save.');
+  await save(page).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved · revision 1' })).toBeVisible();
+  const current = page.url();
+  const childLink = page.getByRole('navigation', { name: 'Documents', exact: true }).getByRole('link', { name: 'Nested onboarding guide', exact: true });
+  await expect(childLink).toBeVisible();
+  const response = await apiRequest(context, `/api/v1/spaces/${seeded.spaceId}/documents`);
+  expect(response.status()).toBe(200);
+  const children = await response.json() as operations['listDocuments']['responses'][200]['content']['application/json'];
+  const child = children.items.find(item => item.title === 'Nested onboarding guide');
+  if (!child) throw new Error('The saved child is absent from the authorized list');
+  expect((await readDocument(context, child.id)).data.parentDocumentId).toBe(original.data.id);
+  await expect(page.getByRole('navigation', { name: 'Document path' }).getByRole('link', { name: original.data.revision.title, exact: true })).toBeVisible();
+  await page.reload();
+  await expect(page).toHaveURL(current);
+  await expect(body(page)).toContainText('Native child body survives');
+  await expect(childLink).toBeVisible();
+  expect((await readDocument(context)).data.revision).toEqual(original.data.revision);
+});
+
+test('organization moves use the saved ETag without creating history or changing URLs and remain keyboard accessible', async ({ page, context }) => {
+  await login(page);
+  const original = await readDocument(context), parent = await navigationDocument(context);
+  await page.reload();
+  await expect(title(page)).toHaveValue(original.data.revision.title);
+  const location = page.url();
+  await page.getByLabel('Document actions').focus();
+  await page.keyboard.press('Enter');
+  await page.getByRole('button', { name: 'Move document', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Move document', exact: true });
+  await expect(dialog.getByRole('option', { name: original.data.revision.title, exact: true })).toHaveCount(0);
+  await dialog.getByLabel('Parent document').selectOption(parent.id);
+  await dialog.getByRole('button', { name: 'Move document', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByText('Document moved.', { exact: true })).toBeVisible();
+  const moved = await readDocument(context);
+  expect(moved.data.parentDocumentId).toBe(parent.id);
+  expect(moved.data.revision).toEqual(original.data.revision);
+  expect(moved.data.currentRevisionNumber).toBe(original.data.currentRevisionNumber);
+  expect(moved.etag).not.toBe(original.etag);
+  await expect(page).toHaveURL(location);
+  await expect(page.getByRole('navigation', { name: 'Document path' }).getByRole('link', { name: 'Another handbook', exact: true })).toBeVisible();
+  await expect(page.getByLabel('Document actions')).toBeFocused();
+  await evidence(page, 'organization');
+  const disclosure = page.getByRole('button', { name: 'Child documents of Another handbook', exact: true });
+  await expect(disclosure).toHaveAttribute('aria-expanded', 'true');
+  await disclosure.focus(); await page.keyboard.press('Enter');
+  await expect(disclosure).toHaveAttribute('aria-expanded', 'false');
+  await page.keyboard.press('Enter');
+  await expect(disclosure).toHaveAttribute('aria-expanded', 'true');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('button', { name: 'Navigation', exact: true }).click();
+  await expect(page.getByRole('navigation', { name: 'Documents', exact: true }).getByRole('link', { name: original.data.revision.title, exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
+test('organization stale moves retain the complete local snapshot and require deliberate reconciliation', async ({ page, context }) => {
+  await login(page);
+  const original = await readDocument(context), parent = await navigationDocument(context);
+  await page.reload();
+  await expect(title(page)).toHaveValue(original.data.revision.title);
+  const localBody = await body(page).innerText();
+  const changed = await apiRequest(context, `/api/v1/documents/${original.data.id}`, {
+    method: 'PATCH', headers: { origin: demo.origin, 'If-Match': original.etag },
+    data: { title: 'Remote saved heading', content: original.data.revision.content },
+  });
+  expect(changed.status()).toBe(200);
+  const latest = await readDocument(context);
+  await page.getByLabel('Document actions').click();
+  await page.getByRole('button', { name: 'Move document', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Move document', exact: true });
+  await dialog.getByLabel('Parent document').selectOption(parent.id);
+  const rejected = page.waitForResponse(response => new URL(response.url()).pathname.endsWith('/move'));
+  await dialog.getByRole('button', { name: 'Move document', exact: true }).click();
+  expect((await rejected).status()).toBe(412);
+  await expect(page.getByRole('heading', { name: 'Save conflict', exact: true })).toBeVisible();
+  await expect(title(page)).toHaveValue(original.data.revision.title);
+  await expect.poll(() => body(page).innerText()).toBe(localBody);
+  await expect(page.getByText('Remote saved heading', { exact: true })).toBeVisible();
+  await expect(save(page)).toBeDisabled();
+  expect((await readDocument(context)).data).toEqual(latest.data);
+  await page.getByRole('button', { name: 'Use server version', exact: true }).click();
+  await expect(title(page)).toHaveValue('Remote saved heading');
+  await expect(page.getByRole('heading', { name: 'Save conflict', exact: true })).toHaveCount(0);
+  expect((await readDocument(context)).data).toEqual(latest.data);
+});
+
+test('organization an uncertain move never retries and requires comparison before another mutation', async ({ page, context }) => {
+  await login(page);
+  const original = await readDocument(context), parent = await navigationDocument(context);
+  await page.reload();
+  await expect(title(page)).toHaveValue(original.data.revision.title);
+  let attempts = 0;
+  await page.route(`**/api/v1/documents/${original.data.id}/move`, async route => {
+    attempts++; await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ code: 'INJECTED_TEMPORARY_FAILURE' }) });
+  });
+  await page.getByLabel('Document actions').click();
+  await page.getByRole('button', { name: 'Move document', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Move document', exact: true });
+  await dialog.getByLabel('Parent document').selectOption(parent.id);
+  await dialog.getByRole('button', { name: 'Move document', exact: true }).click();
+  await expect(dialog.getByRole('alert')).toContainText('The move could not be confirmed');
+  await expect(dialog.getByRole('button', { name: 'Move document', exact: true })).toBeDisabled();
+  await expect(page.locator('#title')).toHaveValue(original.data.revision.title);
+  expect(attempts).toBe(1);
+  expect((await readDocument(context)).data).toEqual(original.data);
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await page.getByLabel('Document actions').click();
+  await page.getByRole('button', { name: 'Move document', exact: true }).click();
+  await expect(dialog.getByLabel('Parent document')).toBeDisabled();
+  await expect(dialog.getByRole('button', { name: 'Move document', exact: true })).toBeDisabled();
+  await dialog.getByRole('button', { name: 'Compare latest document', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Save conflict', exact: true })).toBeVisible();
+  await expect(save(page)).toBeDisabled();
+  expect(attempts).toBe(1);
+  expect((await readDocument(context)).data).toEqual(original.data);
+});
+
+test('organization parent archive is explicit and readers and outsiders cannot acquire structural controls', async ({ page, context, browser }) => {
+  await login(page);
+  const parent = await readDocument(context);
+  const created = await apiRequest(context, `/api/v1/spaces/${seeded.spaceId}/documents`, {
+    method: 'POST', headers: { origin: demo.origin },
+    data: { title: 'Access controlled child', content: parent.data.revision.content, parentDocumentId: parent.data.id },
+  });
+  expect(created.status()).toBe(201);
+  const child = await created.json() as Document;
+  await page.reload();
+  await expect(title(page)).toHaveValue(parent.data.revision.title);
+  await page.getByLabel('Document actions').click();
+  const archive = page.waitForResponse(response => new URL(response.url()).pathname.endsWith('/archive'));
+  await page.getByRole('button', { name: 'Archive', exact: true }).click();
+  expect((await archive).status()).toBe(409);
+  await expect(page.getByRole('alert')).toContainText('Move or archive child documents');
+  expect((await readDocument(context)).data).toEqual(parent.data);
+  const readerContext = await browser.newContext(), outsiderContext = await browser.newContext();
+  try {
+    const reader = await readerContext.newPage();
+    await login(reader, 'reader', `${demo.origin}/spaces/${child.spaceSlug}/documents/${child.slug}`);
+    await expect(title(reader)).toHaveValue(child.revision.title);
+    await expect(reader.getByRole('navigation', { name: 'Document path' }).getByRole('link', { name: parent.data.revision.title, exact: true })).toBeVisible();
+    await reader.getByLabel('Document actions').click();
+    await expect(reader.getByRole('button', { name: 'Move document', exact: true })).toHaveCount(0);
+    await expect(reader.getByRole('button', { name: 'New child document', exact: true })).toHaveCount(0);
+    const denied = await apiRequest(readerContext, `/api/v1/documents/${child.id}/move`, {
+      method: 'POST', headers: { origin: demo.origin, 'If-Match': created.headers().etag! }, data: { parentDocumentId: null },
+    });
+    expect(denied.status()).toBe(404);
+    const outsider = await outsiderContext.newPage();
+    await login(outsider, 'outsider', `${demo.origin}/spaces/${child.spaceSlug}/documents/${child.slug}`);
+    await expect(outsider.getByRole('navigation', { name: 'Documents', exact: true })).toHaveCount(0);
+    await expect(outsider.getByRole('navigation', { name: 'Document path' })).toHaveCount(0);
+    await expect(outsider.getByText('Access controlled child', { exact: true })).toHaveCount(0);
+    expect((await readDocument(context, child.id)).data).toEqual(child);
+  } finally { await readerContext.close(); await outsiderContext.close(); }
 });

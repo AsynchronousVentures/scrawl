@@ -138,3 +138,17 @@
 .member-actions button, .member-actions select { font-size: 12px; }
 .access-removal { border-top: 1px solid var(--line); margin-top: 20px; padding-top: 12px; }
 @media (max-width: 700px) { .members > li { align-items: flex-start; flex-direction: column; gap: 10px; } }
+
+/* Organization stays subordinate to the document, including on narrow screens. */
+.document-tree ul { list-style: none; padding: 0; margin: 0; min-width: 0; }
+.document-tree ul ul { margin-left: 10px; padding-left: 5px; border-left: 1px solid var(--line); }
+.document-row { display: flex; align-items: flex-start; min-width: 0; }
+.document-row > a { flex: 1; min-width: 0; }
+.document-disclosure { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 24px; width: 24px; min-height: 40px; padding: 0; border: 0; background: transparent; }
+.document-path { display: flex; flex-wrap: wrap; gap: 0 4px; font-size: 12px; color: var(--muted); margin-bottom: 12px; overflow-wrap: anywhere; }
+.document-path a { text-decoration: none; }
+.document-path a:hover { text-decoration: underline; }
+.draft-location { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); margin-bottom: 16px; }
+.draft-location select { min-width: 0; max-width: 100%; color: var(--text); }
+.space-form select { width: 100%; min-width: 0; }
+.document-tree ul ul.deep-document-branch { margin-left: 0; padding-left: 0; border-left: 0; }
