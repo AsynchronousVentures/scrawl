@@ -18,6 +18,26 @@ test.beforeEach(async () => { seeded = await demo.seed(); });
 const title = (page: Page) => page.getByRole('textbox', { name: 'Document title', exact: true });
 const body = (page: Page) => page.getByRole('textbox', { name: 'Document body', exact: true });
 const save = (page: Page) => page.locator('.documentbar').getByRole('button', { name: 'Save', exact: true });
+
+// Diagnostic numbers only: never emit selected text, identities or session data.
+async function nativeSelectionEvidence(page: Page) {
+  return page.evaluate(() => {
+    const selection = window.getSelection();
+    const focus = selection?.focusNode;
+    const element = focus instanceof Element ? focus : focus?.parentElement;
+    const editor = element?.closest('[role="textbox"][contenteditable]');
+    return {
+      collapsed: selection?.isCollapsed ?? null,
+      selectedCharacters: selection?.toString().length ?? 0,
+      anchorOffset: selection?.anchorOffset ?? null,
+      focusOffset: selection?.focusOffset ?? null,
+      focusTextCharacters: focus?.nodeType === Node.TEXT_NODE ? focus.textContent?.length ?? 0 : null,
+      insideEditor: Boolean(editor),
+      blockType: element?.closest('[data-content-type]')?.getAttribute('data-content-type') ?? null,
+    };
+  });
+}
+
 async function login(page: Page, role: 'administrator' | 'editor' | 'reader' | 'outsider' = 'editor') {
   await page.goto(`${demo.origin}/?space=${seeded.spaceId}&document=${seeded.documentId}`);
   await demo.fillCredentials(page.getByLabel('Email', { exact: true }), page.getByLabel('Password', { exact: true }), role);
@@ -936,8 +956,16 @@ test('nested native list undo/redo preserves another account\'s child and checkp
     await slashBlock(page, 'bullet', 'Bullet List'); await page.keyboard.insertText('Local parent');
     await page.keyboard.press('Enter'); await page.keyboard.press('Tab'); await page.keyboard.insertText('Local child');
     const peerChild = body(peer).locator('.bn-inline-content').filter({ hasText: 'Local child' });
-    await expect(peerChild).toBeVisible(); await peerChild.click(); await peer.keyboard.press('End'); await peer.keyboard.insertText(' with administrator contribution');
-    for (const tab of [page, peer]) await expect(body(tab)).toContainText('Local child with administrator contribution');
+    await expect(peerChild).toBeVisible(); await peerChild.click(); await peer.keyboard.press('End');
+    const beforeInsertion = await nativeSelectionEvidence(peer);
+    await peer.keyboard.insertText(' with administrator contribution');
+    const caret = { before: beforeInsertion, after: await nativeSelectionEvidence(peer) };
+    try {
+      for (const tab of [page, peer]) await expect(body(tab)).toContainText('Local child with administrator contribution');
+    } catch (error) {
+      console.error('Native nested insertion selection:', JSON.stringify(caret));
+      throw error;
+    }
     await page.getByRole('button', { name: 'Undo my changes', exact: true }).click();
     for (const tab of [page, peer]) {
       await expect(body(tab)).toContainText('administrator contribution');
@@ -980,7 +1008,12 @@ test('native reaction failures stay visible, preserve accepted threads and requi
   await page.getByRole('link', { name: original.revision.title, exact: true }).click();
   await expect(title(page)).toHaveValue(original.revision.title); await enroll(page);
   await body(page).press('ControlOrMeta+Home'); await body(page).press('Shift+End');
-  await page.getByRole('button', { name: 'Add comment', exact: true }).click();
+  const selection = await nativeSelectionEvidence(page);
+  try { await page.getByRole('button', { name: 'Add comment', exact: true }).click(); }
+  catch (error) {
+    console.error('Native reaction comment selection:', JSON.stringify({ before: selection, after: await nativeSelectionEvidence(page) }));
+    throw error;
+  }
   await page.locator('.bn-comment-editor [contenteditable="true"]').fill('Synthetic thread for native reaction recovery.');
   const anchored = page.waitForResponse(response => response.request().method() === 'POST'
     && new URL(response.url()).pathname.endsWith('/addToDocument'));
