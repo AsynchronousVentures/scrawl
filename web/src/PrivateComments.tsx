@@ -4,6 +4,7 @@
 import { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type MouseEvent } from 'react';
 import { ComponentsContext, FloatingComposerController, ThreadsSidebar, type ComponentProps } from '@blocknote/react';
 import { components as supplied } from '@blocknote/shadcn';
+import type { LiveState } from './live';
 
 export type CommentState = { dirty: boolean; pending: boolean };
 const Authority = createContext({ writable: false, dirty: false, pending: false, reportDraft: (_id: string, _dirty: boolean) => {},
@@ -58,6 +59,13 @@ function CommentMenuItem(props: ComponentProps['Generic']['Menu']['Item']) {
     if (writable && props.onClick) void run(props.onClick);
   }} />;
 }
+function CommentBadge(props: ComponentProps['Generic']['Badge']['Root']) {
+  const { writable } = useContext(Authority);
+  return <supplied.Generic.Badge.Root {...props} onClick={event => {
+    if (!writable) { event.preventDefault(); event.stopPropagation(); return; }
+    props.onClick?.(event);
+  }} />;
+}
 function CommentView(props: ComponentProps['Comments']['Comment']) {
   const { writable } = useContext(Authority);
   // Hover-only mounting prevents keyboard users from reaching native actions.
@@ -74,20 +82,22 @@ function CommentCard(props: ComponentProps['Comments']['Card']) {
 // The pinned sidebar exposes a reply composer on thread focus, even for a
 // reader. Guard that supplied component; core authorization remains decisive.
 const components = { ...supplied, Comments: { ...supplied.Comments, Editor: CommentEditor, Comment: CommentView, Card: CommentCard },
-  Generic: { ...supplied.Generic, Toolbar: { ...supplied.Generic.Toolbar, Button: CommentAction },
+  Generic: { ...supplied.Generic, Badge: { ...supplied.Generic.Badge, Root: CommentBadge }, Toolbar: { ...supplied.Generic.Toolbar, Button: CommentAction },
     Menu: { ...supplied.Generic.Menu, Item: CommentMenuItem } } };
 
-export function PrivateComments({ writable, onStateChange }: { writable: boolean; onStateChange?: (state: CommentState) => void }) {
+export function PrivateComments({ writable, reactionStatus, onStateChange }: { writable: boolean; reactionStatus: LiveState['reactionStatus']; onStateChange?: (state: CommentState) => void }) {
   const [error, setError] = useState(false);
   const [state, setState] = useState<CommentState>({ dirty: false, pending: false });
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const drafts = useRef(new Set<string>()), requests = useRef(0), mounted = useRef(true);
   const callback = useRef(onStateChange); callback.current = onStateChange;
+  const reaction = useRef(reactionStatus); reaction.current = reactionStatus;
   const report = useCallback(() => {
     if (!mounted.current) return;
-    const value = { dirty: drafts.current.size > 0, pending: requests.current > 0 };
+    const value = { dirty: drafts.current.size > 0, pending: requests.current > 0 || reaction.current === 'pending' };
     setState(value); callback.current?.(value);
   }, []);
+  useEffect(report, [reactionStatus, report]);
   const reportDraft = useCallback((id: string, dirty: boolean) => {
     if (dirty) drafts.current.add(id); else drafts.current.delete(id);
     report();
@@ -106,7 +116,7 @@ export function PrivateComments({ writable, onStateChange }: { writable: boolean
     {/* One supplied thread view owns replies; duplicating it in a floating
         view lets focus changes unmount a composer with unsent text. */}
     <FloatingComposerController />
-    {error && <p className="notice" role="alert">The comment action did not finish. Any pending text remains in the composer. Check your connection and access before trying again.</p>}
+    {(error || reactionStatus === 'error') && <p className="notice" role="alert">The comment action did not finish. Any pending text remains in the composer. Check your connection and access before trying again.</p>}
     {(state.dirty || state.pending) && <p className="notice" role="status">{state.pending ? 'Submitting comment…' : writable ? 'Unsaved comment text. Use the comment Save control to submit it. Document Save does not submit comments.' : 'Unsent comment text remains in this tab. Submission is unavailable. Copy it before closing or reloading.'}</p>}
     <details className="document-comments" open={sidebarOpen}>
       <summary aria-disabled={sidebarOpen && (state.dirty || state.pending)} onClick={event => { event.preventDefault(); if (!sidebarOpen || !state.dirty && !state.pending) setSidebarOpen(open => !open); }}>Comments</summary>

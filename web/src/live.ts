@@ -12,7 +12,7 @@ import { api, type LiveMetadata, type User } from './api/client';
 
 export type LiveState = {
   phase: 'connecting' | 'connected' | 'closed'; metadata: LiveMetadata;
-  initialized: boolean;
+  initialized: boolean; reactionStatus: 'idle' | 'pending' | 'error';
   title: string; pending: number; localChanges: boolean; canUndo: boolean; canRedo: boolean;
 };
 
@@ -28,6 +28,7 @@ export class LiveSession {
   private disposed = false;
   private localChanges = false;
   private initialized = false;
+  private reactionStatus: LiveState['reactionStatus'] = 'idle';
   private manager?: Y.UndoManager;
   private users?: ReturnType<typeof createUserStore>;
 
@@ -70,7 +71,7 @@ export class LiveSession {
     return value instanceof Y.Text ? value : undefined;
   }
   snapshot(): LiveState {
-    return { phase: this.phase, initialized: this.initialized, metadata: this.metadata, title: this.title()?.toString() ?? '',
+    return { phase: this.phase, initialized: this.initialized, reactionStatus: this.reactionStatus, metadata: this.metadata, title: this.title()?.toString() ?? '',
       pending: this.provider?.unsyncedChanges ?? 0, localChanges: this.localChanges,
       canUndo: Boolean(this.manager?.canUndo()), canRedo: Boolean(this.manager?.canRedo()) };
   }
@@ -88,6 +89,15 @@ export class LiveSession {
   }
   undo() { if (this.phase === 'connected' && this.metadata.canWrite) this.manager?.undo(); }
   redo() { if (this.phase === 'connected' && this.metadata.canWrite) this.manager?.redo(); }
+  private async runReaction(action: () => Promise<unknown>) {
+    if (this.disposed || this.reactionStatus === 'pending') return;
+    this.reactionStatus = 'pending'; this.emit();
+    try { await action(); this.reactionStatus = 'idle'; }
+    catch { this.reactionStatus = 'error'; }
+    // The supplied picker drops async callback results. Catch at the native
+    // store boundary and report failure; reactions remain server-owned state.
+    finally { this.emit(); }
+  }
   extensions() {
     const session = this;
     let captureSelection: (() => Parameters<typeof api.anchorLiveComment>[3]) | undefined;
@@ -157,6 +167,9 @@ export class LiveSession {
     this.users = users;
     const threads = new RESTYjsThreadStore(`/api/v1/documents/${this.id}/live/${this.metadata.epoch}/threads`, {},
       this.document.getMap('threads'), new CurrentAuth(this.user.id, 'editor'));
+    const addReaction = threads.addReaction, deleteReaction = threads.deleteReaction;
+    threads.addReaction = options => this.runReaction(() => addReaction(options));
+    threads.deleteReaction = options => this.runReaction(() => deleteReaction(options));
     const pendingAnchors = new Map<string, Parameters<typeof api.anchorLiveComment>[3]>();
     const createThread = threads.createThread;
     // The pinned store captures selection after create returns. Preserve native

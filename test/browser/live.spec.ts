@@ -796,3 +796,70 @@ test('nested native list undo/redo preserves another account\'s child and checkp
     expect(await page.evaluate(() => localStorage.length + sessionStorage.length)).toBe(0);
   } finally { await administrator.close(); }
 });
+
+test('native reaction failures stay visible, preserve accepted threads and require deliberate retry', async ({ page, context }) => {
+  const runtimeErrors: string[] = []; page.on('pageerror', error => runtimeErrors.push(error.message));
+  await login(page); await expect(title(page)).toBeVisible();
+  const original = await latest(context);
+  const target = await context.request.post(`${demo.origin}/api/v1/spaces/${seeded.spaceId}/documents`, {
+    headers: { Origin: demo.origin }, data: { title: 'Reaction navigation target', content: original.revision.content },
+  }); expect(target.status()).toBe(201);
+  await page.reload(); await page.getByRole('link', { name: 'Reaction navigation target', exact: true }).click();
+  await expect(title(page)).toHaveValue('Reaction navigation target');
+  await page.getByRole('link', { name: original.revision.title, exact: true }).click();
+  await expect(title(page)).toHaveValue(original.revision.title); await enroll(page);
+  await body(page).focus(); await page.keyboard.press('ControlOrMeta+Home'); await page.keyboard.press('Shift+End');
+  await page.getByRole('button', { name: 'Add comment', exact: true }).click();
+  await page.locator('.bn-comment-editor [contenteditable="true"]').fill('Synthetic thread for native reaction recovery.');
+  const anchored = page.waitForResponse(response => response.request().method() === 'POST'
+    && new URL(response.url()).pathname.endsWith('/addToDocument'));
+  await page.locator('.bn-thread').getByRole('button', { name: 'Save', exact: true }).click(); expect((await anchored).status()).toBe(200);
+  const sidebar = page.locator('.document-comments'); await sidebar.locator('summary').click();
+  await expect(sidebar).toContainText('Synthetic thread for native reaction recovery.');
+  await expect(page.getByRole('status').filter({ hasText: 'Submitting comment…' })).toHaveCount(0);
+  const before = await demo.database.prisma.documentLive.findFirstOrThrow({ where: { documentId: seeded.documentId } });
+  const endpoint = `**/api/v1/documents/${seeded.documentId}/live/*/threads/*/comments/*/reactions`;
+  await page.route(endpoint, route => route.fulfill({ status: 500, contentType: 'application/json', body: '{}' }));
+  async function react() {
+    await sidebar.getByRole('button', { name: 'Add reaction', exact: true }).first().click();
+    await page.locator('em-emoji-picker').getByRole('button', { name: '😀', exact: true }).first().click();
+  }
+  await react();
+  const error = page.getByRole('alert').filter({ hasText: 'The comment action did not finish.' });
+  await expect(error).toBeVisible(); await expect(sidebar.locator('.bn-comment-reaction')).toHaveCount(0);
+  expect(await demo.database.prisma.documentLive.findFirstOrThrow({ where: { documentId: seeded.documentId } })).toEqual(before);
+  expect((await latest(context)).currentRevisionNumber).toBe(1); expect(runtimeErrors).toEqual([]);
+  await page.unroute(endpoint);
+  let release: (() => void) | undefined;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  await page.route(endpoint, async route => { await gate; await route.continue(); });
+  const added = page.waitForResponse(response => response.request().method() === 'POST'
+    && new URL(response.url()).pathname.endsWith('/reactions'));
+  try {
+    await react(); await expect(page.getByRole('status').filter({ hasText: 'Submitting comment…' })).toBeVisible();
+    await expect(sidebar.locator('summary')).toHaveAttribute('aria-disabled', 'true');
+    await page.evaluate(() => history.back());
+    const waiting = page.getByRole('dialog', { name: 'Please wait', exact: true });
+    await expect(waiting).toBeVisible(); await expect(waiting.getByRole('button', { name: 'Discard changes', exact: true })).toBeDisabled();
+    await waiting.getByRole('button', { name: 'Keep editing', exact: true }).click();
+    expect(await demo.database.prisma.documentLive.findFirstOrThrow({ where: { documentId: seeded.documentId } })).toEqual(before);
+  } finally { release?.(); }
+  expect((await added).status()).toBe(200); await page.unroute(endpoint);
+  const reaction = sidebar.locator('.bn-comment-reaction'); await expect(reaction).toHaveCount(1); await expect(reaction).toContainText('1');
+  await expect(error).toHaveCount(0);
+  const accepted = await demo.database.prisma.documentLive.findFirstOrThrow({ where: { documentId: seeded.documentId } });
+  const removal = `${endpoint}/*`;
+  await page.route(removal, route => route.fulfill({ status: 500, contentType: 'application/json', body: '{}' }));
+  await reaction.press('Enter'); await expect(error).toBeVisible(); await expect(reaction).toContainText('1');
+  expect(await demo.database.prisma.documentLive.findFirstOrThrow({ where: { documentId: seeded.documentId } })).toEqual(accepted);
+  await page.unroute(removal); await reaction.press('Enter'); await expect(reaction).toHaveCount(0); await expect(error).toHaveCount(0);
+  expect((await latest(context)).currentRevisionNumber).toBe(1); expect(runtimeErrors).toEqual([]);
+  // The supplied picker stores only recent emoji IDs/counts, never documents,
+  // comments, identities or credentials. Assert its complete persisted shape.
+  expect(await page.evaluate(() => Object.fromEntries(Object.keys(localStorage).map(key => [key, localStorage.getItem(key)])))).toEqual({
+    'emoji-mart.last': JSON.stringify('grinning'),
+    'emoji-mart.frequently': JSON.stringify({ '+1': 9, grinning: 10, kissing_heart: 7, heart_eyes: 6, laughing: 5,
+      stuck_out_tongue_winking_eye: 4, sweat_smile: 3, joy: 2, scream: 1 }),
+  });
+  expect(await page.evaluate(() => sessionStorage.length)).toBe(0);
+});

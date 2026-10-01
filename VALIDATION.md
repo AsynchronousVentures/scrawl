@@ -1,5 +1,13 @@
 # Validation
 
+## Native reaction failure and pending guards
+
+The supplied picker previously dropped rejected reaction promises without displaying failure. The native REST store boundary now reports reaction pending/error state through the existing live session. Add/remove failures leave the accepted thread/live record byte-for-byte unchanged and display an error, with deliberate retry required. A held real add request keeps the sidebar open and blocks Back through Please wait; Keep editing retains the current document until the actual response. The supplied picker and keyboard-operated badges remain native UI. Reactions do not create revisions.
+
+Complete `npm run check` passed 91 cases, both typechecks/builds, boundaries and generated API verification (`artifacts/live-reaction-check.log`). All 20 shared-editing browser cases passed together in 2.9 minutes, zero retries/skips (`artifacts/live-reaction-live-suite.log`). The preceding full application regression passed 66/66; there are now 67 total cases, without claiming a full local 67-case run. Initial failing and intermediate diagnostic runs are not passes. No backend, migration, dependency, retained reset or enrollment changed. Collaboration remains disabled in the retained preview.
+
+The native picker writes only `emoji-mart.last` and `emoji-mart.frequently`. Acceptance asserts their complete seeded/selected emoji-ID/count shape and empty session storage, so no document, comment, identity or credential data is persisted. Existing private-content storage assertions remain unchanged.
+
 ## Nested native-block peer undo
 
 A new real-browser regression reproduced peer text loss when undoing a newly created parent/child list. Protecting only nonempty nodes allowed removal of the required parent block-content child; retaining that child exposed native ID deletion and a correctly rejected server update. The final filter preserves both required structure and surviving container IDs, without retaining local text. The separate authenticated administrator's nested contribution survives button and keyboard undo/redo, then explicit Save appends revision 2 with the complete parser-validated parent/child hierarchy. Reload retains it, and undo/redo itself leaves history at revision 1.

@@ -148,7 +148,7 @@ export function Editor({ initialContent, editable, onChange, onValidationChange,
           callbacks.current.onValidationChange?.(message);
         }}>
           {editable && <FilePanelController filePanel={DocumentFilePanel} />}
-          {live && <PrivateComments writable={editable} {...(onCommentStateChange ? { onStateChange: onCommentStateChange } : {})} />}
+          {live && <PrivateComments writable={editable} reactionStatus={live.snapshot().reactionStatus} {...(onCommentStateChange ? { onStateChange: onCommentStateChange } : {})} />}
         </BlockNoteView>
         </UploadAvailability.Provider>
       </div>
