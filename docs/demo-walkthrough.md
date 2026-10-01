@@ -8,6 +8,8 @@ Open [Scrawl's field guide](https://agentvm.beardie-tone.ts.net:10000/spaces/scr
 
 Links now use stable readable names, for example [the Demo Handbook release checklist](https://agentvm.beardie-tone.ts.net:10000/spaces/demo-handbook/documents/release-checklist). Saving a renamed title keeps its existing link. Duplicate titles get readable numeric suffixes within their space; archived links remain reserved. Old `?space=UUID&document=UUID` bookmarks still work and become readable paths after authorized loading. UUIDs remain in the API, revision provenance and native exports.
 
+Document navigation uses normal links: Ctrl/Cmd-click or the browser context menu can open another tab, leaving this tab's draft intact. Move between two documents, then try Back/Forward. Unsaved title/body changes require either Keep editing or deliberate discard; navigation never creates a revision. Leaving during a Save/upload is blocked until its request finishes. Saved documents opened through search also participate in browser history.
+
 Retrieve credentials locally, without copying them into issues, screenshots or chat:
 
 ```sh

@@ -102,13 +102,19 @@ async function main() {
           assert.deepEqual(validateContent(exported.content).content, validateContent(saved.revision.content).content);
           if (role === 'administrator') {
             stage = 'saved native tables, checklists and code';
-            await page.getByRole('button', { name: 'Service runbook', exact: true }).click();
+            const startUrl = page.url();
+            await page.getByRole('link', { name: 'Service runbook', exact: true }).click();
             await expect(title).toHaveValue('Service runbook');
             await expect(body.locator('code').first()).toContainText('curl --fail');
             await expect(body.locator('table').first()).toBeVisible();
             await body.locator('table').first().scrollIntoViewIfNeeded();
             await page.screenshot({ path: `${evidenceDirectory}/rich-document.png` });
-            await page.getByRole('button', { name: 'Start here', exact: true }).click();
+            await page.goBack();
+            await expect(page).toHaveURL(startUrl);
+            await expect(title).toHaveValue('Start here');
+            await page.goForward();
+            await expect(title).toHaveValue('Service runbook');
+            await page.getByRole('link', { name: 'Start here', exact: true }).click();
             await expect(title).toHaveValue('Start here');
             stage = 'usable narrow-screen navigation';
             await page.setViewportSize({ width: 390, height: 844 });

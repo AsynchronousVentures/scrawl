@@ -4,6 +4,7 @@
 import { useEffect, useRef, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { Search } from 'lucide-react';
+import { Link, useBlocker, useLocation, useNavigate } from 'react-router';
 import { extractPlainText, validateContent } from '@scrawl/content';
 import { Editor } from './Editor';
 import { SearchDialog } from './SearchDialog';
@@ -47,6 +48,10 @@ function Login({ onLogin }: { onLogin: (user: User) => Promise<void> }) {
 }
 
 export function App() {
+  const routeLocation = useLocation();
+  const navigate = useNavigate();
+  const handledHref = useRef(location.pathname + location.search);
+  const canonicalTarget = useRef<string | null>(null);
   const [user, setUser] = useState<User | null>();
   const [bootError, setBootError] = useState('');
   const [spaces, setSpaces] = useState<Space[]>([]);
@@ -105,13 +110,27 @@ export function App() {
   const mayPublish = Boolean(publishing?.mayPublish && user && !accessIssue && base && !base.document.archivedAt && !conflict);
   const uploadContext = useRef({ id: base?.document.id ?? null, editable: mayEdit });
   uploadContext.current = { id: base?.document.id ?? null, editable: mayEdit };
+  const navigationBlocker = useBlocker(({ currentLocation, nextLocation, historyAction }) => {
+    const next = nextLocation.pathname + nextLocation.search;
+    // Canonicalizing an authorized response is not navigation away from a draft.
+    // Never exempt Back/Forward, even when it targets a previously canonical URL.
+    if (historyAction !== 'POP' && next === canonicalTarget.current) {
+      canonicalTarget.current = null;
+      return false;
+    }
+    return currentLocation.pathname + currentLocation.search !== next && (dirtyRef.current || blocked);
+  });
 
-  function rememberSelection(selectedSpace: string | null, selectedDocument: string | null) {
+  function rememberSelection(selectedSpace: string | null, selectedDocument: string | null, replace = true) {
     const url = new URL(location.href);
     url.searchParams.delete('space'); url.searchParams.delete('document');
     url.pathname = selectedSpace ? `/spaces/${selectedSpace}${selectedDocument ? `/documents/${selectedDocument}` : ''}` : '/';
     url.hash = '';
-    history.replaceState(null, '', url);
+    const href = url.pathname + url.search;
+    handledHref.current = href;
+    if (href === location.pathname + location.search && !location.hash) return;
+    canonicalTarget.current = href;
+    void navigate(href, { replace });
   }
   function resetDocument() {
     setLoadingDocument(false);
@@ -216,6 +235,7 @@ export function App() {
     if (target) await loadDocument(target, ticket, selected.id);
   }
   async function workspace(account: User, recover = false) {
+    handledHref.current = location.pathname + location.search;
     setUser(account); setBootError(''); setListLoading(true); setListError('');
     const ticket = ++generation.current;
     try {
@@ -265,6 +285,16 @@ export function App() {
     catch (error) { if (error instanceof ApiError && error.status === 401) setUser(null); else setBootError(failureMessage(error)); }
   }
   useEffect(() => { void start(); }, []);
+  useEffect(() => {
+    if (navigationBlocker.state === 'blocked' && !dirty && !blocked && !pending) navigationBlocker.reset();
+  }, [navigationBlocker, dirty, blocked, pending]);
+  useEffect(() => {
+    const href = routeLocation.pathname + routeLocation.search;
+    if (!user || href === handledHref.current) return;
+    handledHref.current = href;
+    setMobileOpen(false); resetDocument(); setSpace(null); setDocuments([]);
+    void workspace(user);
+  }, [routeLocation.pathname, routeLocation.search, user?.id]);
   useEffect(() => {
     const media = matchMedia('(max-width: 700px)');
     const change = () => { setNarrow(media.matches); setMobileOpen(false); };
@@ -347,7 +377,7 @@ export function App() {
       const initial = emptyDraft(); newDraftBaseline.current = initial; setDraft(initial);
       setEditorKey(key => key + 1);
       draftSpaceId.current = space?.id ?? null;
-      rememberSelection(space?.slug ?? null, null);
+      rememberSelection(space?.slug ?? null, null, false);
       requestAnimationFrame(() => { titleInput.current?.focus(); titleInput.current?.select(); });
     });
   }
@@ -439,7 +469,11 @@ export function App() {
       const ticket = generation.current;
       setBusyLabel('Opening document…'); setBusy(true);
       void api.space(result.spaceId).then(async selected => {
-        if (ticket === generation.current) await selectSpace(selected, result.id);
+        const loaded = await api.document(result.id);
+        if (ticket === generation.current) {
+          rememberSelection(selected.slug, loaded.document.slug, false);
+          await selectSpace(selected, result.id);
+        }
       }).catch(error => { if (ticket === generation.current && !unavailable(error)) setSaveError(failureMessage(error)); })
         .finally(() => setBusy(false));
     });
@@ -455,12 +489,12 @@ export function App() {
 
   const navigation = <>
     {spaces.length > 0 && <><label htmlFor="space">Space</label><select id="space" aria-label="Space" value={space?.id ?? ''} disabled={blocked} onChange={event => {
-      const selected = spaces.find(item => item.id === event.target.value); if (selected) guarded(() => { void selectSpace(selected); });
+      const selected = spaces.find(item => item.id === event.target.value); if (selected) void navigate(`/spaces/${selected.slug}`);
     }}><option value="" disabled>Select a space</option>{spaces.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></>}
     {spacesCursor && <button disabled={listLoading} onClick={() => { void moreSpaces(spacesCursor); }}>More spaces</button>}
     {space && <><div className="listhead"><span>Documents</span>{space.access === 'editor' && !accessIssue && <button onClick={newDocument} disabled={blocked}>New document</button>}</div>
       {listLoading && <p role="status" className="muted">Loading documents…</p>}
-      <nav className="documents" aria-label="Documents">{documents.map(item => <button key={item.id} className={base?.document.id === item.id ? 'active' : ''} aria-current={base?.document.id === item.id ? 'page' : undefined} disabled={blocked} onClick={() => guarded(() => { const ticket = ++generation.current; resetDocument(); rememberSelection(space.slug,item.slug); void loadDocument(item.id,ticket,space.id); })}>{item.title}{item.archivedAt && <small>Archived</small>}</button>)}</nav>
+      <nav className="documents" aria-label="Documents">{documents.map(item => <Link key={item.id} to={`/spaces/${space.slug}/documents/${item.slug}`} className={base?.document.id === item.id ? 'active' : ''} aria-current={base?.document.id === item.id ? 'page' : undefined} aria-disabled={blocked || undefined} onClick={event => { if (blocked) event.preventDefault(); }}>{item.title}{item.archivedAt && <small>Archived</small>}</Link>)}</nav>
       {!listLoading && !listError && documents.length === 0 && <p className="muted">No documents in this space.</p>}
       {documentsCursor && <button disabled={listLoading} onClick={() => { void listDocuments(space,includeArchived,documentsCursor); }}>More documents</button>}
       <label className="archive-toggle"><input type="checkbox" checked={includeArchived} disabled={blocked} onChange={event => { setIncludeArchived(event.target.checked); void listDocuments(space,event.target.checked); }} />Show archived</label>
@@ -534,7 +568,12 @@ export function App() {
           </main>
         </div>}
       </>}
-    <Dialog.Root open={Boolean(pending)} onOpenChange={open => { if(!open)setPending(null); }}><Dialog.Portal><Dialog.Overlay className="dialog-overlay" /><Dialog.Content className="dialog" onCloseAutoFocus={event => { event.preventDefault();titleInput.current?.focus(); }}><Dialog.Title>Unsaved changes</Dialog.Title><Dialog.Description>Your title and body have not been saved. Continuing will discard your local changes.</Dialog.Description><div className="actions"><Dialog.Close className="primary">Keep editing</Dialog.Close><button onClick={() => { const action=pending?.action;setPending(null);resetDraftToBaseline();action?.(); }}>Discard changes</button></div></Dialog.Content></Dialog.Portal></Dialog.Root>
+    <Dialog.Root open={Boolean(pending) || navigationBlocker.state === 'blocked'} onOpenChange={open => {
+      if (!open) { setPending(null); if (navigationBlocker.state === 'blocked') navigationBlocker.reset(); }
+    }}><Dialog.Portal><Dialog.Overlay className="dialog-overlay" /><Dialog.Content className="dialog" onCloseAutoFocus={event => { event.preventDefault();titleInput.current?.focus(); }}><Dialog.Title>{blocked ? 'Please wait' : 'Unsaved changes'}</Dialog.Title><Dialog.Description>{blocked ? 'The current request must finish before leaving this document.' : 'Your title and body have not been saved. Continuing will discard your local changes.'}</Dialog.Description><div className="actions"><Dialog.Close className="primary">Keep editing</Dialog.Close><button disabled={blocked} onClick={() => {
+      const action = pending?.action; setPending(null); resetDraftToBaseline();
+      if (navigationBlocker.state === 'blocked') navigationBlocker.proceed(); else action?.();
+    }}>Discard changes</button></div></Dialog.Content></Dialog.Portal></Dialog.Root>
     {searchOpen && user && !accessIssue && <SearchDialog onClose={() => setSearchOpen(false)} onPick={pickSearchResult} onFailure={unavailable} />}
     <Dialog.Root open={Boolean(publicationPrompt)} onOpenChange={open => { if (!open) setPublicationPrompt(null); }}><Dialog.Portal><Dialog.Overlay className="dialog-overlay" /><Dialog.Content className="dialog" onCloseAutoFocus={event => { event.preventDefault(); titleInput.current?.focus(); }}>
       <Dialog.Title>{publicationPrompt?.action === 'publish' ? `Publish revision ${publicationPrompt.revision.revisionNumber}?` : 'Withdraw publication?'}</Dialog.Title>

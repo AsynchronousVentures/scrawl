@@ -26,6 +26,125 @@ function url(result = seeded) {
   return `${demo.origin}/?space=${result.spaceId}&document=${result.documentId}`;
 }
 
+async function navigationDocument(context: BrowserContext) {
+  const original = await readDocument(context);
+  const created = await apiRequest(context, `/api/v1/spaces/${seeded.spaceId}/documents`, {
+    method: 'POST', headers: { origin: demo.origin }, data: { title: 'Another handbook', content: original.data.revision.content },
+  });
+  expect(created.status()).toBe(201);
+  const value: unknown = await created.json();
+  if (!value || typeof value !== 'object' || !('id' in value) || typeof value.id !== 'string') throw new Error('Missing created document identity');
+  return (await readDocument(context, value.id)).data;
+}
+
+test('document links support Back/Forward and opening a separate tab without disturbing a draft', async ({ page, context }) => {
+  await login(page);
+  const original = await readDocument(context), second = await navigationDocument(context);
+  await page.reload();
+  await expect(page).toHaveURL(`${demo.origin}/spaces/${original.data.spaceSlug}/documents/${original.data.slug}`);
+  const originalUrl = page.url(), secondUrl = `${demo.origin}/spaces/${second.spaceSlug}/documents/${second.slug}`;
+  await page.getByRole('link', { name: 'Another handbook', exact: true }).click();
+  await expect(page).toHaveURL(secondUrl);
+  await expect(title(page)).toHaveValue('Another handbook');
+  await page.goBack();
+  await expect(page).toHaveURL(originalUrl);
+  await expect(title(page)).toHaveValue(original.data.revision.title);
+  await page.goForward();
+  await expect(title(page)).toHaveValue('Another handbook');
+  await title(page).fill('Complete local draft in the current tab');
+  await body(page).fill('Unsaved body stays here while another tab opens.');
+  const otherTab = context.waitForEvent('page');
+  await page.getByRole('link', { name: original.data.revision.title, exact: true }).click({ modifiers: ['ControlOrMeta'] });
+  const opened = await otherTab;
+  try {
+    await expect(opened).toHaveURL(originalUrl);
+    await expect(title(opened)).toHaveValue(original.data.revision.title);
+    await expect(title(page)).toHaveValue('Complete local draft in the current tab');
+    await expect(body(page)).toContainText('Unsaved body stays here while another tab opens.');
+    await expect(page.getByRole('dialog', { name: 'Unsaved changes' })).toHaveCount(0);
+    expect((await readDocument(context, second.id)).data).toEqual(second);
+    await assertNoBrowserPersistence(page);
+  } finally { await opened.close(); }
+});
+
+test('Back and Forward require deliberate discard and Keep editing preserves the complete draft without writes', async ({ page, context }) => {
+  await login(page);
+  const original = await readDocument(context), second = await navigationDocument(context);
+  await page.reload();
+  await expect(page).toHaveURL(`${demo.origin}/spaces/${original.data.spaceSlug}/documents/${original.data.slug}`);
+  const originalUrl = page.url();
+  await page.getByRole('link', { name: 'Another handbook', exact: true }).click();
+  await expect(title(page)).toHaveValue('Another handbook');
+  const secondUrl = page.url();
+  await title(page).fill('Unsent title'); await body(page).fill('Unsent body, retained after canceled Back.');
+  let writes = 0;
+  page.on('request', request => { if (['PATCH', 'POST', 'DELETE'].includes(request.method())) writes++; });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await page.evaluate(() => history.back());
+    const dialog = page.getByRole('dialog', { name: 'Unsaved changes' });
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole('button', { name: 'Keep editing', exact: true }).click();
+    await expect(page).toHaveURL(secondUrl);
+    await expect(title(page)).toHaveValue('Unsent title');
+    await expect(body(page)).toContainText('Unsent body, retained after canceled Back.');
+  }
+  await page.evaluate(() => history.back());
+  await page.getByRole('dialog', { name: 'Unsaved changes' }).getByRole('button', { name: 'Discard changes', exact: true }).click();
+  await expect(page).toHaveURL(originalUrl);
+  await expect(title(page)).toHaveValue(original.data.revision.title);
+  await title(page).fill('Unsent original title'); await body(page).fill('Complete forward draft.');
+  await page.evaluate(() => history.forward());
+  const dialog = page.getByRole('dialog', { name: 'Unsaved changes' });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole('button', { name: 'Keep editing', exact: true }).click();
+  await expect(page).toHaveURL(originalUrl);
+  await expect(title(page)).toHaveValue('Unsent original title');
+  await expect(body(page)).toContainText('Complete forward draft.');
+  await page.evaluate(() => history.forward());
+  await page.getByRole('dialog', { name: 'Unsaved changes' }).getByRole('button', { name: 'Discard changes', exact: true }).click();
+  await expect(title(page)).toHaveValue('Another handbook');
+  expect(writes).toBe(0);
+  expect(await readDocument(context)).toEqual(original);
+  expect((await readDocument(context, second.id)).data).toEqual(second);
+});
+
+test('Back cannot abandon an in-flight explicit Save and a committed save adds only one revision', async ({ page, context }) => {
+  await login(page);
+  const original = await readDocument(context), second = await navigationDocument(context);
+  await page.reload();
+  await expect(page).toHaveURL(`${demo.origin}/spaces/${original.data.spaceSlug}/documents/${original.data.slug}`);
+  const originalUrl = page.url();
+  await page.getByRole('link', { name: 'Another handbook', exact: true }).click();
+  await expect(title(page)).toHaveValue('Another handbook');
+  await title(page).fill('Saved despite Back during request');
+  await body(page).fill('Complete saved body.');
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  await page.route(`**/api/v1/documents/${second.id}`, async route => {
+    if (route.request().method() === 'PATCH') await held;
+    await route.continue();
+  });
+  try {
+    const request = page.waitForRequest(request => request.method() === 'PATCH');
+    await save(page).click(); await request;
+    await page.evaluate(() => history.back());
+    const wait = page.getByRole('dialog', { name: 'Please wait' });
+    await expect(wait).toBeVisible();
+    await expect(wait.getByRole('button', { name: 'Discard changes' })).toBeDisabled();
+    release();
+    await expect(save(page)).toBeDisabled();
+    await expect(page.getByText('Saved · revision 2', { exact: true })).toBeVisible();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    const saved = await readDocument(context, second.id);
+    expect(saved.data.currentRevisionNumber).toBe(2);
+    expect(saved.data.revision.title).toBe('Saved despite Back during request');
+    expect(saved.data.revision.plainText).toContain('Complete saved body.');
+    await page.goBack();
+    await expect(page).toHaveURL(originalUrl);
+    await expect(title(page)).toHaveValue(original.data.revision.title);
+  } finally { release(); }
+});
+
 test('readable document links survive login, reload, title changes and legacy bookmarks', async ({ page, context, browser }) => {
   await login(page);
   const original = await readDocument(context);
@@ -1151,7 +1270,7 @@ test('loading, safe read retry and empty states are visible without replacing lo
   await page.goto(`${demo.origin}/?space=${seeded.spaceId}`);
   await expect(page.getByText(/No documents/).first()).toBeVisible();
   await page.getByLabel('Show archived', { exact: true }).check();
-  await expect(page.getByRole('navigation', { name: 'Documents' }).getByRole('button', { name: /Release checklist/ })).toBeVisible();
+  await expect(page.getByRole('navigation', { name: 'Documents' }).getByRole('link', { name: /Release checklist/ })).toBeVisible();
 });
 
 test('a new draft supersedes an in-flight document read without adopting its content or creating history', async ({ page, context }) => {

@@ -6,7 +6,8 @@ The maintainer expanded this session to a cohesive BlockNote demo. Work is on `i
 
 | Area | Implemented | Verified |
 | --- | --- | --- |
-| Native BlockNote/private workflow | Standard blocks/styles, official shadcn UI/server utilities, explicit save/native undo/discard, nested heading outline, history/restore, conflicts, mobile drawer | 71 unit/config/HTTP/CLI tests and all 43 browser workflows passed in a clean full run; zero retries/skips |
+| Native BlockNote/private workflow | Standard blocks/styles, official shadcn UI/server utilities, explicit save/native undo/discard, nested heading outline, history/restore, conflicts, mobile drawer | 71 unit/config/HTTP/CLI tests and all 46 browser workflows passed in a clean full run; zero retries/skips |
+| Normal document navigation | Native links, Back/Forward, independent tabs, draft and in-flight-request blocking | Three focused real-session checks plus the full 46-case browser regression; persistent preview role checks passed with Back/Forward and no content writes |
 | Backend guarantees | Core authorization, immutable revisions, ETag concurrency, space-before-document locks, lifecycle counters | Complete 92-test PostgreSQL regression passed on both 17 and 18, including actual concurrency, rollback, recovery, revocation and guarded Demo A/reset |
 | Readable private links | Persisted scoped slugs, stable title-change links, authorized direct paths, preserved UUID bookmarks, private-safe route logging | Complete 92-test PostgreSQL suites and all 43 browser workflows passed; retained preview migration preserved exact existing content/head/version metadata |
 | Preservation/default PostgreSQL 18 | Fresh official-layout 18 volume; explicit 17 compatibility; finite backed-up native conversion | Exact retained 17-to-disposable-18 restore, all six migrations/native conversion and original source unchanged; two real conversion tests |
@@ -19,6 +20,8 @@ The maintainer expanded this session to a cohesive BlockNote demo. Work is on `i
 `npm ci` and the CI-equivalent complete check passed with zero audit advisories. The delayed-read and native external link/file opener-isolation regressions pass alongside readable-link navigation in the clean full 43-case browser run. The complete hosted foundation matrix on code checkpoint `9874740` passed on both PostgreSQL 17 and 18; readable-link work follows that checkpoint, with its current results in validation. Earlier generated API drift on an intermediate commit was corrected without weakening its check. The pinned backend baseline remains intact. Optional AI is deferred; no paid calls occurred.
 
 [VALIDATION.md](../VALIDATION.md) records exact commands, migration effects, screenshots and honest limits. [The walkthrough](demo-walkthrough.md) has the current public preview URL, local credential retrieval, restart commands and workflows. Stale preview routes and the obsolete prototype HTTP process were removed at the maintainer's request; T3 Code remains private. Original retained 17 data/history and prototype files remain intact. Historical P4 status below describes its checkpoint, not the current native editor or current routes.
+
+The maintainer has requested continuing autonomous development toward a cohesive OSS alternative to Outline. Normal navigation is the first follow-up improvement; isolated collaboration/server validation is next. Existing packet boundaries are historical, while retained-data, authorization, license and no-merge/no-production constraints remain. [The integration backlog](integration-backlog.md) records research and dependencies; planned features are not described as running demo behavior.
 
 ## Completed P4 checkpoint
 
