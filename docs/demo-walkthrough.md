@@ -283,6 +283,20 @@ node --import ../../node_modules/tsx/dist/loader.mjs ../../scripts/content-check
 
 The observed scan reports `ok: true`, 7 documents, 10 revisions and one attachment, zero integrity errors. Output contains only aggregate counts/categories; missing or inconsistent data returns exit status 1. This command does not check live state/comments or unregistered files and is not a backup. No migration or restart is required for this host-only addition.
 
+## Development recovery
+
+The new [host-only recovery workflow](recovery.md) backs up a stopped development instance and restores only into a newly named owned target on the existing PostgreSQL 18 server. Database authentication records and private files are included; runtime secrets are protected separately. Native single-document export is still a content snapshot.
+
+To run the actual CLI/HTTP rehearsal locally without changing the retained preview:
+
+```sh
+cd /home/dev/t3/projects/scrawl
+SCRAWL_PG_CLIENT_CONTAINER=scrawl-autonomous18-postgres-1 NODE_ENV=test \
+  node --env-file-if-exists=.env --import tsx --test test/integration/recovery.test.ts
+```
+
+It creates and removes its own synthetic databases/private temporary files on the existing test server. No migration or preview restart is needed for this host-only addition. The retained preview remains running on its original database with collaboration disabled. Recovery's exact backup/restore instructions and unverified limits are in the linked document; no retained backup or production restore is claimed. New work remains local while the included Actions allowance is exhausted.
+
 ## Personal favorites
 
 At https://agentvm.beardie-tone.ts.net:10000/spaces/scrawl-field-guide/documents/start-here, open Document actions and choose Add to favorites or Remove from favorites. Favorites appear above the space selector. Readers can keep their own favorites. Links preserve native new-tab behavior and the same unsaved-navigation guard. Start here is favorited for the synthetic administrator. This preference does not save document edits or create a revision.

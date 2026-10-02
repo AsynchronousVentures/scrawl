@@ -60,7 +60,7 @@ npm ci
 docker compose --project-name scrawl-dev18 -f compose.yaml up -d --wait postgres
 npm run db:migrate
 npm run check
-NODE_ENV=test npm run test:db
+SCRAWL_PG_CLIENT_CONTAINER=scrawl-dev18-postgres-1 NODE_ENV=test npm run test:db
 npm run openapi:export
 npm run dev
 ```
@@ -73,7 +73,7 @@ curl -i http://127.0.0.1:3000/health/ready
 curl http://127.0.0.1:3000/openapi.json
 ```
 
-`npm test` covers configuration and injected HTTP tests. `npm run test:db` requires local PostgreSQL with schema/database creation privileges and fails when it is unavailable. `npm run check` covers import boundaries, both TypeScript projects, unit/HTTP tests, both builds, and the generated API type check. Database and browser suites run separately and sequentially. CI includes them, but hosted execution is recorded separately in [VALIDATION.md](VALIDATION.md).
+`npm test` covers configuration and injected HTTP tests. `npm run test:db` requires local PostgreSQL with schema/database creation privileges and fails when it is unavailable. Its recovery rehearsal also requires native PostgreSQL 18 clients; set `SCRAWL_PG_CLIENT_CONTAINER` to the actual existing PostgreSQL container when host clients are unavailable, or omit it with host clients installed. `npm run check` covers import boundaries, both TypeScript projects, unit/HTTP tests, both builds, and the generated API type check. Database and browser suites run separately and sequentially. CI includes them, but hosted execution is recorded separately in [VALIDATION.md](VALIDATION.md).
 
 `npm ci` regenerates the ignored Prisma client; `db:migrate` applies the single checked-in migration history. OpenAPI describes implemented routes, including search, attachments, rendered exports and publishing, and is written to ignored `artifacts/openapi.json`. `npm run web:generate` regenerates the checked-in browser types from that specification. Frontend code imports only the generated client and browser-safe content contract, never Prisma or server operations. There is no API explorer.
 
@@ -106,6 +106,8 @@ Dry-run checks every source snapshot without writing it. Apply writes an exclusi
 `ATTACHMENT_STORAGE_DIR` names the private application-owned byte directory, defaulting to `var/private-attachments`. Keep it outside frontend/static roots and preserve it with the database. Files are immutable and retained by revision history; discarding a draft or resetting synthetic rows does not wipe a directory. Process-crash orphan inspection and cleanup remain explicit operator work.
 
 On the trusted host, `npm run content:check` checks saved heads, all native revisions/derived text, attachment references and registered file sizes/hashes using the configured database and private storage. It prints only aggregate counts/categories and exits nonzero on integrity errors. It never repairs or deletes data and does not inspect authentication records. Run it against the matching database/storage pair. This is not a backup or complete live-room audit; unregistered files, live state/comments and operating-system permissions are outside its scope. See [validation](VALIDATION.md#read-only-saved-content-and-private-storage-check) for commands and actual results.
+
+`npm run recovery` provides trusted host backup/rehearsal commands for a stopped development instance on the existing PostgreSQL 18 server. It preserves the database and matching private files, refuses existing restore targets, and verifies recovered records/content/file integrity. Archives contain private authentication data; runtime secrets are protected separately. Follow [development recovery](docs/recovery.md) for exact commands and limits. This is not an online or production backup service.
 
 Publishing uses `PUBLIC_PUBLISHING_ENABLED=false` by default. To exercise it on a local demo, deliberately set the value to `true` in that demo's private configuration and restart; each selected revision still needs administrator approval. Global disabling pauses public reads, while unpublish or archive revokes a grant. Re-enabling can resume a still-valid grant, so it must not be described as permanent revocation. This does not authorize public exposure of the development application.
 

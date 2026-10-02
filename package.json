@@ -36,6 +36,7 @@
     "demo:dev": "node --import tsx scripts/demo-dev.ts",
     "content:migrate": "node --env-file-if-exists=.env --import tsx scripts/content-upgrade.ts",
     "content:check": "node --env-file-if-exists=.env --import tsx scripts/content-check.ts",
+    "recovery": "node --env-file-if-exists=.env --import tsx scripts/recovery.ts",
     "demo:workspace": "node --import tsx scripts/demo-workspace.ts",
     "search:rebuild": "node --env-file-if-exists=.env --import tsx scripts/search-index.ts rebuild",
     "demo:verify": "node --import tsx scripts/demo-verify.ts"
