@@ -12,6 +12,7 @@ import { registerAuthRoutes, registerCoreRoutes } from './http/core-routes.js';
 import type { Core } from './core/index.js';
 import { registerDocumentRoutes } from './http/document-routes.js';
 import { registerSearchRoutes } from './http/search-routes.js';
+import { registerFavoriteRoutes } from './http/favorite-routes.js';
 import { registerAttachmentRoutes } from './http/attachment-routes.js';
 import { registerPublishingRoutes } from './http/publishing-routes.js';
 import type { Publishing } from './capabilities/publishing/index.js';
@@ -136,6 +137,7 @@ export async function buildApp({ config, checkDatabase, logging = true, core, fr
     registerDocumentRoutes(app, core, collaboration);
     registerAttachmentRoutes(app, core);
     registerSearchRoutes(app, core);
+    registerFavoriteRoutes(app, core);
     app.get('/api/v1/collaboration', { schema: {
       operationId: 'getCollaborationAvailability', tags: ['Collaboration'], response: {
         200: { type: 'object', additionalProperties: false, required: ['enabled'], properties: { enabled: { type: 'boolean' } } },

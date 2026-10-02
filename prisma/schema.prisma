@@ -33,6 +33,7 @@ model User {
   authoredRevisions DocumentRevision[]
   uploadedAttachments Attachment[]
   publications Publication[]
+  favorites DocumentFavorite[]
 
   @@unique([email])
   @@map("user")
@@ -139,11 +140,23 @@ model Document {
   revisions             DocumentRevision[] @relation("DocumentHistory")
   attachments           Attachment[]
   publication           Publication?
+  favorites             DocumentFavorite[]
 
   @@unique([id, spaceId])
   @@index([spaceId, parentDocumentId, archivedAt, id])
   @@unique([spaceId, slug])
   @@index([spaceId, archivedAt, id])
+}
+
+model DocumentFavorite {
+  userId     String
+  documentId String   @db.Uuid
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+
+  @@id([userId, documentId])
+  @@index([documentId])
 }
 
 model DocumentLive {

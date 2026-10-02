@@ -169,6 +169,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/documents/{id}/favorite": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["readDocumentFavorite"];
+        /** @description Idempotent personal navigation preference. Readers may set it; document content, revisions, ETag and space grants stay unchanged. Archived documents can only be removed. */
+        put: operations["setDocumentFavorite"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/documents/{id}/live": {
         parameters: {
             query?: never;
@@ -470,6 +487,23 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["unarchiveDocument"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/favorites": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Personal, currently authorized nonarchived saved documents. Current session/role/grants are checked inside the bounded title query. */
+        get: operations["listFavorites"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1630,6 +1664,120 @@ export interface operations {
                         status: number;
                         title: string;
                         type: string;
+                    };
+                };
+            };
+        };
+    };
+    readDocumentFavorite: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        favorited: boolean;
+                    };
+                };
+            };
+        };
+    };
+    setDocumentFavorite: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    favorited: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        favorited: boolean;
                     };
                 };
             };
@@ -3430,6 +3578,72 @@ export interface operations {
                         spaceSlug: string;
                         /** Format: date-time */
                         updatedAt: string;
+                    };
+                };
+            };
+        };
+    };
+    listFavorites: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: {
+                            /** Format: uuid */
+                            id: string;
+                            slug: string;
+                            /** Format: uuid */
+                            spaceId: string;
+                            spaceName: string;
+                            spaceSlug: string;
+                            title: string;
+                        }[];
+                        /** Format: uuid */
+                        nextCursor: string | null;
                     };
                 };
             };

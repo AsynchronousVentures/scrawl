@@ -107,6 +107,10 @@ The hierarchy core adds a nullable same-space parent reference, enforced by a co
 
 Archive rejects a parent with active children; an archived parent cannot receive new/active children. Unarchive requires an active parent, or an explicit move to an active parent/root first. No recursive hide/move, cross-space move, per-document permission override or publication cascade is added. The connected navigation is not yet implemented. See [ADR 0004](adr/0004-document-organization.md).
 
+## Personal document favorites, prepared on branch
+
+`DocumentFavorite` stores one `(userId, documentId)` key and its creation time. It is personal navigation metadata, not document content, a revision or an access grant. Authorized readers can set/remove their own preference; client payloads never choose its owner. The additive tenth migration preserves existing records and history. Favorite commands hold the established space-before-document locks and recheck the current session/grant. They change no document counter or ETag. Listing checks session, current role and membership inside the saved-title query before pagination, omitting archived/inaccessible documents while retaining the personal preference for possible unarchive/regrant. No favorites are included in native/public exports. The connected interface and retained-preview migration are not yet verified.
+
 ## Add only with the feature
 
 Whole-instance backup and document export remain distinct. Future content import must remap IDs, preserve attribution as safe metadata, assign a destination space, and never escalate membership or restore public grants implicitly. No import or full backup system is implemented.
