@@ -1084,6 +1084,7 @@ test('nested native list undo/redo preserves another account\'s child and checkp
       end.setStart(lastText, lastText.textContent?.length ?? 0); end.collapse(true);
       return selection.getRangeAt(0).compareBoundaryPoints(Range.START_TO_START, end) >= 0;
     });
+    if (!atChildEnd) console.error('Native nested append precondition:', JSON.stringify(beforeInsertion));
     expect(atChildEnd).toBe(true);
     await peer.keyboard.insertText(' with administrator contribution');
     const caret = { before: beforeInsertion, after: await nativeSelectionEvidence(peer) };
