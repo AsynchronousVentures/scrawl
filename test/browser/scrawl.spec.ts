@@ -13,6 +13,7 @@ import type { DemoRole } from '../../scripts/demo-config.js';
 import type { DemoBResult } from '../../scripts/demo-b.js';
 import type { operations } from '../../web/src/api/schema.js';
 import { createBrowserDemo, type BrowserDemo } from './fixture.js';
+import { richDemoContent } from '../../scripts/demo-content.js';
 
 type Document = operations['readDocument']['responses'][200]['content']['application/json'];
 let demo: BrowserDemo;
@@ -46,6 +47,55 @@ const favoriteNavigation = (page: Page) => page.getByRole('navigation', { name: 
 function favoriteLink(page: Page, document: Pick<Document, 'spaceSlug' | 'slug'>) {
   return favoriteNavigation(page).getByRole('link').and(page.locator(`[href="/spaces/${document.spaceSlug}/documents/${document.slug}"]`));
 }
+
+test('native document-end shortcuts preserve selection, rich content and a trailing non-text block through explicit save', async ({ page, context }) => {
+  await login(page);
+  const rich = richDemoContent(['Synthetic keyboard reference']);
+  const cases = [
+    { tail: { id: 'end-paragraph', type: 'paragraph', content: [{ type: 'text', text: 'Final paragraph', styles: {} }] }, text: 'Final paragraph' },
+    { tail: { id: 'end-parent', type: 'bulletListItem', content: [{ type: 'text', text: 'Parent item', styles: {} }],
+      children: [{ id: 'end-child', type: 'bulletListItem', content: [{ type: 'text', text: 'Final nested child', styles: {} }] }] }, text: 'Final nested child' },
+    { tail: rich.document.find(block => block.type === 'table')!, text: 'Preserved' },
+    { tail: rich.document.find(block => block.type === 'codeBlock')!, text: 'History remains unchanged by rejected writes.' },
+    { tail: rich.document.find(block => block.type === 'divider')!, text: 'reference' },
+  ];
+  for (const { tail, text } of cases) {
+    const baseline = await readDocument(context);
+    const content = validateContent({ ...rich, document: [
+      { id: 'end-start', type: 'paragraph', content: [{ type: 'text', text: 'Earlier keyboard reference', styles: {} }] }, tail,
+    ] }).content;
+    const response = await apiRequest(context, `/api/v1/documents/${seeded.documentId}`, {
+      method: 'PATCH', headers: { origin: demo.origin, 'if-match': baseline.etag }, data: { title: 'Synthetic keyboard reference', content },
+    }); expect(response.status()).toBe(200);
+    const saved = await readDocument(context); await page.reload(); await expect(body(page)).toBeEditable();
+    const initial = body(page).locator('.bn-inline-content').first(); await initial.click();
+    await page.keyboard.press('ControlOrMeta+End');
+    expect(await body(page).evaluate(editor => {
+      const selection = window.getSelection(); if (!selection?.isCollapsed || !selection.rangeCount) return false;
+      const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT); let last: Node | null = null;
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        if (node.parentElement?.closest('.bn-inline-content') && node.textContent?.length) last = node;
+      }
+      if (!last) return false; const end = document.createRange(); end.setStart(last, last.textContent?.length ?? 0); end.collapse(true);
+      return selection.getRangeAt(0).compareBoundaryPoints(Range.START_TO_START, end) >= 0;
+    })).toBe(true);
+    await initial.click(); await page.keyboard.press('ControlOrMeta+Shift+End');
+    const selection = await page.evaluate(() => ({ collapsed: window.getSelection()?.isCollapsed, text: window.getSelection()?.toString() }));
+    expect(selection.collapsed).toBe(false); expect(selection.text).toContain(text);
+    await expect(save(page)).toBeDisabled(); expect(await readDocument(context)).toEqual(saved);
+    if (tail.type === 'divider') {
+      await body(page).press('ControlOrMeta+End'); await page.keyboard.insertText(' appended reference');
+      await expect(body(page)).toContainText('Earlier keyboard reference appended reference');
+      await save(page).click();
+      await expect(page.getByText(`Saved revision ${saved.data.currentRevisionNumber + 1}.`, { exact: true })).toBeVisible();
+      await expect(save(page)).toBeDisabled();
+      const appended = await readDocument(context);
+      expect(appended.data.currentRevisionNumber).toBe(saved.data.currentRevisionNumber + 1);
+      expect(validateContent(appended.data.revision.content).content.document.at(-1)?.type).toBe('divider');
+      await page.reload(); await expect(body(page)).toContainText('Earlier keyboard reference appended reference');
+    }
+  }
+});
 
 test('favorites preserve complete dirty edits, ETags and conflict reconciliation while guarding navigation', async ({ page, context }) => {
   await login(page); const baseline = await readDocument(context);

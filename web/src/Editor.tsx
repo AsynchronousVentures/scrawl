@@ -8,6 +8,7 @@ import { BlockNoteView } from '@blocknote/shadcn';
 import { withCollaboration } from '@blocknote/core/yjs';
 import { PrivateComments, type CommentState } from './PrivateComments';
 import type { LiveSession } from './live';
+import { DocumentEnd } from './document-end';
 import { contentSchema, isSafeLinkUrl, validateContent, type ContentEnvelope, type NativeBlock, type NativeBlockSchema } from '@scrawl/content';
 
 type Heading = { id: string; text: string; level: number; depth: number };
@@ -59,9 +60,10 @@ export function Editor({ initialContent, editable, onChange, onValidationChange,
   // The parent remounts for an intentional navigation, restore, or discard.
   const [initial] = useState(() => validateContent(initialContent).content);
   const [initialEditable] = useState(editable);
-  const [extensions] = useState(() => live?.extensions() ?? []);
+  const [extensions] = useState(() => [DocumentEnd, ...(live?.extensions() ?? [])]);
   const options = {
     schema: contentSchema,
+    extensions,
     initialContent: initial.document,
     domAttributes: {
       editor: {

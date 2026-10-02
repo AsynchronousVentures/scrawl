@@ -33,6 +33,9 @@ async function nativeSelectionEvidence(page: Page) {
       focusOffset: selection?.focusOffset ?? null,
       focusTextCharacters: focus?.nodeType === Node.TEXT_NODE ? focus.textContent?.length ?? 0 : null,
       insideEditor: Boolean(editor),
+      documentFocused: document.hasFocus(),
+      activeElementIsEditor: document.activeElement === editor,
+      editable: editor?.getAttribute('contenteditable') ?? null,
       blockType: element?.closest('[data-content-type]')?.getAttribute('data-content-type') ?? null,
     };
   });
@@ -1062,7 +1065,8 @@ test('nested native list undo/redo preserves another account\'s child and checkp
     await slashBlock(page, 'bullet', 'Bullet List'); await page.keyboard.insertText('Local parent');
     await page.keyboard.press('Enter'); await page.keyboard.press('Tab'); await page.keyboard.insertText('Local child');
     const peerChild = body(peer).locator('.bn-inline-content').filter({ hasText: 'Local child' });
-    await expect(peerChild).toBeVisible(); await peerChild.click();
+    await expect(peerChild).toBeVisible();
+    await peerChild.click();
     // This child is the final block. A line-end key can leave the caret inside
     // it; use document end for the intended append and prove the input position.
     await peer.keyboard.press('ControlOrMeta+End');
