@@ -87,7 +87,7 @@ test('native document-end shortcuts preserve selection, rich content and a trail
       await body(page).press('ControlOrMeta+End'); await page.keyboard.insertText(' appended reference');
       await expect(body(page)).toContainText('Earlier keyboard reference appended reference');
       await save(page).click();
-      await expect(page.getByText(`Saved revision ${saved.data.currentRevisionNumber + 1}.`, { exact: true })).toBeVisible();
+      await expect(page.getByText(`Saved · revision ${saved.data.currentRevisionNumber + 1}`, { exact: true })).toBeVisible();
       await expect(save(page)).toBeDisabled();
       const appended = await readDocument(context);
       expect(appended.data.currentRevisionNumber).toBe(saved.data.currentRevisionNumber + 1);

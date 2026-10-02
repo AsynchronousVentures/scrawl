@@ -1,6 +1,6 @@
 # Integration demo work
 
-The current local editor correction resolves native document-end shortcuts through the supplied BlockNote/ProseMirror APIs. Focused real editing and standard checks pass; the complete browser run is pending. It is unpushed, with results in [validation](../VALIDATION.md). Retained collaboration remains disabled until its activation audit is complete. Actions minutes are exhausted, so development and checks remain local without CI-triggering pushes.
+Local `bd147c7` resolves native document-end shortcuts through the supplied BlockNote/ProseMirror APIs. Standard checks pass 101/101 and four focused workflows pass. Complete regression finishes 116/117, including all 26 experimental live cases; its sole test-message expectation is corrected and passes separately, with no claim of a green repeated full suite. It is unpushed, with results in [validation](../VALIDATION.md). Retained collaboration remains disabled until its activation audit is complete. Actions minutes are exhausted, so development and checks remain local without CI-triggering pushes.
 
 Work is on `integration/blocknote-demo`. GitHub's `main` contains the completed P4 checkpoint `445bae2`; integration work is not merged or released. The maintainer authorized this session to continue across packet boundaries, push the integration branch and maintain a draft PR. A later explicit request authorizes public Tailscale Funnel access for the synthetic Scrawl preview and stale-preview cleanup. No merge or production deployment is authorized.
 
