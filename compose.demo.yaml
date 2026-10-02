@@ -1,17 +1,18 @@
 # Isolated, disposable development Demo A database. Never a deployment definition.
 # Use: docker compose --env-file .env.demo -f compose.demo.yaml up -d --wait
-name: scrawl-demo-a
+# Existing PostgreSQL 17 data uses compose.demo.postgres17.yaml and its original project.
+name: scrawl-demo-a18
 services:
   postgres:
-    image: postgres:17
+    image: postgres:18
     environment:
       POSTGRES_USER: ${POSTGRES_USER:?Run demo:init first}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run demo:init first}
       POSTGRES_DB: scrawl_demo_a
     ports:
-      - "127.0.0.1:${DEMO_DB_PORT:-5433}:5432"
+      - "127.0.0.1:${DEMO_DB_PORT:-5434}:5432"
     volumes:
-      - demo_postgres_data:/var/lib/postgresql/data
+      - demo_postgres18_data:/var/lib/postgresql
     healthcheck:
       test:
         - CMD-SHELL
@@ -20,4 +21,4 @@ services:
       timeout: 3s
       retries: 10
 volumes:
-  demo_postgres_data:
+  demo_postgres18_data:

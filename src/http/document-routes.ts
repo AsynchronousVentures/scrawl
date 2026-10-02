@@ -6,14 +6,19 @@ import type { FastifyInstance } from 'fastify';
 import type { Core } from '../core/index.js';
 import { documentEtag } from '../core/documents/index.js';
 import { problemSchema } from './problems.js';
+import { slugSchema } from './slugs.js';
+import type { Collaboration } from '../capabilities/collaboration/index.js';
+import { exportFilename } from '../shared/export-filename.js';
 
 const contentSchema = {
-  type: 'object', additionalProperties: false, required: ['format', 'schemaVersion', 'document'],
+  type: 'object', additionalProperties: false, required: ['format', 'schemaVersion', 'editorVersion', 'document'],
   properties: {
-    format: { type: 'string', enum: ['prosemirror-json'] },
+    format: { type: 'string', enum: ['blocknote-json'] },
     schemaVersion: { type: 'integer', enum: [1] },
-    // Core validates the exact native node/mark schema; preserve its validated JSON in responses.
-    document: { type: 'object', additionalProperties: true },
+    editorVersion: { type: 'string', enum: ['0.55.0'] },
+    // Core validates native blocks/styles/props. Preserve every validated block
+    // field instead of letting response serialization discard library metadata.
+    document: { type: 'array', items: { type: 'object', additionalProperties: true } },
   },
 } as const;
 const titleSchema = { type: 'string', minLength: 1, maxLength: 200, pattern: '\\S' } as const;
@@ -36,15 +41,18 @@ const revisionSchema = {
 } as const;
 const documentProperties = {
   id: { type: 'string', format: 'uuid' }, spaceId: { type: 'string', format: 'uuid' },
+  slug: slugSchema, spaceSlug: slugSchema,
+  parentDocumentId: { type: ['string', 'null'], format: 'uuid' },
+  editingMode: { type: 'string', enum: ['solo', 'live'] },
   currentRevisionNumber: { type: 'integer', minimum: 1 }, lockVersion: { type: 'integer', minimum: 1 },
   createdAt: { type: 'string', format: 'date-time' }, createdBy: { type: 'string' },
   updatedAt: { type: 'string', format: 'date-time' },
   archivedAt: { type: ['string', 'null'], format: 'date-time' }, archivedBy: { type: ['string', 'null'] },
 } as const;
 const documentRequired = [
-  'id', 'spaceId', 'currentRevisionNumber', 'lockVersion', 'createdAt', 'createdBy', 'updatedAt', 'archivedAt', 'archivedBy',
+  'id', 'slug', 'spaceId', 'spaceSlug', 'parentDocumentId', 'editingMode', 'currentRevisionNumber', 'lockVersion', 'createdAt', 'createdBy', 'updatedAt', 'archivedAt', 'archivedBy',
 ] as const;
-const documentSchema = {
+export const documentSchema = {
   type: 'object', additionalProperties: false, required: [...documentRequired, 'revision'],
   properties: { ...documentProperties, revision: revisionSchema },
 } as const;
@@ -92,15 +100,38 @@ const preconditionHeaders = {
 const limitSchema = { type: 'integer', minimum: 1, maximum: 100 } as const;
 const errors = { '4xx': problemSchema, '5xx': problemSchema };
 
-export function registerDocumentRoutes(app: FastifyInstance, core: Core) {
+export function registerDocumentRoutes(app: FastifyInstance, core: Core, collaboration?: Collaboration) {
+  app.get<{ Params: { id: string; slug: string } }>('/api/v1/spaces/:id/documents/by-slug/:slug', { schema: {
+    operationId: 'readDocumentBySlug', tags: ['Documents'],
+    params: { ...documentParams, required: ['id', 'slug'], properties: { ...documentParams.properties, slug: slugSchema } },
+    response: { 200: documentSchema, ...errors },
+  } }, async (request, reply) => {
+    const document = await core.documents.readBySlug(fromNodeHeaders(request.headers), request.params.id, request.params.slug);
+    return reply.header('etag', documentEtag(document)).send(document);
+  });
+
   app.post<{ Params: { id: string }; Body: unknown }>('/api/v1/spaces/:id/documents', { schema: {
     operationId: 'createDocument', tags: ['Documents'], params: documentParams,
     body: { type: 'object', additionalProperties: false, required: ['title', 'content'], properties: {
       title: titleSchema, content: contentSchema, changeNote: changeNoteSchema,
+      parentDocumentId: { type: ['string', 'null'], format: 'uuid' },
     } },
     response: { 201: documentSchema, ...errors },
   } }, async (request, reply) => {
     const document = await core.documents.create(fromNodeHeaders(request.headers), request.params.id, request.body);
+    return reply.code(201).header('etag', documentEtag(document))
+      .header('location', `/api/v1/documents/${document.id}`).send(document);
+  });
+
+  app.post<{ Params: { id: string }; Body: unknown }>('/api/v1/documents/:id/duplicate', { schema: {
+    operationId: 'duplicateDocument', tags: ['Documents'], params: documentParams,
+    description: 'Create a solo root document in the same space from one selected saved revision, with independently owned private attachments. Does not mutate or checkpoint the source.',
+    body: { type: 'object', additionalProperties: false, required: ['title', 'revisionId'], properties: {
+      title: titleSchema, revisionId: { type: 'string', format: 'uuid' },
+    } },
+    response: { 201: documentSchema, ...errors },
+  } }, async (request, reply) => {
+    const document = await core.documents.duplicate(fromNodeHeaders(request.headers), request.params.id, request.body);
     return reply.code(201).header('etag', documentEtag(document))
       .header('location', `/api/v1/documents/${document.id}`).send(document);
   });
@@ -127,15 +158,27 @@ export function registerDocumentRoutes(app: FastifyInstance, core: Core) {
     return reply.header('etag', documentEtag(document)).send(document);
   });
 
-  app.get<{ Params: { id: string } }>('/api/v1/documents/:id/export', { schema: {
+  app.get<{ Params: { id: string }; Querystring: { revisionId?: string } }>('/api/v1/documents/:id/export', { schema: {
     operationId: 'exportNativeDocument', tags: ['Documents'], params: documentParams,
-    description: 'Export the current authorized snapshot as native JSON, including archived documents. No history or authentication data.',
-    querystring: { type: 'object', additionalProperties: false, properties: {} },
+    description: 'Export one authorized snapshot as native JSON, current or an explicitly selected immutable revision, including archived documents. No full history or authentication data.',
+    querystring: { type: 'object', additionalProperties: false, properties: { revisionId: { type: 'string', format: 'uuid' } } },
     response: { 200: nativeExportSchema, ...errors },
   } }, async (request, reply) => {
-    const exported = await core.documents.exportNative(fromNodeHeaders(request.headers), request.params.id);
-    return reply.header('content-disposition', `attachment; filename="scrawl-document-${exported.document.id}.json"`)
+    const exported = await core.documents.exportNative(fromNodeHeaders(request.headers), request.params.id, request.query.revisionId);
+    return reply.header('content-disposition', `attachment; filename="${exportFilename(exported.revision.title, exported.revision.revisionNumber, 'json')}"`)
       .type('application/json').send(exported);
+  });
+
+  app.post<{ Params: { id: string }; Body: unknown }>('/api/v1/documents/:id/move', { schema: {
+    operationId: 'moveDocument', tags: ['Documents'], params: documentParams, headers: preconditionHeaders,
+    description: 'Move within the same space or to its root. Structure changes the lock version, not content history or publishing.',
+    body: { type: 'object', additionalProperties: false, required: ['parentDocumentId'], properties: {
+      parentDocumentId: { type: ['string', 'null'], format: 'uuid' },
+    } },
+    response: { 200: documentSchema, ...errors },
+  } }, async (request, reply) => {
+    const document = await core.documents.move(fromNodeHeaders(request.headers), request.params.id, request.body, request.headers['if-match']);
+    return reply.header('etag', documentEtag(document)).send(document);
   });
 
   app.patch<{ Params: { id: string }; Body: unknown }>('/api/v1/documents/:id', { schema: {
@@ -194,9 +237,10 @@ export function registerDocumentRoutes(app: FastifyInstance, core: Core) {
         response: { 200: documentSchema, ...errors },
       },
     }, async (request, reply) => {
-      const document = await core.documents[operation](
-        fromNodeHeaders(request.headers), request.params.id, request.headers['if-match'],
-      );
+      const headers = fromNodeHeaders(request.headers);
+      const document = collaboration
+        ? await collaboration.lifecycle(headers, request.params.id, operation, request.headers['if-match'])
+        : await core.documents[operation](headers, request.params.id, request.headers['if-match']);
       return reply.header('etag', documentEtag(document)).send(document);
     });
   }

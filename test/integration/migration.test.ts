@@ -61,17 +61,22 @@ test('P2 migration preserves populated P1 identity, sessions, spaces, and member
   const ownerCookie = await signIn(owner.email, '127.0.0.31');
   const memberCookie = await signIn(member.email, '127.0.0.32');
   const ownerHeaders = new Headers({ cookie: ownerCookie });
-  const space = await core.spaces.create(ownerHeaders, 'Synthetic baseline space');
-  await core.spaces.changeMembership(ownerHeaders, {
-    spaceId: space.id, userId: member.id, role: 'reader', expectedEtag: `"space-${space.id}-v1"`,
-  });
+  // Seed the historical P1 schema directly. Current operations require slug
+  // columns that this upgrade fixture deliberately has not installed yet.
+  const space = { id: randomUUID() };
+  await database.pool.query(`INSERT INTO "Space" ("id", "name", "createdBy", "updatedAt", "lockVersion")
+    VALUES ($1, 'Synthetic baseline space', $2, now(), 2)`, [space.id, owner.id]);
+  await database.pool.query(`INSERT INTO "SpaceMembership" ("spaceId", "userId", "role", "updatedAt")
+    VALUES ($1, $2, 'reader', now())`, [space.id, member.id]);
   async function baselineFingerprint() {
     // Comparing digests prevents assertion failures from printing persisted credential/session values.
     const rows = await Promise.all([
       database.prisma.user.findMany({ orderBy: { id: 'asc' } }),
       database.prisma.account.findMany({ orderBy: { id: 'asc' } }),
       database.prisma.session.findMany({ orderBy: { id: 'asc' } }),
-      database.prisma.space.findMany({ orderBy: { id: 'asc' } }),
+      database.prisma.space.findMany({ orderBy: { id: 'asc' }, select: {
+        id: true, name: true, createdBy: true, createdAt: true, updatedAt: true, lockVersion: true,
+      } }),
       database.prisma.spaceMembership.findMany({ orderBy: [{ spaceId: 'asc' }, { userId: 'asc' }] }),
     ]);
     return createHash('sha256').update(JSON.stringify(rows)).digest('hex');
@@ -82,6 +87,7 @@ test('P2 migration preserves populated P1 identity, sessions, spaces, and member
   migrate(['deploy']);
   migrate(['deploy']);
   assert.equal(await baselineFingerprint(), before, 'Every persisted P1 record must remain unchanged');
+  assert.equal((await database.prisma.space.findUniqueOrThrow({ where: { id: space.id } })).slug, 'synthetic-baseline-space');
   assert.equal(await database.prisma.document.count(), 0);
   assert.equal(await database.prisma.documentRevision.count(), 0);
   for (const [cookie, user] of [[ownerCookie, owner], [memberCookie, member]] as const) {

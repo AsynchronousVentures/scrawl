@@ -26,7 +26,8 @@ test('P1 identity and space acceptance against migrated PostgreSQL and real HTTP
   const schema = 'scrawl_test_' + randomUUID().replaceAll('-', '');
   await adminDatabase.pool.query(`CREATE SCHEMA "${schema}"`);
   url.searchParams.set('schema', schema);
-  const config = { ...baseConfig, databaseUrl: url.href };
+  url.searchParams.set('application_name', schema);
+  const config = { ...baseConfig, apiDocsEnabled: true, databaseUrl: url.href };
   const database = createDatabase(config, () => {});
   const identityConfig = { origin: 'http://127.0.0.1:3000', secret: randomBytes(32).toString('hex'), secureCookies: false };
   const core = createCore(database.prisma, identityConfig);
@@ -206,6 +207,88 @@ test('P1 identity and space acceptance against migrated PostgreSQL and real HTTP
     const unknown = await admin.send('PUT', `/api/v1/spaces/${spaceId}/members/missing`, { role: 'reader' }, { 'if-match': etag });
     assert.equal(unknown.status, 404);
     assert.equal(String((await admin.send('GET', `/api/v1/spaces/${spaceId}`)).headers.etag), etag);
+  });
+
+  await t.test('account lookup is administrator-only and exposes a minimal existing-account profile', async () => {
+    const path = '/api/v1/users/lookup';
+    assert.equal((await anonymous.send('POST', path, { email: readerUser.email })).status, 401);
+    for (const client of [reader, editor, outsider]) {
+      for (const email of [readerUser.email, 'missing@example.test']) {
+        const denied = await client.send('POST', path, { email });
+        assert.equal(denied.status, 404);
+        assert(!denied.body.includes(readerUser.email));
+      }
+    }
+    const found = await admin.send('POST', path, { email: readerUser.email.toUpperCase() });
+    assert.equal(found.status, 200);
+    assert.deepEqual(found.data, { id: readerUser.id, email: readerUser.email, name: 'Reader', role: 'member' });
+    assert.equal(found.headers['cache-control'], 'no-store');
+    assert.equal((await admin.send('POST', path, { email: 'missing@example.test' })).status, 404);
+    assert.equal((await admin.send('POST', path, { email: readerUser.email, role: 'administrator' })).status, 400);
+    assert.equal((await admin.send('POST', path, { email: 'not-an-email' })).status, 400);
+    await assert.rejects(core.identity.lookupUser(new Headers({ cookie: reader.cookie }), readerUser.email),
+      (error: unknown) => error instanceof HttpProblem && error.status === 404);
+    assert.equal(await database.prisma.user.count(), 4);
+    assert.equal(await database.prisma.account.count(), 4);
+  });
+
+  await t.test('administrator membership reads are bounded and return the current space ETag without auth records', async () => {
+    const path = `/api/v1/spaces/${spaceId}/members`;
+    assert.equal((await anonymous.send('GET', path)).status, 401);
+    for (const client of [reader, editor, outsider]) {
+      const denied = await client.send('GET', path);
+      assert.equal(denied.status, 404);
+      assert(!denied.body.includes(readerUser.email));
+      assert(!denied.headers.etag);
+    }
+    const first = await admin.send('GET', path + '?limit=1');
+    assert.equal(first.status, 200); assert.equal(first.headers.etag, etag);
+    assert.equal(first.data.items.length, 1);
+    assert.deepEqual(Object.keys(first.data).sort(), ['items', 'lockVersion', 'nextCursor', 'spaceId']);
+    assert.deepEqual(Object.keys(first.data.items[0]).sort(), ['role', 'user']);
+    assert.deepEqual(Object.keys(first.data.items[0].user).sort(), ['email', 'id', 'name', 'role']);
+    assert.equal(first.data.spaceId, spaceId);
+    assert.equal(first.data.nextCursor, first.data.items[0].user.id);
+    const second = await admin.send('GET', path + '?limit=1&cursor=' + encodeURIComponent(first.data.nextCursor));
+    assert.equal(second.status, 200); assert.equal(second.headers.etag, etag);
+    assert.equal(second.data.items.length, 1); assert.equal(second.data.nextCursor, null);
+    assert.notEqual(first.data.items[0].user.id, second.data.items[0].user.id);
+    assert.deepEqual([first.data.items[0].user.id, second.data.items[0].user.id].sort(), [readerUser.id, editorUser.id].sort());
+    const empty = await admin.send('GET', `/api/v1/spaces/${privateSpaceId}/members`);
+    assert.equal(empty.status, 200); assert.deepEqual(empty.data.items, []);
+    assert.equal((await admin.send('GET', `/api/v1/spaces/${randomUUID()}/members`)).status, 404);
+    for (const query of ['limit=0', 'limit=101', 'cursor=' + 'x'.repeat(129)]) {
+      assert.equal((await admin.send('GET', path + '?' + query)).status, 400);
+    }
+    await assert.rejects(core.spaces.listMembers(new Headers({ cookie: reader.cookie }), { spaceId }),
+      (error: unknown) => error instanceof HttpProblem && error.status === 404);
+  });
+
+  await t.test('a membership reader rechecks administrator privilege after waiting for the space lock', async () => {
+    const lock = await database.pool.connect();
+    try {
+      await lock.query('BEGIN');
+      await lock.query('SELECT id FROM "Space" WHERE id = $1 FOR UPDATE', [spaceId]);
+      const nonAdmin = await reader.send('GET', `/api/v1/spaces/${spaceId}/members`);
+      assert.equal(nonAdmin.status, 404, 'Non-admin reads must be denied while the space remains exclusively locked');
+      const pending = admin.send('GET', `/api/v1/spaces/${spaceId}/members`);
+      let blocked = false;
+      for (let attempt = 0; attempt < 100; attempt++) {
+        const waiting = await database.pool.query(`SELECT 1 FROM pg_stat_activity
+          WHERE application_name = $1 AND wait_event_type = 'Lock' AND query LIKE '%FOR SHARE%'`, [schema]);
+        if (waiting.rowCount) { blocked = true; break; }
+        await delay(10);
+      }
+      assert(blocked, 'The actual HTTP read must wait for its space lock');
+      await database.prisma.user.update({ where: { id: adminUser.id }, data: { role: 'member' } });
+      await lock.query('COMMIT');
+      const denied = await pending;
+      assert.equal(denied.status, 404); assert(!denied.body.includes(readerUser.email));
+      assert(!denied.headers.etag);
+    } finally {
+      await lock.query('ROLLBACK'); lock.release();
+      await database.prisma.user.update({ where: { id: adminUser.id }, data: { role: 'administrator' } });
+    }
   });
 
   await t.test('visibility is filtered before titles, pagination, versions, or existence are returned', async () => {
@@ -400,12 +483,19 @@ test('P1 identity and space acceptance against migrated PostgreSQL and real HTTP
   await t.test('live OpenAPI retains P1 and includes only implemented packet routes', async () => {
     const result = await admin.send('GET', '/openapi.json');
     assert.deepEqual(Object.keys(result.data.paths).sort(), [
-      '/api/v1/documents/{id}', '/api/v1/documents/{id}/archive', '/api/v1/documents/{id}/restore',
+      '/api/v1/collaboration',
+      '/api/v1/favorites', '/api/v1/documents/{id}/favorite',
+      '/api/v1/search', '/api/v1/attachments/{id}/content', '/api/v1/documents/{id}/attachments',
+      '/api/v1/spaces/by-slug/{slug}', '/api/v1/spaces/{id}/documents/by-slug/{slug}',
+      '/api/v1/documents/{id}', '/api/v1/documents/{id}/duplicate', '/api/v1/documents/{id}/move', '/api/v1/documents/{id}/archive', '/api/v1/documents/{id}/restore',
       '/api/v1/documents/{id}/export',
       '/api/v1/documents/{id}/revisions', '/api/v1/documents/{id}/revisions/{revisionId}', '/api/v1/documents/{id}/unarchive',
+      '/api/v1/users/lookup', '/api/v1/spaces/{id}/members',
       '/api/v1/me', '/api/v1/spaces', '/api/v1/spaces/{id}', '/api/v1/spaces/{id}/members/{userId}', '/health/live', '/health/ready',
       '/api/v1/spaces/{id}/documents',
     ].sort());
+    assert.deepEqual((await admin.send('GET', '/api/v1/collaboration')).data, { enabled: false });
+    assert.equal((await anonymous.send('GET', '/api/v1/collaboration')).status, 401);
   });
 
   await t.test('real auth logging excludes passwords, cookies, callback URLs, and submitted/query content', async () => {

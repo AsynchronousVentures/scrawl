@@ -47,6 +47,11 @@ export function readDemoConfig(env: Environment) {
   if (config.databasePoolMax < 2) throw new Error('Demo tools require DB_POOL_MAX of at least 2');
   const identity = readIdentityConfig(env, config);
   const target = new URL(config.databaseUrl);
+  const demoPort = env.DEMO_DB_PORT;
+  if (demoPort !== undefined && (!/^\d+$/.test(demoPort) || Number(demoPort) < 1
+    || Number(demoPort) > 65535 || Number(demoPort) !== Number(target.port || 5432))) {
+    throw new Error('Demo database port must match the private connection target');
+  }
   if (!['127.0.0.1', '[::1]', 'localhost'].includes(target.hostname)
     || target.pathname !== `/${DEMO_DATABASE}` || target.search || target.hash
     || !target.username || !target.password || config.host !== '127.0.0.1'

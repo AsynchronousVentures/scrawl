@@ -4,6 +4,72 @@
  */
 
 export interface paths {
+    "/api/public/publications/{publicId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Anonymous approved title/content only. No private head, navigation, source identifiers, authors or history. */
+        get: operations["readPublicPublication"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/public/publications/{publicId}/attachments/{attachmentId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Anonymous immutable bytes from this active grant and its selected revision allowlist only. */
+        get: operations["readPublicAttachment"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/attachments/{id}/content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["readAttachmentContent"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/collaboration": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getCollaborationAvailability"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/documents/{id}": {
         parameters: {
             query?: never;
@@ -36,6 +102,39 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/documents/{id}/attachments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["uploadDocumentAttachment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{id}/duplicate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Create a solo root document in the same space from one selected saved revision, with independently owned private attachments. Does not mutate or checkpoint the source. */
+        post: operations["duplicateDocument"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/documents/{id}/export": {
         parameters: {
             query?: never;
@@ -43,11 +142,288 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** @description Export the current authorized snapshot as native JSON, including archived documents. No history or authentication data. */
+        /** @description Export one authorized snapshot as native JSON, current or an explicitly selected immutable revision, including archived documents. No full history or authentication data. */
         get: operations["exportNativeDocument"];
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{id}/exports/{format}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Download an authorized current or selected immutable snapshot as PDF or DOCX. Private PNG/JPEG/GIF images are embedded, WebP is rendered as PNG, and other attachments remain authenticated links. External media is rejected, never fetched. This is a rendered snapshot, not a backup. */
+        get: operations["exportDocumentFile"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{id}/favorite": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["readDocumentFavorite"];
+        /** @description Idempotent personal navigation preference. Readers may set it; document content, revisions, ETag and space grants stay unchanged. Archived documents can only be removed. */
+        put: operations["setDocumentFavorite"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{id}/live": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["readLiveDocument"];
+        put?: never;
+        post: operations["enrollLiveDocument"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{id}/live/{epoch}/checkpoint": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["checkpointLiveDocument"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{id}/live/{epoch}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["restoreLiveDocument"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{id}/live/{epoch}/threads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["createLiveCommentThread"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{id}/live/{epoch}/threads/{threadId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["deleteLiveCommentThread"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{id}/live/{epoch}/threads/{threadId}/addToDocument": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["anchorLiveCommentThread"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{id}/live/{epoch}/threads/{threadId}/comments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["replyToLiveCommentThread"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{id}/live/{epoch}/threads/{threadId}/comments/{commentId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["editLiveComment"];
+        post?: never;
+        delete: operations["deleteLiveComment"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{id}/live/{epoch}/threads/{threadId}/comments/{commentId}/reactions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["reactToLiveComment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{id}/live/{epoch}/threads/{threadId}/comments/{commentId}/reactions/{emoji}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["removeLiveCommentReaction"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{id}/live/{epoch}/threads/{threadId}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["resolveLiveCommentThread"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{id}/live/{epoch}/threads/{threadId}/unresolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["unresolveLiveCommentThread"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{id}/live/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["resolveLiveDocumentUsers"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{id}/move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Move within the same space or to its root. Structure changes the lock version, not content history or publishing. */
+        post: operations["moveDocument"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{id}/publication": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["readDocumentPublication"];
+        put?: never;
+        /** @description An administrator explicitly approves one immutable revision. Literal content and links become public; private saves never advance the grant. */
+        post: operations["publishDocumentRevision"];
+        /** @description Revoke future public reads under the document ETag. Copies already downloaded cannot be erased. */
+        delete: operations["unpublishDocument"];
         options?: never;
         head?: never;
         patch?: never;
@@ -117,6 +493,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/favorites": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Personal, currently authorized nonarchived saved documents. Current session/role/grants are checked inside the bounded title query. */
+        get: operations["listFavorites"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/me": {
         parameters: {
             query?: never;
@@ -125,6 +518,39 @@ export interface paths {
             cookie?: never;
         };
         get: operations["getMe"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/publishing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getPublishingAvailability"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Search current authorized nonarchived documents. Plain words use the language-neutral simple configuration; results are ranked and bounded, without counts or historical content. */
+        get: operations["searchDocuments"];
         put?: never;
         post?: never;
         delete?: never;
@@ -181,6 +607,39 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/spaces/{id}/documents/by-slug/{slug}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["readDocumentBySlug"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/spaces/{id}/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Administrator-only current member grants. Administrators also have implicit space access. */
+        get: operations["listSpaceMembers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/spaces/{id}/members/{userId}": {
         parameters: {
             query?: never;
@@ -192,6 +651,39 @@ export interface paths {
         put: operations["grantSpaceMembership"];
         post?: never;
         delete: operations["revokeSpaceMembership"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/spaces/by-slug/{slug}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["readSpaceBySlug"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/users/lookup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Administrator-only exact lookup of an existing account. Does not provision users. */
+        post: operations["lookupUser"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -243,6 +735,230 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    readPublicPublication: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                publicId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        content: {
+                            document: {
+                                [key: string]: unknown;
+                            }[];
+                            /** @enum {string} */
+                            editorVersion: "0.55.0";
+                            /** @enum {string} */
+                            format: "blocknote-json";
+                            /** @enum {integer} */
+                            schemaVersion: 1;
+                        };
+                        /** Format: date-time */
+                        publishedAt: string;
+                        title: string;
+                    };
+                };
+            };
+        };
+    };
+    readPublicAttachment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                attachmentId: string;
+                publicId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": string;
+                };
+            };
+        };
+    };
+    readAttachmentContent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": string;
+                };
+            };
+        };
+    };
+    getCollaborationAvailability: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        enabled: boolean;
+                    };
+                };
+            };
+        };
+    };
     readDocument: {
         parameters: {
             query?: never;
@@ -298,18 +1014,24 @@ export interface operations {
                         createdAt: string;
                         createdBy: string;
                         currentRevisionNumber: number;
+                        /** @enum {string} */
+                        editingMode: "solo" | "live";
                         /** Format: uuid */
                         id: string;
                         lockVersion: number;
+                        /** Format: uuid */
+                        parentDocumentId: string | null;
                         revision: {
                             authorId: string;
                             changeNote: string | null;
                             content: {
                                 document: {
                                     [key: string]: unknown;
-                                };
+                                }[];
                                 /** @enum {string} */
-                                format: "prosemirror-json";
+                                editorVersion: "0.55.0";
+                                /** @enum {string} */
+                                format: "blocknote-json";
                                 /** @enum {integer} */
                                 schemaVersion: 1;
                             };
@@ -323,8 +1045,10 @@ export interface operations {
                             revisionNumber: number;
                             title: string;
                         };
+                        slug: string;
                         /** Format: uuid */
                         spaceId: string;
+                        spaceSlug: string;
                         /** Format: date-time */
                         updatedAt: string;
                     };
@@ -351,9 +1075,11 @@ export interface operations {
                     content?: {
                         document: {
                             [key: string]: unknown;
-                        };
+                        }[];
                         /** @enum {string} */
-                        format: "prosemirror-json";
+                        editorVersion: "0.55.0";
+                        /** @enum {string} */
+                        format: "blocknote-json";
                         /** @enum {integer} */
                         schemaVersion: 1;
                     };
@@ -406,18 +1132,24 @@ export interface operations {
                         createdAt: string;
                         createdBy: string;
                         currentRevisionNumber: number;
+                        /** @enum {string} */
+                        editingMode: "solo" | "live";
                         /** Format: uuid */
                         id: string;
                         lockVersion: number;
+                        /** Format: uuid */
+                        parentDocumentId: string | null;
                         revision: {
                             authorId: string;
                             changeNote: string | null;
                             content: {
                                 document: {
                                     [key: string]: unknown;
-                                };
+                                }[];
                                 /** @enum {string} */
-                                format: "prosemirror-json";
+                                editorVersion: "0.55.0";
+                                /** @enum {string} */
+                                format: "blocknote-json";
                                 /** @enum {integer} */
                                 schemaVersion: 1;
                             };
@@ -431,8 +1163,10 @@ export interface operations {
                             revisionNumber: number;
                             title: string;
                         };
+                        slug: string;
                         /** Format: uuid */
                         spaceId: string;
+                        spaceSlug: string;
                         /** Format: date-time */
                         updatedAt: string;
                     };
@@ -503,18 +1237,24 @@ export interface operations {
                         createdAt: string;
                         createdBy: string;
                         currentRevisionNumber: number;
+                        /** @enum {string} */
+                        editingMode: "solo" | "live";
                         /** Format: uuid */
                         id: string;
                         lockVersion: number;
+                        /** Format: uuid */
+                        parentDocumentId: string | null;
                         revision: {
                             authorId: string;
                             changeNote: string | null;
                             content: {
                                 document: {
                                     [key: string]: unknown;
-                                };
+                                }[];
                                 /** @enum {string} */
-                                format: "prosemirror-json";
+                                editorVersion: "0.55.0";
+                                /** @enum {string} */
+                                format: "blocknote-json";
                                 /** @enum {integer} */
                                 schemaVersion: 1;
                             };
@@ -528,8 +1268,181 @@ export interface operations {
                             revisionNumber: number;
                             title: string;
                         };
+                        slug: string;
                         /** Format: uuid */
                         spaceId: string;
+                        spaceSlug: string;
+                        /** Format: date-time */
+                        updatedAt: string;
+                    };
+                };
+            };
+        };
+    };
+    uploadDocumentAttachment: {
+        parameters: {
+            query?: never;
+            header: {
+                "x-file-name": string;
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** @description Bounded raw file bytes; filename in x-file-name. */
+        requestBody: {
+            content: {
+                "application/octet-stream": string;
+            };
+        };
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uuid */
+                        id: string;
+                        mimeType: string;
+                        name: string;
+                        size: number;
+                        url: string;
+                    };
+                };
+            };
+        };
+    };
+    duplicateDocument: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: uuid */
+                    revisionId: string;
+                    title: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: date-time */
+                        archivedAt: string | null;
+                        archivedBy: string | null;
+                        /** Format: date-time */
+                        createdAt: string;
+                        createdBy: string;
+                        currentRevisionNumber: number;
+                        /** @enum {string} */
+                        editingMode: "solo" | "live";
+                        /** Format: uuid */
+                        id: string;
+                        lockVersion: number;
+                        /** Format: uuid */
+                        parentDocumentId: string | null;
+                        revision: {
+                            authorId: string;
+                            changeNote: string | null;
+                            content: {
+                                document: {
+                                    [key: string]: unknown;
+                                }[];
+                                /** @enum {string} */
+                                editorVersion: "0.55.0";
+                                /** @enum {string} */
+                                format: "blocknote-json";
+                                /** @enum {integer} */
+                                schemaVersion: 1;
+                            };
+                            /** Format: date-time */
+                            createdAt: string;
+                            /** Format: uuid */
+                            documentId: string;
+                            /** Format: uuid */
+                            id: string;
+                            plainText: string;
+                            revisionNumber: number;
+                            title: string;
+                        };
+                        slug: string;
+                        /** Format: uuid */
+                        spaceId: string;
+                        spaceSlug: string;
                         /** Format: date-time */
                         updatedAt: string;
                     };
@@ -539,7 +1452,9 @@ export interface operations {
     };
     exportNativeDocument: {
         parameters: {
-            query?: never;
+            query?: {
+                revisionId?: string;
+            };
             header?: never;
             path: {
                 id: string;
@@ -588,9 +1503,11 @@ export interface operations {
                         content: {
                             document: {
                                 [key: string]: unknown;
-                            };
+                            }[];
                             /** @enum {string} */
-                            format: "prosemirror-json";
+                            editorVersion: "0.55.0";
+                            /** @enum {string} */
+                            format: "blocknote-json";
                             /** @enum {integer} */
                             schemaVersion: 1;
                         };
@@ -616,6 +1533,1693 @@ export interface operations {
                             revisionNumber: number;
                             title: string;
                         };
+                    };
+                };
+            };
+        };
+    };
+    exportDocumentFile: {
+        parameters: {
+            query?: {
+                revisionId?: string;
+            };
+            header?: never;
+            path: {
+                format: "pdf" | "docx";
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Binary document download. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/pdf": string;
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": string;
+                };
+            };
+            /** @description Default Response */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+        };
+    };
+    readDocumentFavorite: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        favorited: boolean;
+                    };
+                };
+            };
+        };
+    };
+    setDocumentFavorite: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    favorited: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        favorited: boolean;
+                    };
+                };
+            };
+        };
+    };
+    readLiveDocument: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        canWrite: boolean;
+                        documentEtag: string;
+                        /** Format: uuid */
+                        documentId: string;
+                        /** Format: uuid */
+                        epoch: string;
+                        /** @enum {integer} */
+                        schemaVersion: 1;
+                        sequence: string;
+                    };
+                };
+            };
+        };
+    };
+    enrollLiveDocument: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Current strong document ETag. Missing is 428; stale is 412. */
+                "if-match"?: string;
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": Record<string, never>;
+            };
+        };
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        canWrite: boolean;
+                        documentEtag: string;
+                        /** Format: uuid */
+                        documentId: string;
+                        /** Format: uuid */
+                        epoch: string;
+                        /** @enum {integer} */
+                        schemaVersion: 1;
+                        sequence: string;
+                    };
+                };
+            };
+        };
+    };
+    checkpointLiveDocument: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Current strong document ETag. Missing is 428; stale is 412. */
+                "if-match"?: string;
+            };
+            path: {
+                epoch: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    changeNote?: string;
+                    sequence?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: date-time */
+                        archivedAt: string | null;
+                        archivedBy: string | null;
+                        /** Format: date-time */
+                        createdAt: string;
+                        createdBy: string;
+                        currentRevisionNumber: number;
+                        /** @enum {string} */
+                        editingMode: "solo" | "live";
+                        /** Format: uuid */
+                        id: string;
+                        lockVersion: number;
+                        /** Format: uuid */
+                        parentDocumentId: string | null;
+                        revision: {
+                            authorId: string;
+                            changeNote: string | null;
+                            content: {
+                                document: {
+                                    [key: string]: unknown;
+                                }[];
+                                /** @enum {string} */
+                                editorVersion: "0.55.0";
+                                /** @enum {string} */
+                                format: "blocknote-json";
+                                /** @enum {integer} */
+                                schemaVersion: 1;
+                            };
+                            /** Format: date-time */
+                            createdAt: string;
+                            /** Format: uuid */
+                            documentId: string;
+                            /** Format: uuid */
+                            id: string;
+                            plainText: string;
+                            revisionNumber: number;
+                            title: string;
+                        };
+                        slug: string;
+                        /** Format: uuid */
+                        spaceId: string;
+                        spaceSlug: string;
+                        /** Format: date-time */
+                        updatedAt: string;
+                    };
+                };
+            };
+        };
+    };
+    restoreLiveDocument: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Current strong document ETag. Missing is 428; stale is 412. */
+                "if-match"?: string;
+            };
+            path: {
+                epoch: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    changeNote?: string;
+                    /** Format: uuid */
+                    revisionId: string;
+                    sequence?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        document: {
+                            /** Format: date-time */
+                            archivedAt: string | null;
+                            archivedBy: string | null;
+                            /** Format: date-time */
+                            createdAt: string;
+                            createdBy: string;
+                            currentRevisionNumber: number;
+                            /** @enum {string} */
+                            editingMode: "solo" | "live";
+                            /** Format: uuid */
+                            id: string;
+                            lockVersion: number;
+                            /** Format: uuid */
+                            parentDocumentId: string | null;
+                            revision: {
+                                authorId: string;
+                                changeNote: string | null;
+                                content: {
+                                    document: {
+                                        [key: string]: unknown;
+                                    }[];
+                                    /** @enum {string} */
+                                    editorVersion: "0.55.0";
+                                    /** @enum {string} */
+                                    format: "blocknote-json";
+                                    /** @enum {integer} */
+                                    schemaVersion: 1;
+                                };
+                                /** Format: date-time */
+                                createdAt: string;
+                                /** Format: uuid */
+                                documentId: string;
+                                /** Format: uuid */
+                                id: string;
+                                plainText: string;
+                                revisionNumber: number;
+                                title: string;
+                            };
+                            slug: string;
+                            /** Format: uuid */
+                            spaceId: string;
+                            spaceSlug: string;
+                            /** Format: date-time */
+                            updatedAt: string;
+                        };
+                        room: {
+                            canWrite: boolean;
+                            documentEtag: string;
+                            /** Format: uuid */
+                            documentId: string;
+                            /** Format: uuid */
+                            epoch: string;
+                            /** @enum {integer} */
+                            schemaVersion: 1;
+                            sequence: string;
+                        };
+                    };
+                };
+            };
+        };
+    };
+    createLiveCommentThread: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                epoch: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    initialComment: {
+                        body: {
+                            [key: string]: unknown;
+                        }[];
+                    };
+                };
+            };
+        };
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        comments: {
+                            body?: {
+                                [key: string]: unknown;
+                            }[];
+                            /** Format: date-time */
+                            createdAt: string;
+                            /** Format: date-time */
+                            deletedAt?: string;
+                            /** Format: uuid */
+                            id: string;
+                            metadata?: Record<string, never>;
+                            reactions: {
+                                /** Format: date-time */
+                                createdAt: string;
+                                emoji: string;
+                                userIds: string[];
+                            }[];
+                            /** @enum {string} */
+                            type: "comment";
+                            /** Format: date-time */
+                            updatedAt: string;
+                            userId: string;
+                        }[];
+                        /** Format: date-time */
+                        createdAt: string;
+                        /** Format: date-time */
+                        deletedAt?: string;
+                        /** Format: uuid */
+                        id: string;
+                        metadata?: Record<string, never>;
+                        resolved: boolean;
+                        resolvedBy?: string;
+                        /** Format: date-time */
+                        resolvedUpdatedAt?: string;
+                        /** @enum {string} */
+                        type: "thread";
+                        /** Format: date-time */
+                        updatedAt: string;
+                    };
+                };
+            };
+        };
+    };
+    deleteLiveCommentThread: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                epoch: string;
+                id: string;
+                threadId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": Record<string, never>;
+            };
+        };
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": never | null;
+                };
+            };
+        };
+    };
+    anchorLiveCommentThread: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                epoch: string;
+                id: string;
+                threadId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    selection: {
+                        prosemirror?: {
+                            anchor: number;
+                            head: number;
+                        };
+                        yjs: {
+                            anchor: {
+                                /** @enum {integer} */
+                                assoc?: -1 | 0 | 1;
+                                item?: {
+                                    client: number;
+                                    clock: number;
+                                } | null;
+                                /** @enum {string|null} */
+                                tname?: "document" | null;
+                                type?: {
+                                    client: number;
+                                    clock: number;
+                                } | null;
+                            };
+                            head: {
+                                /** @enum {integer} */
+                                assoc?: -1 | 0 | 1;
+                                item?: {
+                                    client: number;
+                                    clock: number;
+                                } | null;
+                                /** @enum {string|null} */
+                                tname?: "document" | null;
+                                type?: {
+                                    client: number;
+                                    clock: number;
+                                } | null;
+                            };
+                        };
+                    };
+                };
+            };
+        };
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": never | null;
+                };
+            };
+        };
+    };
+    replyToLiveCommentThread: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                epoch: string;
+                id: string;
+                threadId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    comment: {
+                        body: {
+                            [key: string]: unknown;
+                        }[];
+                    };
+                };
+            };
+        };
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        body?: {
+                            [key: string]: unknown;
+                        }[];
+                        /** Format: date-time */
+                        createdAt: string;
+                        /** Format: date-time */
+                        deletedAt?: string;
+                        /** Format: uuid */
+                        id: string;
+                        metadata?: Record<string, never>;
+                        reactions: {
+                            /** Format: date-time */
+                            createdAt: string;
+                            emoji: string;
+                            userIds: string[];
+                        }[];
+                        /** @enum {string} */
+                        type: "comment";
+                        /** Format: date-time */
+                        updatedAt: string;
+                        userId: string;
+                    };
+                };
+            };
+        };
+    };
+    editLiveComment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                commentId: string;
+                epoch: string;
+                id: string;
+                threadId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    comment: {
+                        body: {
+                            [key: string]: unknown;
+                        }[];
+                    };
+                };
+            };
+        };
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": never | null;
+                };
+            };
+        };
+    };
+    deleteLiveComment: {
+        parameters: {
+            query?: {
+                soft?: boolean;
+            };
+            header?: never;
+            path: {
+                commentId: string;
+                epoch: string;
+                id: string;
+                threadId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": Record<string, never>;
+            };
+        };
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": never | null;
+                };
+            };
+        };
+    };
+    reactToLiveComment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                commentId: string;
+                epoch: string;
+                id: string;
+                threadId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    emoji: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": never | null;
+                };
+            };
+        };
+    };
+    removeLiveCommentReaction: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                commentId: string;
+                emoji: string;
+                epoch: string;
+                id: string;
+                threadId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": Record<string, never>;
+            };
+        };
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": never | null;
+                };
+            };
+        };
+    };
+    resolveLiveCommentThread: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                epoch: string;
+                id: string;
+                threadId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": Record<string, never>;
+            };
+        };
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": never | null;
+                };
+            };
+        };
+    };
+    unresolveLiveCommentThread: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                epoch: string;
+                id: string;
+                threadId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": Record<string, never>;
+            };
+        };
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": never | null;
+                };
+            };
+        };
+    };
+    resolveLiveDocumentUsers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    userIds: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        id: string;
+                        name: string;
+                    }[];
+                };
+            };
+        };
+    };
+    moveDocument: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description One strong ETag from this document; missing is 428, stale is 412. */
+                "if-match"?: string;
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: uuid */
+                    parentDocumentId: string | null;
+                };
+            };
+        };
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: date-time */
+                        archivedAt: string | null;
+                        archivedBy: string | null;
+                        /** Format: date-time */
+                        createdAt: string;
+                        createdBy: string;
+                        currentRevisionNumber: number;
+                        /** @enum {string} */
+                        editingMode: "solo" | "live";
+                        /** Format: uuid */
+                        id: string;
+                        lockVersion: number;
+                        /** Format: uuid */
+                        parentDocumentId: string | null;
+                        revision: {
+                            authorId: string;
+                            changeNote: string | null;
+                            content: {
+                                document: {
+                                    [key: string]: unknown;
+                                }[];
+                                /** @enum {string} */
+                                editorVersion: "0.55.0";
+                                /** @enum {string} */
+                                format: "blocknote-json";
+                                /** @enum {integer} */
+                                schemaVersion: 1;
+                            };
+                            /** Format: date-time */
+                            createdAt: string;
+                            /** Format: uuid */
+                            documentId: string;
+                            /** Format: uuid */
+                            id: string;
+                            plainText: string;
+                            revisionNumber: number;
+                            title: string;
+                        };
+                        slug: string;
+                        /** Format: uuid */
+                        spaceId: string;
+                        spaceSlug: string;
+                        /** Format: date-time */
+                        updatedAt: string;
+                    };
+                };
+            };
+        };
+    };
+    readDocumentPublication: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        lockVersion: number;
+                        publication: {
+                            /** @description Grant and lifecycle are valid. The global publishing switch may still pause public access. */
+                            active: boolean;
+                            /** Format: uuid */
+                            publicId: string;
+                            /** Format: date-time */
+                            publishedAt: string;
+                            /** Format: uuid */
+                            revisionId: string;
+                            revisionNumber: number;
+                        } | null;
+                    };
+                };
+            };
+        };
+    };
+    publishDocumentRevision: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The current strong document ETag. Missing is 428, stale is 412. */
+                "if-match"?: string;
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: uuid */
+                    revisionId: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        lockVersion: number;
+                        publication: {
+                            /** @description Grant and lifecycle are valid. The global publishing switch may still pause public access. */
+                            active: boolean;
+                            /** Format: uuid */
+                            publicId: string;
+                            /** Format: date-time */
+                            publishedAt: string;
+                            /** Format: uuid */
+                            revisionId: string;
+                            revisionNumber: number;
+                        } | null;
+                    };
+                };
+            };
+        };
+    };
+    unpublishDocument: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The current strong document ETag. Missing is 428, stale is 412. */
+                "if-match"?: string;
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        lockVersion: number;
+                        publication: {
+                            /** @description Grant and lifecycle are valid. The global publishing switch may still pause public access. */
+                            active: boolean;
+                            /** Format: uuid */
+                            publicId: string;
+                            /** Format: date-time */
+                            publishedAt: string;
+                            /** Format: uuid */
+                            revisionId: string;
+                            revisionNumber: number;
+                        } | null;
                     };
                 };
             };
@@ -687,18 +3291,24 @@ export interface operations {
                         createdAt: string;
                         createdBy: string;
                         currentRevisionNumber: number;
+                        /** @enum {string} */
+                        editingMode: "solo" | "live";
                         /** Format: uuid */
                         id: string;
                         lockVersion: number;
+                        /** Format: uuid */
+                        parentDocumentId: string | null;
                         revision: {
                             authorId: string;
                             changeNote: string | null;
                             content: {
                                 document: {
                                     [key: string]: unknown;
-                                };
+                                }[];
                                 /** @enum {string} */
-                                format: "prosemirror-json";
+                                editorVersion: "0.55.0";
+                                /** @enum {string} */
+                                format: "blocknote-json";
                                 /** @enum {integer} */
                                 schemaVersion: 1;
                             };
@@ -712,8 +3322,10 @@ export interface operations {
                             revisionNumber: number;
                             title: string;
                         };
+                        slug: string;
                         /** Format: uuid */
                         spaceId: string;
+                        spaceSlug: string;
                         /** Format: date-time */
                         updatedAt: string;
                     };
@@ -844,9 +3456,11 @@ export interface operations {
                         content: {
                             document: {
                                 [key: string]: unknown;
-                            };
+                            }[];
                             /** @enum {string} */
-                            format: "prosemirror-json";
+                            editorVersion: "0.55.0";
+                            /** @enum {string} */
+                            format: "blocknote-json";
                             /** @enum {integer} */
                             schemaVersion: 1;
                         };
@@ -927,18 +3541,24 @@ export interface operations {
                         createdAt: string;
                         createdBy: string;
                         currentRevisionNumber: number;
+                        /** @enum {string} */
+                        editingMode: "solo" | "live";
                         /** Format: uuid */
                         id: string;
                         lockVersion: number;
+                        /** Format: uuid */
+                        parentDocumentId: string | null;
                         revision: {
                             authorId: string;
                             changeNote: string | null;
                             content: {
                                 document: {
                                     [key: string]: unknown;
-                                };
+                                }[];
                                 /** @enum {string} */
-                                format: "prosemirror-json";
+                                editorVersion: "0.55.0";
+                                /** @enum {string} */
+                                format: "blocknote-json";
                                 /** @enum {integer} */
                                 schemaVersion: 1;
                             };
@@ -952,10 +3572,78 @@ export interface operations {
                             revisionNumber: number;
                             title: string;
                         };
+                        slug: string;
                         /** Format: uuid */
                         spaceId: string;
+                        spaceSlug: string;
                         /** Format: date-time */
                         updatedAt: string;
+                    };
+                };
+            };
+        };
+    };
+    listFavorites: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: {
+                            /** Format: uuid */
+                            id: string;
+                            slug: string;
+                            /** Format: uuid */
+                            spaceId: string;
+                            spaceName: string;
+                            spaceSlug: string;
+                            title: string;
+                        }[];
+                        /** Format: uuid */
+                        nextCursor: string | null;
                     };
                 };
             };
@@ -1012,6 +3700,123 @@ export interface operations {
                         name: string;
                         /** @enum {string} */
                         role: "administrator" | "member";
+                    };
+                };
+            };
+        };
+    };
+    getPublishingAvailability: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        enabled: boolean;
+                        mayPublish: boolean;
+                    };
+                };
+            };
+        };
+    };
+    searchDocuments: {
+        parameters: {
+            query: {
+                limit?: number;
+                q: string;
+                spaceId?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: {
+                            excerpt: string;
+                            /** Format: uuid */
+                            id: string;
+                            /** Format: uuid */
+                            spaceId: string;
+                            spaceName: string;
+                            title: string;
+                        }[];
                     };
                 };
             };
@@ -1079,6 +3884,7 @@ export interface operations {
                             id: string;
                             lockVersion: number;
                             name: string;
+                            slug: string;
                             /** Format: date-time */
                             updatedAt: string;
                         }[];
@@ -1152,6 +3958,7 @@ export interface operations {
                         id: string;
                         lockVersion: number;
                         name: string;
+                        slug: string;
                         /** Format: date-time */
                         updatedAt: string;
                     };
@@ -1219,6 +4026,7 @@ export interface operations {
                         id: string;
                         lockVersion: number;
                         name: string;
+                        slug: string;
                         /** Format: date-time */
                         updatedAt: string;
                     };
@@ -1286,11 +4094,17 @@ export interface operations {
                             createdAt: string;
                             createdBy: string;
                             currentRevisionNumber: number;
+                            /** @enum {string} */
+                            editingMode: "solo" | "live";
                             /** Format: uuid */
                             id: string;
                             lockVersion: number;
                             /** Format: uuid */
+                            parentDocumentId: string | null;
+                            slug: string;
+                            /** Format: uuid */
                             spaceId: string;
+                            spaceSlug: string;
                             title: string;
                             /** Format: date-time */
                             updatedAt: string;
@@ -1317,12 +4131,16 @@ export interface operations {
                     content: {
                         document: {
                             [key: string]: unknown;
-                        };
+                        }[];
                         /** @enum {string} */
-                        format: "prosemirror-json";
+                        editorVersion: "0.55.0";
+                        /** @enum {string} */
+                        format: "blocknote-json";
                         /** @enum {integer} */
                         schemaVersion: 1;
                     };
+                    /** Format: uuid */
+                    parentDocumentId?: string | null;
                     title: string;
                 };
             };
@@ -1372,18 +4190,24 @@ export interface operations {
                         createdAt: string;
                         createdBy: string;
                         currentRevisionNumber: number;
+                        /** @enum {string} */
+                        editingMode: "solo" | "live";
                         /** Format: uuid */
                         id: string;
                         lockVersion: number;
+                        /** Format: uuid */
+                        parentDocumentId: string | null;
                         revision: {
                             authorId: string;
                             changeNote: string | null;
                             content: {
                                 document: {
                                     [key: string]: unknown;
-                                };
+                                }[];
                                 /** @enum {string} */
-                                format: "prosemirror-json";
+                                editorVersion: "0.55.0";
+                                /** @enum {string} */
+                                format: "blocknote-json";
                                 /** @enum {integer} */
                                 schemaVersion: 1;
                             };
@@ -1397,10 +4221,181 @@ export interface operations {
                             revisionNumber: number;
                             title: string;
                         };
+                        slug: string;
                         /** Format: uuid */
                         spaceId: string;
+                        spaceSlug: string;
                         /** Format: date-time */
                         updatedAt: string;
+                    };
+                };
+            };
+        };
+    };
+    readDocumentBySlug: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: date-time */
+                        archivedAt: string | null;
+                        archivedBy: string | null;
+                        /** Format: date-time */
+                        createdAt: string;
+                        createdBy: string;
+                        currentRevisionNumber: number;
+                        /** @enum {string} */
+                        editingMode: "solo" | "live";
+                        /** Format: uuid */
+                        id: string;
+                        lockVersion: number;
+                        /** Format: uuid */
+                        parentDocumentId: string | null;
+                        revision: {
+                            authorId: string;
+                            changeNote: string | null;
+                            content: {
+                                document: {
+                                    [key: string]: unknown;
+                                }[];
+                                /** @enum {string} */
+                                editorVersion: "0.55.0";
+                                /** @enum {string} */
+                                format: "blocknote-json";
+                                /** @enum {integer} */
+                                schemaVersion: 1;
+                            };
+                            /** Format: date-time */
+                            createdAt: string;
+                            /** Format: uuid */
+                            documentId: string;
+                            /** Format: uuid */
+                            id: string;
+                            plainText: string;
+                            revisionNumber: number;
+                            title: string;
+                        };
+                        slug: string;
+                        /** Format: uuid */
+                        spaceId: string;
+                        spaceSlug: string;
+                        /** Format: date-time */
+                        updatedAt: string;
+                    };
+                };
+            };
+        };
+    };
+    listSpaceMembers: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: {
+                            /** @enum {string} */
+                            role: "reader" | "editor";
+                            user: {
+                                email: string;
+                                id: string;
+                                name: string;
+                                /** @enum {string} */
+                                role: "administrator" | "member";
+                            };
+                        }[];
+                        lockVersion: number;
+                        nextCursor: string | null;
+                        /** Format: uuid */
+                        spaceId: string;
                     };
                 };
             };
@@ -1477,6 +4472,7 @@ export interface operations {
                         id: string;
                         lockVersion: number;
                         name: string;
+                        slug: string;
                         /** Format: date-time */
                         updatedAt: string;
                     };
@@ -1548,8 +4544,140 @@ export interface operations {
                         id: string;
                         lockVersion: number;
                         name: string;
+                        slug: string;
                         /** Format: date-time */
                         updatedAt: string;
+                    };
+                };
+            };
+        };
+    };
+    readSpaceBySlug: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /**
+                         * @description Current caller access; the server checks every operation.
+                         * @enum {string}
+                         */
+                        access: "reader" | "editor";
+                        /** Format: date-time */
+                        createdAt: string;
+                        createdBy: string;
+                        /** Format: uuid */
+                        id: string;
+                        lockVersion: number;
+                        name: string;
+                        slug: string;
+                        /** Format: date-time */
+                        updatedAt: string;
+                    };
+                };
+            };
+        };
+    };
+    lookupUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: email */
+                    email: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Default Response */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        requestId: string;
+                        status: number;
+                        title: string;
+                        type: string;
+                    };
+                };
+            };
+            /** @description Default Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        email: string;
+                        id: string;
+                        name: string;
+                        /** @enum {string} */
+                        role: "administrator" | "member";
                     };
                 };
             };

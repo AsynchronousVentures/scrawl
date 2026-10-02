@@ -54,6 +54,10 @@ export function createOperator(prisma: PrismaClient, config: IdentityConfig) {
         await requireAdministrator(tx);
         const user = await tx.user.findUnique({ where: { email: email.toLowerCase() }, select: { id: true } });
         if (!user) throw new Error('Account recovery refused: user not found');
+        // Live acceptance locks users before sessions. Recovery uses the same
+        // order before the library deletes every session for this account.
+        await tx.$queryRaw`SELECT "id" FROM "user" WHERE "id" = ${user.id} FOR UPDATE`;
+        await tx.$queryRaw`SELECT "id" FROM "session" WHERE "userId" = ${user.id} ORDER BY "id" FOR UPDATE`;
         let token: string | undefined;
         // Use the library reset flow without email delivery. The token stays in memory.
         const auth = createAuth(tx, config, async (data) => { token = data.token; });

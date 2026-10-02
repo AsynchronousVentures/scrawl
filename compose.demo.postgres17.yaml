@@ -1,0 +1,24 @@
+# Legacy retained PostgreSQL 17 Demo A volume definition, not a development/test target.
+# Keep the same Compose project name used when its database was created.
+# This is not a production deployment definition or a major-version upgrade.
+name: scrawl-demo-a
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?Run demo:init first}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run demo:init first}
+      POSTGRES_DB: scrawl_demo_a
+    ports:
+      - "127.0.0.1:${DEMO_DB_PORT:-5433}:5432"
+    volumes:
+      - demo_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"'
+      interval: 5s
+      timeout: 3s
+      retries: 10
+volumes:
+  demo_postgres_data:

@@ -10,7 +10,8 @@ import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { parseEnv } from 'node:util';
 import type { Locator } from '@playwright/test';
-import { readConfig } from '../../src/config.js';
+import { readConfig, readIdentityConfig } from '../../src/config.js';
+import { createOperator } from '../../src/core/identity/operator.js';
 import { createDatabase } from '../../src/db/client.js';
 import { DEMO_DATABASE, readDemoCredentials, readPrivateDemoFile } from '../../scripts/demo-config.js';
 import type { DemoCredentials, DemoRole } from '../../scripts/demo-config.js';
@@ -19,7 +20,7 @@ import type { DemoBResult } from '../../scripts/demo-b.js';
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
 /** Owns one explicit, disposable database. Run after test:db, never alongside it. */
-export async function createBrowserDemo() {
+export async function createBrowserDemo(options: { collaboration?: boolean } = {}) {
   const baseConfig = readConfig(process.env);
   const target = new URL(baseConfig.databaseUrl);
   if (baseConfig.nodeEnv === 'production' || !['localhost', '127.0.0.1', '[::1]'].includes(target.hostname)
@@ -34,6 +35,7 @@ export async function createBrowserDemo() {
   let output = '';
   const secrets = [decodeURIComponent(target.password)];
   let closed = false;
+  let setupStage = 'target verification';
 
   async function stopServer() {
     if (!server || server.exitCode !== null) return;
@@ -45,9 +47,17 @@ export async function createBrowserDemo() {
       }, 12_000);
       child.once('close', () => { clearTimeout(deadline); done(); });
     });
+    const outputStart = output.length;
     child.kill('SIGTERM');
     await stopped;
-    if (child.exitCode !== 0) throw new Error('Browser demo server failed to stop gracefully');
+    if (child.exitCode !== 0) {
+      // Only recognize our fixed shutdown signals, never expose child output.
+      const stoppedOutput = output.slice(outputStart);
+      const signals = ['Collaboration ownership lost', ...['collaboration', 'http', 'ownership', 'database', 'complete'].flatMap(phase =>
+        ['timed out', 'failed'].map(reason => `Graceful shutdown ${reason} during ${phase}`))];
+      const signal = signals.find(value => stoppedOutput.includes(value));
+      throw new Error(`Browser demo server failed to stop gracefully (exit ${child.exitCode}, signal ${child.signalCode})${signal ? `: ${signal}` : ''}`);
+    }
   }
 
   async function close() {
@@ -57,8 +67,11 @@ export async function createBrowserDemo() {
     try { await stopServer(); } catch { failed = true; }
     try {
       if (database) {
-        const sessions = await database.prisma.session.findMany({ select: { token: true } });
-        secrets.push(...sessions.map((session) => session.token));
+        const tables = await database.pool.query<{ present: string | null }>("SELECT to_regclass('session')::text AS present");
+        if (tables.rows[0]?.present) {
+          const sessions = await database.prisma.session.findMany({ select: { token: true } });
+          secrets.push(...sessions.map((session) => session.token));
+        }
       }
       if (secrets.some((secret) => secret && output.includes(secret))) failed = true;
     } catch { failed = true; }
@@ -76,12 +89,24 @@ export async function createBrowserDemo() {
         cwd, env: process.env, stdio: ['ignore', 'pipe', 'pipe'],
       });
       const deadline = setTimeout(() => { child.kill('SIGTERM'); reject(new Error('Browser fixture command timed out')); }, 45_000);
-      child.stdout.on('data', (chunk: Buffer) => { output += chunk.toString(); });
-      child.stderr.on('data', (chunk: Buffer) => { output += chunk.toString(); });
+      let commandOutput = '';
+      child.stdout.on('data', (chunk: Buffer) => { const value = chunk.toString(); output += value; commandOutput += value; });
+      child.stderr.on('data', (chunk: Buffer) => { const value = chunk.toString(); output += value; commandOutput += value; });
       child.once('error', () => { clearTimeout(deadline); reject(new Error('Browser fixture command could not start')); });
       child.once('close', (code) => {
         clearTimeout(deadline);
-        if (code === 0) done(); else reject(new Error(`Browser fixture command failed (${script})`));
+        if (code === 0) done();
+        else {
+          // Expose only the script's known, static stage message. Child output
+          // can otherwise contain connection URLs, passwords or session cookies.
+          const stages = ['configuration', 'authentication', 'space setup', 'document create', 'stale save',
+            'missing precondition', 'reader denial', 'outsider denial', 'invalid native save', 'native rich export',
+            'restore', 'native export', 'lifecycle', 'membership revocation', 'logout', 'artifacts'];
+          const stage = script === 'demo-a.ts' ? stages.find(value => commandOutput.includes(
+            `Demo A failed at ${value}. Check the running demo API and fixture setup.`,
+          )) : undefined;
+          reject(new Error(`Browser fixture command failed (${script})${stage ? ` during ${stage}` : ''}`));
+        }
       });
     });
   }
@@ -92,6 +117,7 @@ export async function createBrowserDemo() {
     if (existing.rowCount !== 0) throw new Error('Refusing an existing browser demo database');
     await administrator.pool.query('CREATE DATABASE "scrawl_demo_a"');
     ownsDatabase = true;
+    setupStage = 'private fixture initialization';
     target.pathname = `/${DEMO_DATABASE}`;
     target.search = '';
     target.hash = '';
@@ -114,29 +140,39 @@ export async function createBrowserDemo() {
     Object.assign(values, {
       DATABASE_URL: target.href, POSTGRES_USER: decodeURIComponent(target.username),
       POSTGRES_PASSWORD: decodeURIComponent(target.password), POSTGRES_DB: DEMO_DATABASE,
+      DEMO_DB_PORT: target.port || '5432',
       PORT: String(port), APP_ORIGIN: origin, LOG_LEVEL: 'info', AUTH_SECRET: randomBytes(32).toString('hex'),
+      // This newly owned disposable database exercises explicit publication;
+      // the application default and every non-demo target remain disabled.
+      PUBLIC_PUBLISHING_ENABLED: 'true',
+      COLLABORATION_ENABLED: String(options.collaboration ?? false),
     });
     secrets.push(values.AUTH_SECRET);
     await writeFile(environmentPath, Object.entries(values).map(([name, value]) => `${name}=${value}`).join('\n') + '\n', { mode: 0o600 });
+    setupStage = 'migrations and account provisioning';
     await command('demo-fixtures.ts', ['setup', '--database', DEMO_DATABASE]);
-    const accounts: DemoCredentials = await readDemoCredentials(join(cwd, 'artifacts/demo/credentials.json'));
+    let accounts: DemoCredentials = await readDemoCredentials(join(cwd, 'artifacts/demo/credentials.json'));
     secrets.push(...Object.values(accounts.accounts).map((account) => account.password));
     if ((await stat(join(repository, 'web/dist/index.html'))).isFile() !== true) throw new Error('Build the frontend before browser acceptance');
 
-    server = spawn(process.execPath, ['--import', 'tsx', join(repository, 'scripts/demo-server.ts')], {
-      cwd, env: process.env, stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    server.stdout!.on('data', (chunk: Buffer) => { output += chunk.toString(); });
-    server.stderr!.on('data', (chunk: Buffer) => { output += chunk.toString(); });
-    server.once('error', () => { output += 'Browser demo server could not start'; });
-    let ready = false;
-    for (let attempt = 0; attempt < 100; attempt++) {
-      try { if ((await fetch(origin + '/health/ready')).status === 200) { ready = true; break; } }
-      catch { /* Only readiness reads are retried. */ }
-      if (server.exitCode !== null) throw new Error('Browser demo server exited before readiness');
-      await delay(100);
+    setupStage = 'server startup and readiness';
+    async function startServer() {
+      server = spawn(process.execPath, ['--import', 'tsx', join(repository, 'scripts/demo-server.ts')], {
+        cwd, env: process.env, stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      server.stdout!.on('data', (chunk: Buffer) => { output += chunk.toString(); });
+      server.stderr!.on('data', (chunk: Buffer) => { output += chunk.toString(); });
+      server.once('error', () => { output += 'Browser demo server could not start'; });
+      let ready = false;
+      for (let attempt = 0; attempt < 100; attempt++) {
+        try { if ((await fetch(origin + '/health/ready')).status === 200) { ready = true; break; } }
+        catch { /* Only readiness reads are retried. */ }
+        if (server.exitCode !== null) throw new Error('Browser demo server exited before readiness');
+        await delay(100);
+      }
+      if (!ready) throw new Error('Browser demo server did not become ready');
     }
-    if (!ready) throw new Error('Browser demo server did not become ready');
+    await startServer();
 
     let loginCount = 0;
     let lastLogin = 0;
@@ -191,13 +227,48 @@ export async function createBrowserDemo() {
           || !('revisionNumber' in result) || result.revisionNumber !== 1) throw new Error('Browser seed result is invalid');
         return { spaceId: result.spaceId, documentId: result.documentId, revisionId: result.revisionId, revisionNumber: 1 };
       },
+      async restart(collaboration: boolean) {
+        // Only this owned fixture process/configuration changes. Its database,
+        // credentials and sessions survive, so restart tests exercise real recovery.
+        await stopServer();
+        values.COLLABORATION_ENABLED = String(collaboration);
+        await writeFile(environmentPath, Object.entries(values).map(([name, value]) => `${name}=${value}`).join('\n') + '\n', { mode: 0o600 });
+        await startServer();
+      },
+      async recoverAccount(role: DemoRole) {
+        if (!database || !ownsDatabase || !cwd) throw new Error('Disposable account recovery is unavailable');
+        const account = accounts.accounts[role], password = randomBytes(24).toString('base64url');
+        secrets.push(password);
+        try {
+          await createOperator(database.prisma, readIdentityConfig(values, readConfig(values))).recover(account.email, password);
+          accounts = { ...accounts, accounts: { ...accounts.accounts, [role]: { ...account, password } } };
+          await writeFile(join(cwd, 'artifacts/demo/credentials.json'), JSON.stringify(accounts) + '\n', { mode: 0o600 });
+        } catch { throw new Error('Disposable account recovery failed'); }
+      },
+      async crashAndRestart() {
+        // Kill only the child created by this disposable fixture. Do not reset
+        // its database/configuration or invoke retained preview processes.
+        const child = server;
+        if (!child || child.exitCode !== null || child.signalCode !== null) throw new Error('Browser demo process is not running');
+        await new Promise<void>((done, reject) => {
+          const deadline = setTimeout(() => reject(new Error('Browser demo crash did not complete')), 12_000);
+          child.once('close', () => {
+            clearTimeout(deadline);
+            if (child.signalCode === 'SIGKILL') done(); else reject(new Error('Browser demo did not terminate by SIGKILL'));
+          });
+          if (!child.kill('SIGKILL')) { clearTimeout(deadline); reject(new Error('Browser demo crash could not be initiated')); }
+        });
+        server = undefined;
+        await startServer();
+      },
       async runDemoA() { await command('demo-a.ts'); },
       close,
     };
   } catch {
-    await close();
+    let cleanupFailed = false;
+    try { await close(); } catch { cleanupFailed = true; }
     // PostgreSQL/child errors can disclose connection URLs. Keep failure diagnostics static.
-    throw new Error('Browser demo setup failed. Check local PostgreSQL, database creation privileges, frontend build, and absence of another designated demo database.');
+    throw new Error(`Browser demo setup failed during ${setupStage}.${cleanupFailed ? ' Cleanup also failed.' : ' Disposable resources were cleaned up.'} Check local PostgreSQL, fixture targets and the frontend build.`);
   }
 }
 

@@ -1,6 +1,6 @@
-# Public publishing — proposed first capability
+# Selected-revision public publishing
 
-**Implementation timing:** P5 starts with supported text content; P7 adds the attachment-manifest portions below. The capability is planned, not present in the source.
+The integration branch implements this optional capability with native BlockNote content and document-owned attachments. `PUBLIC_PUBLISHING_ENABLED` defaults to `false`. [ADR 0002](adr/0002-integration-storage-and-publication.md) records the accepted storage and core-policy boundary; [VALIDATION.md](../VALIDATION.md) records actual results.
 
 **Requirement:** A private/team knowledge base can also publish selected documentation for anonymous readers. This is not multi-tenancy, a public editing system, or a generic website builder.
 
@@ -22,21 +22,21 @@ Internal edits are shared with authorized teammates, not private personal drafts
 
 ## Minimal persistent state
 
-The document core retains document identity, current revision, lock version, lifecycle state, and immutable revisions. The publishing capability owns a publication record referencing the source document and exact revision, the publisher/time, public identifier, active state, and an attachment allowlist derived from the approved revision.
+The document core retains document identity, current revision, lock version, lifecycle state, availability version, and immutable revisions. The publishing capability owns one publication record per document, referencing its exact approved revision, availability version, publisher/time, stable public UUID, and active state. Composite foreign keys keep the selected revision associated with that document. The attachment allowlist comes from normalized `RevisionAttachment` references for that selected revision, rather than a second copy of attachment ownership.
 
-Prefer a stable opaque public identifier over a title-based slug initially. No vanity slug redirect history is needed. A database constraint must keep publication revisions associated with the same document. A publication operation validates every document-owned attachment reference and does not fetch arbitrary external resources.
+The opaque public identifier stays stable across explicit republishes. There are no title slugs or redirect history. A publication operation validates every document-owned attachment reference and does not fetch arbitrary external resources. If rewriting approved attachment URLs would exceed the native content size limit, approval fails with 413 before changing the grant or document version.
 
-The initial published surface is the document's approved title/body and allowed files. It does not copy source-space names, private parent breadcrumbs, collaborator information, revision notes, internal source URLs, or full revision history into public metadata. User-authored text and literal links in the selected revision are themselves published content: show them in a preview, warn that it is public, and do not promise automatic secret detection.
+Anonymous JSON is exactly `{title, content, publishedAt}`. It does not copy source document/space/revision IDs, versions, authors, private navigation, collaborator information, revision notes, or full revision history into public metadata. Approved attachment URLs are rewritten in this response to publication-scoped URLs without changing the immutable private snapshot. User-authored text and literal links in the selected revision are themselves published content: preview the selection, warn that it becomes public, and do not promise automatic secret detection.
 
 ## Lifecycle and atomicity
 
-Publishing names the intended revision, checks the expected document version, rechecks publishing authority and document availability, and writes the grant in a coordinated transaction. A stale publish request cannot silently approve a newer revision. Private edits never advance the published revision automatically.
+Publishing names the intended revision, checks the expected document version, rechecks administrator authority and document availability, and writes the grant through a trusted capability callback in the core's transaction. The operation locks space before document and advances the document lock version without creating a content revision. Missing preconditions return 428; stale preconditions return 412. An authorized reader/editor receives 403, while outsiders receive 404 without source information. A stale publish request cannot silently approve a newer revision. Private edits never advance the published revision automatically.
 
 Required revocation is not an eventual event handler. Unpublish immediately invalidates the grant at the application boundary. Archive makes all grants unusable; unarchive must not reactivate them. Re-publishing requires a new explicit decision.
 
-A recommended small mechanism for archive/recovery is a monotonic `availabilityVersion` owned by the document core. Increment it when lifecycle changes invalidate exposure. Each publication stores the approved version. Public resolution requires an active source and a matching version. Unarchive does not restore an old version. This prevents accidental republication without the core importing publishing internals. Adopt and test this mechanism when implementing publishing, not as an unused column in the identity milestone. An alternative must preserve the same tested behavior.
+The core owns monotonic `availabilityVersion`, starting at 1 and incrementing when an active document is archived. Each publication stores its approved version. Unarchive leaves the generation unchanged. Core purpose-specific public reads query the active grant, nonarchived document, matching generation, selected immutable revision, and attachment allowlist together. They never read the current private head or bypass authorization through an administrator identity. The capability owns grant writes; core imports no capability code. This authoritative read policy is the explicit ADR 0002 adjustment to the earlier ban on core publication-table queries.
 
-Disabling publishing globally prevents all anonymous reads. Re-enabling resumes still-active grants whose lifecycle generation still matches. Describe the switch as a pause, not permanent revocation; unpublish individual content to revoke its grant.
+Disabling publishing globally prevents all anonymous reads and publication writes. Authenticated availability/status and private workflows remain usable. Re-enabling resumes still-active grants whose lifecycle generation matches. The switch is a pause, not permanent revocation; unpublish individual content to revoke its grant. Repeated accepted publication commands still advance the document lock; unpublish does not delete history or erase the stored grant record.
 
 ## Attachments, links, and caching
 
@@ -44,23 +44,27 @@ Private files remain outside any unrestricted static directory. Public file read
 
 Links do not recursively publish their targets. Public rendering must not resolve private target titles, create private previews, or expose the full private navigation tree. Add public navigation/search only over explicitly published projections; searching the internal latest revisions and filtering afterward is not valid.
 
-Use the supported content renderer with strict URL and node rules. Do not enable arbitrary HTML/JavaScript as a shortcut to public pages. Inline HTML/SVG or other active file types need a deliberately safe treatment, not generic browser execution.
+The read-only frontend uses the same native BlockNote renderer and strict URL/content validation as private documents. Raw HTML/script content is rejected; literal HTML text stays text. Uploaded SVG, HTML, executables, and unsupported file types are rejected rather than exposed as active browser content. Public attachment streams use `nosniff` and a sandbox CSP with safe disposition filenames.
 
-Start with `Cache-Control: no-store` on publication responses and file streams; do not add CDN or long-lived signed file URLs before revocation is designed. Unpublishing can stop future service access, but cannot erase copies already downloaded or captured by third parties. Say this in the publish UI. A public URL is not a secret or an authorization token.
+Publication responses and file streams use `Cache-Control: no-store`. There is no CDN or long-lived signed file URL. Unpublishing stops future service access but cannot erase copies already downloaded or captured by third parties. The publish UI must state that limitation. A public URL is not a secret or an authorization token.
 
-## Proposed API surface
+## Implemented API surface
 
 | Endpoint | Responsibility |
 | --- | --- |
-| `POST /api/v1/documents/{id}/publish` | Administrator publishes an explicitly named revision using `If-Match` |
-| `POST /api/v1/documents/{id}/unpublish` | Administrator revokes its active publication using `If-Match` |
-| `GET /api/v1/public/documents/{publicId}` | Anonymous read of the active published projection only |
-| `GET /api/v1/public/documents/{publicId}/attachments/{attachmentId}` | Anonymous stream allowed by that active publication only |
+| `GET /api/v1/publishing` | Authenticated `{enabled, mayPublish}` availability |
+| `GET /api/v1/documents/{id}/publication` | Authorized publication status plus current document ETag |
+| `POST /api/v1/documents/{id}/publication` | Administrator approves `{revisionId}` using `If-Match` |
+| `DELETE /api/v1/documents/{id}/publication` | Administrator revokes its publication using `If-Match` |
+| `GET /api/public/publications/{publicId}` | Anonymous `{title, content, publishedAt}` for the valid selected grant |
+| `GET /api/public/publications/{publicId}/attachments/{attachmentId}` | Anonymous immutable stream referenced by that valid selected revision only |
 
-Treat publication state changes as document-visible version changes and coordinate their updates through core operations in a transaction. This gives publish and unpublish a single meaningful document precondition rather than independent writes that race. Only add these routes to generated OpenAPI when they are implemented. No public write route exists.
+Status and successful mutations return `{publication, lockVersion}` with the normal document ETag. `publication` is null or `{publicId, revisionId, revisionNumber, publishedAt, active}`. `active` describes grant/lifecycle validity; the availability route reports the global pause separately. Disabled writes and unavailable anonymous grants return 404. Unknown query fields are rejected, and public requests have no historical revision selector. These routes are generated into OpenAPI from implemented schemas. No public write route exists.
 
-P5 adds a simple read-only web view rendering this API on the installation's existing host after API acceptance passes. Public full-text search, hierarchical public navigation, themes, custom domains, public comments, and unlisted/expiring shares are not required for the first publishing slice.
+The read-only web route is `/publications/{publicId}` on the application origin; it requests the anonymous JSON API above and exposes no private controls or navigation. It is distinct from the API path. There is no separate public deployment.
 
-## Acceptance evidence
+## Verification and future proposals
 
-Publish revision 2, then save revision 3 with an internal-only sentence and file. Anonymous JSON, rendered output, file requests, and metadata expose neither addition. A reader/editor cannot publish. A public request cannot select revision 1, source history, a private parent, or a different attachment by changing a URL. Unpublish blocks future reads. Archive and unarchive do not restore anonymous access. An old publish request fails after concurrent edits. Content imports start private and never restore public grants implicitly. Whole-instance backup may preserve grant records, but restoring an instance starts with global publishing disabled until an administrator reviews the destination and explicitly re-enables it.
+Acceptance checks cover an approved old revision remaining public after private title/body/file changes, reader/editor publication denial, outsider isolation, missing/stale preconditions, cross-document revision selection, selected-revision attachment allowlists, and immediate unpublish/archive revocation. Unarchive cannot revive a grant, and disabling the capability leaves private operations usable. Tests and browser results actually run belong in [VALIDATION.md](../VALIDATION.md), rather than being inferred from these requirements.
+
+Public full-text search, hierarchical navigation, themes, custom domains, public comments, and unlisted/expiring shares remain proposals. The next collaboration/comments integration is private and follows [ADR 0003](adr/0003-collaboration-checkpoints.md); it must not make live unsaved changes or comment threads public. Future content import must start private and never restore grants implicitly. A future whole-instance backup may preserve grant records, but restoring to a destination must start with global publishing disabled until an administrator reviews and explicitly re-enables it.

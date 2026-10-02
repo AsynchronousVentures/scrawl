@@ -9,6 +9,7 @@ import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { createDatabase } from '../src/db/client.js';
 import { validateContent } from '../src/core/documents/content.js';
+import { richDemoContent } from './demo-content.js';
 import {
   DEMO_DATABASE, demoFileExists, readDemoConfig, readDemoCredentials, readPrivateDemoEnvironment,
 } from './demo-config.js';
@@ -146,34 +147,36 @@ export async function seedDemoB(confirmation: string): Promise<DemoBResult> {
         200, { role }, tag);
       tag = spaceEtag(granted.etag);
     }
-    const content = validateContent({ format: 'prosemirror-json', schemaVersion: 1, document: {
-      type: 'doc', content: [
-        { type: 'paragraph', content: [{ type: 'text', text: 'Run tests before deploying.' }] },
-        { type: 'paragraph', content: [{ type: 'text', text: 'Save changes explicitly and keep revision history.' }] },
-        { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: 'Before you start' }] },
-        { type: 'paragraph', content: [{ type: 'text', text: 'Use the disposable demo database and synthetic accounts for this checklist. Confirm which space you are working in before making a change. The editor and reader accounts have different permissions; the outsider account has no access to this handbook.' }] },
-        { type: 'paragraph', content: [{ type: 'text', text: 'Keep the intended change small enough to review. Write down the expected result, the checks you will run, and the conditions that would make you stop. This document is a practice fixture, so no production data or real credentials belong here.' }] },
-        { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: 'Review the change' }] },
-        { type: 'paragraph', content: [{ type: 'text', text: 'Read the current title and body before editing. Check the document history when you need to understand an earlier decision. A revision is an immutable snapshot, and restoring a snapshot creates another revision rather than changing the original.' }] },
-        { type: 'paragraph', content: [{ type: 'text', text: 'Use headings to make a longer checklist easy to scan. The outline on this page follows the headings in the document itself. Choose a section in the outline to move directly to it, then return to the top when you need the document actions.' }] },
-        { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: 'Verify the build' }] },
-        { type: 'paragraph', content: [{ type: 'text', text: 'Run the foundation checks and the database tests before considering the change ready. A passing interface check does not replace a transaction or authorization check. Record the exact command and the observed result so another person can repeat it.' }] },
-        { type: 'heading', attrs: { level: 3 }, content: [{ type: 'text', text: 'Check the browser' }] },
-        { type: 'paragraph', content: [{ type: 'text', text: 'Log in, make a small edit, save explicitly, and reload. Confirm that the saved title and body return from the API. Use the keyboard to reach navigation, editor controls, history, and the document menu. Focus should remain visible throughout.' }] },
-        { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: 'Check permissions' }] },
-        { type: 'paragraph', content: [{ type: 'text', text: 'A reader can open the document, browse history, and export the saved snapshot. Editing and lifecycle actions require editor access. An outsider must not learn the title, body, or revision numbers, even when requesting a known document identifier.' }] },
-        { type: 'paragraph', content: [{ type: 'text', text: 'After membership is revoked, the existing session can still identify its account but cannot use the removed space access. If a save discovers that access is lost, retain the unsaved draft in the tab and remove the unavailable server actions.' }] },
-        { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: 'Save and compare' }] },
-        { type: 'paragraph', content: [{ type: 'text', text: 'Open this document in two tabs and change both copies. Save one copy first. The other copy should report a conflict, retain its complete local title and body, and show the latest server version separately. Reconcile deliberately before pressing Save again.' }] },
-        { type: 'paragraph', content: [{ type: 'text', text: 'A temporary failure is different from lost access. A failed request must not display a successful save. Navigation that would discard a dirty draft asks for confirmation; choose Keep editing to return to the draft without changing it.' }] },
-        { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: 'History and recovery' }] },
-        { type: 'paragraph', content: [{ type: 'text', text: 'Compare the current revision with an earlier snapshot in History. Restoring the older snapshot appends a new revision with the restored title and body. The intervening revisions remain readable, and the content revision number advances only when a snapshot is created.' }] },
-        { type: 'paragraph', content: [{ type: 'text', text: 'Unsaved drafts remain only in the current browser tab. They are not stored in local storage or a background autosave service. If a session expires, copy the retained draft before closing or reloading, or log in with the same account and review it before saving.' }] },
-        { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: 'Archive and export' }] },
-        { type: 'paragraph', content: [{ type: 'text', text: 'Archive removes a document from the default list and makes its body read-only. Show archived to find it again, then unarchive deliberately. These lifecycle actions preserve the content history while advancing the separate document lock version.' }] },
-        { type: 'paragraph', content: [{ type: 'text', text: 'Export JSON downloads the current saved snapshot with minimal document and revision provenance. Unsaved changes are excluded. This single-document native export is useful for inspection; it is not a complete history export, import system, or database backup.' }] },
+    const textProps = { textColor: 'default', backgroundColor: 'default', textAlignment: 'left' };
+    const content = validateContent({
+      format: 'blocknote-json', schemaVersion: 1, editorVersion: '0.55.0', document: [
+        { id: 'demo-checklist-1', type: 'paragraph', props: textProps, content: [{ type: 'text', text: 'Run tests before deploying.', styles: {} }], children: [] },
+        { id: 'demo-checklist-2', type: 'paragraph', props: textProps, content: [{ type: 'text', text: 'Save changes explicitly and keep revision history.', styles: {} }], children: [] },
+        { id: 'demo-checklist-3', type: 'heading', props: { ...textProps, level: 2 }, content: [{ type: 'text', text: 'Before you start', styles: {} }], children: [] },
+        { id: 'demo-checklist-4', type: 'paragraph', props: textProps, content: [{ type: 'text', text: 'Use the disposable demo database and synthetic accounts for this checklist. Confirm which space you are working in before making a change. The editor and reader accounts have different permissions; the outsider account has no access to this handbook.', styles: {} }], children: [] },
+        { id: 'demo-checklist-5', type: 'paragraph', props: textProps, content: [{ type: 'text', text: 'Keep the intended change small enough to review. Write down the expected result, the checks you will run, and the conditions that would make you stop. This document is a practice fixture, so no production data or real credentials belong here.', styles: {} }], children: [] },
+        { id: 'demo-checklist-6', type: 'heading', props: { ...textProps, level: 2 }, content: [{ type: 'text', text: 'Review the change', styles: {} }], children: [] },
+        { id: 'demo-checklist-7', type: 'paragraph', props: textProps, content: [{ type: 'text', text: 'Read the current title and body before editing. Check the document history when you need to understand an earlier decision. A revision is an immutable snapshot, and restoring a snapshot creates another revision rather than changing the original.', styles: {} }], children: [] },
+        { id: 'demo-checklist-8', type: 'paragraph', props: textProps, content: [{ type: 'text', text: 'Use headings to make a longer checklist easy to scan. The outline on this page follows the headings in the document itself. Choose a section in the outline to move directly to it, then return to the top when you need the document actions.', styles: {} }], children: [] },
+        { id: 'demo-checklist-9', type: 'heading', props: { ...textProps, level: 2 }, content: [{ type: 'text', text: 'Verify the build', styles: {} }], children: [] },
+        { id: 'demo-checklist-10', type: 'paragraph', props: textProps, content: [{ type: 'text', text: 'Run the foundation checks and the database tests before considering the change ready. A passing interface check does not replace a transaction or authorization check. Record the exact command and the observed result so another person can repeat it.', styles: {} }], children: [] },
+        { id: 'demo-checklist-11', type: 'heading', props: { ...textProps, level: 3 }, content: [{ type: 'text', text: 'Check the browser', styles: {} }], children: [] },
+        { id: 'demo-checklist-12', type: 'paragraph', props: textProps, content: [{ type: 'text', text: 'Log in, make a small edit, save explicitly, and reload. Confirm that the saved title and body return from the API. Use the keyboard to reach navigation, editor controls, history, and the document menu. Focus should remain visible throughout.', styles: {} }], children: [] },
+        { id: 'demo-checklist-13', type: 'heading', props: { ...textProps, level: 2 }, content: [{ type: 'text', text: 'Check permissions', styles: {} }], children: [] },
+        { id: 'demo-checklist-14', type: 'paragraph', props: textProps, content: [{ type: 'text', text: 'A reader can open the document, browse history, and export the saved snapshot. Editing and lifecycle actions require editor access. An outsider must not learn the title, body, or revision numbers, even when requesting a known document identifier.', styles: {} }], children: [] },
+        { id: 'demo-checklist-15', type: 'paragraph', props: textProps, content: [{ type: 'text', text: 'After membership is revoked, the existing session can still identify its account but cannot use the removed space access. If a save discovers that access is lost, retain the unsaved draft in the tab and remove the unavailable server actions.', styles: {} }], children: [] },
+        { id: 'demo-checklist-16', type: 'heading', props: { ...textProps, level: 2 }, content: [{ type: 'text', text: 'Save and compare', styles: {} }], children: [] },
+        { id: 'demo-checklist-17', type: 'paragraph', props: textProps, content: [{ type: 'text', text: 'Open this document in two tabs and change both copies. Save one copy first. The other copy should report a conflict, retain its complete local title and body, and show the latest server version separately. Reconcile deliberately before pressing Save again.', styles: {} }], children: [] },
+        { id: 'demo-checklist-18', type: 'paragraph', props: textProps, content: [{ type: 'text', text: 'A temporary failure is different from lost access. A failed request must not display a successful save. Navigation that would discard a dirty draft asks for confirmation; choose Keep editing to return to the draft without changing it.', styles: {} }], children: [] },
+        { id: 'demo-checklist-19', type: 'heading', props: { ...textProps, level: 2 }, content: [{ type: 'text', text: 'History and recovery', styles: {} }], children: [] },
+        { id: 'demo-checklist-20', type: 'paragraph', props: textProps, content: [{ type: 'text', text: 'Compare the current revision with an earlier snapshot in History. Restoring the older snapshot appends a new revision with the restored title and body. The intervening revisions remain readable, and the content revision number advances only when a snapshot is created.', styles: {} }], children: [] },
+        { id: 'demo-checklist-21', type: 'paragraph', props: textProps, content: [{ type: 'text', text: 'Unsaved drafts remain only in the current browser tab. They are not stored in local storage or a background autosave service. If a session expires, copy the retained draft before closing or reloading, or log in with the same account and review it before saving.', styles: {} }], children: [] },
+        { id: 'demo-checklist-22', type: 'heading', props: { ...textProps, level: 2 }, content: [{ type: 'text', text: 'Archive and export', styles: {} }], children: [] },
+        { id: 'demo-checklist-23', type: 'paragraph', props: textProps, content: [{ type: 'text', text: 'Archive removes a document from the default list and makes its body read-only. Show archived to find it again, then unarchive deliberately. These lifecycle actions preserve the content history while advancing the separate document lock version.', styles: {} }], children: [] },
+        { id: 'demo-checklist-24', type: 'paragraph', props: textProps, content: [{ type: 'text', text: 'Export JSON downloads the current saved snapshot with minimal document and revision provenance. Unsaved changes are excluded. This single-document native export is useful for inspection; it is not a complete history export, import system, or database backup.', styles: {} }], children: [] },
+        ...richDemoContent(['Standard rich blocks keep their native structure.']).document,
       ],
-    } }).content;
+    }).content;
     const created = (await api.request('POST', `/api/v1/spaces/${spaceId}/documents`, 201,
       { title: 'Release checklist', content })).data;
     const documentId = uuid(created.id);

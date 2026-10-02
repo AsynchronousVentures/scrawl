@@ -102,7 +102,7 @@ test('oversized bodies return sanitized request problems', async (t) => {
   assert.equal(result.statusCode, 413);
   assert.equal(result.json().code, 'REQUEST_REJECTED');
 });
-test('logs omit credentials, query strings, bodies and error details', () => {
+test('logs omit credentials, private slugs, query strings, bodies and error details', () => {
   // Capture the real logger in a separate process without replacing its serializers.
   const child = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', `
     import { buildApp } from './src/app.ts';
@@ -117,16 +117,20 @@ test('logs omit credentials, query strings, bodies and error details', () => {
       error.name = 'error-name-secret';
       throw error;
     });
+    app.get('/slug-log-probe/:slug', async () => ({ ok: true }));
     await app.inject({
       method: 'POST', url: '/log-probe?token=query-secret',
       headers: { authorization: 'Bearer authorization-secret', cookie: 'session=request-cookie-secret' },
       payload: { text: 'body-secret' },
     });
+    await app.inject('/slug-log-probe/private-document-title-secret');
+    await app.inject('/missing-private-document-title-secret');
     await app.close();
   `], { encoding: 'utf8' });
   assert.equal(child.status, 0, child.stderr);
   const logs = child.stdout.trim().split('\n').map((line) => JSON.parse(line));
   assert(logs.some((line) => line.req?.url === '/log-probe'));
+  assert(logs.some((line) => line.req?.url === '/slug-log-probe/:slug'));
   assert(logs.some((line) => line.msg === 'Unhandled request error'));
   assert(!`${child.stdout}${child.stderr}`.includes('-secret'));
 });

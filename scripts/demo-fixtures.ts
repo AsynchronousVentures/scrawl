@@ -24,8 +24,8 @@ export async function initializeDemo(directory = process.cwd()): Promise<void> {
     'NODE_ENV=development', 'HOST=127.0.0.1', 'PORT=3100', 'LOG_LEVEL=info',
     'APP_ORIGIN=http://127.0.0.1:3100', `AUTH_SECRET=${randomBytes(32).toString('hex')}`,
     `SCRAWL_DEMO_DISPOSABLE=${DEMO_DATABASE}`, 'POSTGRES_USER=scrawl_demo',
-    `POSTGRES_PASSWORD=${password}`, `POSTGRES_DB=${DEMO_DATABASE}`, 'DEMO_DB_PORT=5433',
-    `DATABASE_URL=postgresql://scrawl_demo:${password}@127.0.0.1:5433/${DEMO_DATABASE}`,
+    `POSTGRES_PASSWORD=${password}`, `POSTGRES_DB=${DEMO_DATABASE}`, 'DEMO_DB_PORT=5434',
+    `DATABASE_URL=postgresql://scrawl_demo:${password}@127.0.0.1:5434/${DEMO_DATABASE}`,
     '',
   ].join('\n');
   // Exclusive creation preserves existing configuration, including symlink targets.
@@ -72,8 +72,18 @@ export async function runFixtureCommand(command: 'setup' | 'reset', confirmation
     commandLocked = lock.rows[0]?.locked === true;
     if (!commandLocked) throw new Error('Another demo fixture command is running');
     if (command === 'reset') {
+      const resetArtifacts: string[] = [];
+      for (const artifact of ['workspace.json', 'b-result.json', 'result.json', 'export.json']) {
+        const path = `artifacts/demo/${artifact}`;
+        if (await demoFileExists(path)) {
+          const info = await lstat(path);
+          if (!info.isFile() || info.isSymbolicLink() || (info.mode & 0o077) !== 0
+            || (process.getuid && info.uid !== process.getuid())) throw new Error('Unsafe demo artifact');
+          resetArtifacts.push(path);
+        }
+      }
       // No CASCADE and no schema/database drop. Preserve Prisma's migration ledger.
-      const knownTables = ['user', 'session', 'account', 'verification', 'Space', 'SpaceMembership', 'Document', 'DocumentRevision'];
+      const knownTables = ['user', 'session', 'account', 'verification', 'Space', 'SpaceMembership', 'Document', 'DocumentRevision', 'DocumentLive', 'DocumentFavorite', 'Attachment', 'RevisionAttachment', 'Publication'];
       const tables = await database.pool.query<{ tablename: string }>(
         "SELECT tablename FROM pg_tables WHERE schemaname = 'public'",
       );
@@ -87,6 +97,7 @@ export async function runFixtureCommand(command: 'setup' | 'reset', confirmation
       if (await demoFileExists(DEMO_CREDENTIALS_PATH)) {
         await unlink(DEMO_CREDENTIALS_PATH);
       }
+      for (const path of resetArtifacts) await unlink(path);
       console.log('Demo fixture data reset. Migrations and private configuration retained. Run setup explicitly.');
       return;
     }

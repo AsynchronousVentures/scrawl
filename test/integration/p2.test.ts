@@ -3,6 +3,7 @@
 
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readdir } from 'node:fs/promises';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { request as httpRequest } from 'node:http';
@@ -13,10 +14,11 @@ import { createCore } from '../../src/core/index.js';
 import { createOperator } from '../../src/core/identity/operator.js';
 import { HttpProblem } from '../../src/http/problems.js';
 import { buildApp } from '../../src/app.js';
+import { CONTENT_LIMITS, validateContent } from '../../src/core/documents/content.js';
 
 function content(text: string) {
-  return { format: 'prosemirror-json', schemaVersion: 1,
-    document: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text }] }] } };
+  return validateContent({ format: 'blocknote-json', schemaVersion: 1, editorVersion: '0.55.0',
+    document: [{ id: 'synthetic-body', type: 'paragraph', content: [{ type: 'text', text, styles: {} }] }] }).content;
 }
 
 test('P2 documents and immutable history against PostgreSQL and authenticated HTTP sessions', async (t) => {
@@ -50,8 +52,10 @@ test('P2 documents and immutable history against PostgreSQL and authenticated HT
   const migrations = await database.pool.query<{ migration_name: string }>(
     'SELECT migration_name FROM "_prisma_migrations" WHERE finished_at IS NOT NULL ORDER BY migration_name',
   );
-  assert.equal(migrations.rows.length, 2, 'P2 must extend the existing P1 migration history');
+  const expectedHistory = (await readdir('prisma/migrations', { withFileTypes: true })).filter(entry => entry.isDirectory()).map(entry => entry.name).sort();
+  assert.deepEqual(migrations.rows.map(row => row.migration_name), expectedHistory, 'One reviewed migration history deploys completely');
   assert.equal(migrations.rows[0]?.migration_name, '20260930000000_identity_spaces');
+  assert.equal(migrations.rows[2]?.migration_name, '20260930020000_blocknote_native');
   const address = await app.listen({ host: '127.0.0.1', port: 0 });
 
   function client(peer: string) {
@@ -164,8 +168,9 @@ test('P2 documents and immutable history against PostgreSQL and authenticated HT
     firstRevisionId = result.data.revision.id;
     etag = String(result.headers.etag);
     assert.equal(result.headers.location, documentPath());
-    assert.equal(etag, `"doc-${documentId}-v1"`);
-    assert.deepEqual(Object.keys(result.data).sort(), ['id', 'spaceId', 'currentRevisionNumber', 'lockVersion',
+    assert.equal(etag, `"doc-${documentId}-bn1-v1"`);
+    assert.equal(result.data.editingMode, 'solo');
+    assert.deepEqual(Object.keys(result.data).sort(), ['id', 'slug', 'spaceId', 'spaceSlug', 'parentDocumentId', 'editingMode', 'currentRevisionNumber', 'lockVersion',
       'createdAt', 'createdBy', 'updatedAt', 'archivedAt', 'archivedBy', 'revision'].sort());
     assert.deepEqual(Object.keys(result.data.revision).sort(), ['id', 'documentId', 'revisionNumber', 'title',
       'content', 'plainText', 'authorId', 'createdAt', 'changeNote'].sort());
@@ -193,6 +198,20 @@ test('P2 documents and immutable history against PostgreSQL and authenticated HT
     assert.equal(updatedSecond.data.currentRevisionNumber, 2);
   });
 
+  await t.test('native snapshots retain their producing version and PostgreSQL refuses invalid native encodings', async () => {
+    const original = await database.prisma.documentRevision.findUniqueOrThrow({ where: { id: firstRevisionId } });
+    assert.equal(original.contentFormat, 'blocknote-json');
+    assert.equal(original.contentSchemaVersion, 1);
+    assert.equal(original.contentEditorVersion, '0.55.0');
+    for (const version of [null, 'future']) {
+      await assert.rejects(database.pool.query('UPDATE "DocumentRevision" SET "contentEditorVersion" = $1 WHERE "id" = $2', [version, firstRevisionId]),
+        (error: unknown) => error instanceof Error && 'code' in error && error.code === '23514');
+    }
+    await assert.rejects(database.pool.query('UPDATE "DocumentRevision" SET "body" = $1 WHERE "id" = $2', ['{}', firstRevisionId]),
+      (error: unknown) => error instanceof Error && 'code' in error && error.code === '23514');
+    assert.deepEqual(await database.prisma.documentRevision.findUniqueOrThrow({ where: { id: firstRevisionId } }), original);
+  });
+
   await t.test('PostgreSQL checks missing and cross-document heads at transaction commit', async () => {
     const brokenId = randomUUID();
     const connection = await database.pool.connect();
@@ -200,8 +219,8 @@ test('P2 documents and immutable history against PostgreSQL and authenticated HT
       await connection.query('BEGIN');
       // Insertion succeeds before the deferred check; COMMIT must reject the missing initial revision.
       await connection.query(`INSERT INTO "Document"
-        ("id", "spaceId", "currentRevisionNumber", "lockVersion", "createdBy", "createdAt", "updatedAt")
-        VALUES ($1, $2, 1, 1, $3, now(), now())`, [brokenId, spaceId, editorUser.id]);
+        ("id", "slug", "spaceId", "currentRevisionNumber", "lockVersion", "createdBy", "createdAt", "updatedAt")
+        VALUES ($1, 'broken-head', $2, 1, 1, $3, now(), now())`, [brokenId, spaceId, editorUser.id]);
       await assert.rejects(connection.query('COMMIT'), (error: unknown) =>
         error instanceof Error && 'code' in error && error.code === '23503');
       await connection.query('ROLLBACK');
@@ -421,24 +440,32 @@ test('P2 documents and immutable history against PostgreSQL and authenticated HT
     }
   });
 
-  await t.test('the complete restricted schema persists and reads back through native JSON DTOs', async () => {
-    const richContent = { format: 'prosemirror-json', schemaVersion: 1, document: { type: 'doc', content: [
-      { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: 'Synthetic heading', marks: [{ type: 'bold' }, { type: 'italic' }] }] },
-      { type: 'paragraph', content: [
-        { type: 'text', text: 'Synthetic link', marks: [{ type: 'link', attrs: { href: 'https://example.test/docs' } }] },
-        { type: 'hardBreak' }, { type: 'text', text: 'Synthetic after break', marks: [{ type: 'code' }] },
+  await t.test('native blocks, formatting, media and advanced table cells persist without schema expansion or loss', async () => {
+    const richContent = validateContent({ format: 'blocknote-json', schemaVersion: 1, editorVersion: '0.55.0', document: [
+      { id: 'heading', type: 'heading', props: { level: 6, isToggleable: true }, content: [{ type: 'text', text: 'Synthetic heading', styles: { bold: true, italic: true } }] },
+      { id: 'paragraph', type: 'paragraph', content: [
+        { type: 'text', text: 'Synthetic after break\n', styles: { underline: true, strike: true, textColor: 'blue', backgroundColor: 'yellow' } },
+        { type: 'link', href: 'https://example.test/docs', content: [{ type: 'text', text: 'Synthetic link', styles: {} }] },
       ] },
-      { type: 'bulletList', content: [{ type: 'listItem', content: [
-        { type: 'paragraph', content: [{ type: 'text', text: 'Synthetic bullet' }] },
-      ] }] },
-      { type: 'orderedList', attrs: { start: 3 }, content: [{ type: 'listItem', content: [
-        { type: 'paragraph', content: [{ type: 'text', text: 'Synthetic ordered' }] },
-      ] }] },
-      { type: 'codeBlock', attrs: { language: 'ts' }, content: [{ type: 'text', text: 'const synthetic = 1;' }] },
-    ] } };
+      { id: 'inline-code', type: 'paragraph', content: [{ type: 'text', text: 'Synthetic inline code', styles: { code: true } }] },
+      { id: 'bullet', type: 'bulletListItem', content: [{ type: 'text', text: 'Synthetic bullet', styles: {} }] },
+      { id: 'ordered', type: 'numberedListItem', props: { start: 3 }, content: [{ type: 'text', text: 'Synthetic ordered', styles: {} }] },
+      { id: 'code', type: 'codeBlock', props: { language: 'typescript' }, content: [{ type: 'text', text: 'const synthetic = 1;', styles: {} }] },
+      { id: 'check', type: 'checkListItem', props: { checked: true }, content: [{ type: 'text', text: 'Synthetic check', styles: {} }] },
+      { id: 'toggle', type: 'toggleListItem', children: [{ id: 'nested', type: 'paragraph', content: [{ type: 'text', text: 'Synthetic nested', styles: {} }] }] },
+      { id: 'quote', type: 'quote', content: [{ type: 'text', text: 'Synthetic quote', styles: {} }] },
+      { id: 'divider', type: 'divider' },
+      ...['audio', 'file', 'image', 'video'].map(type => ({ id: type, type,
+        props: { url: `https://example.test/synthetic.${type}`, caption: `Synthetic ${type}` } })),
+      { id: 'table', type: 'table', content: { type: 'tableContent', columnWidths: [200, null], headerRows: 1, rows: [
+        { cells: [{ type: 'tableCell', props: { colspan: 2, backgroundColor: 'yellow', textAlignment: 'center' }, content: [{ type: 'text', text: 'Synthetic table header', styles: { bold: true } }] }] },
+        { cells: [[], [{ type: 'text', text: 'Synthetic table cell', styles: {} }]] },
+      ] } },
+    ] }).content;
     const saved = await editor.send('PATCH', documentPath(), { content: richContent }, { 'if-match': etag });
     assert.equal(saved.status, 200);
-    assert.deepEqual(saved.data.revision.content, richContent);
+    assert.deepEqual(validateContent(saved.data.revision.content).content, richContent);
+    assert.equal(new Set(richContent.document.map(block => block.type)).size, 14);
     for (const text of ['Synthetic heading', 'Synthetic link', 'Synthetic after break', 'Synthetic bullet', 'Synthetic ordered', 'const synthetic = 1;']) {
       assert(saved.data.revision.plainText.includes(text));
     }
@@ -449,11 +476,13 @@ test('P2 documents and immutable history against PostgreSQL and authenticated HT
     assert.deepEqual(reloaded.data.revision, saved.data.revision);
     const historical = await reader.send('GET', documentPath() + '/revisions/' + saved.data.revision.id);
     assert.equal(historical.status, 200);
-    assert.deepEqual(historical.data.content, richContent);
+    assert.deepEqual(validateContent(historical.data.content).content, richContent);
     const reordered = structuredClone(richContent);
-    const firstInline = reordered.document.content[0]?.content?.[0];
-    assert(firstInline && 'marks' in firstInline && firstInline.marks);
-    firstInline.marks.reverse();
+    const firstBlock = reordered.document[0];
+    assert(firstBlock?.type === 'heading');
+    const firstInline = firstBlock.content[0];
+    assert(firstInline?.type === 'text');
+    firstInline.styles = { italic: true, bold: true };
     const canonicalNoOp = await editor.send('PATCH', documentPath(), {
       title: '  ' + saved.data.revision.title + '  ', content: reordered, changeNote: 'Ignored canonical no-op',
     }, { 'if-match': etag });
@@ -548,22 +577,24 @@ test('P2 documents and immutable history against PostgreSQL and authenticated HT
     assert(restoredList.data.items.some((item: { id: string }) => item.id === documentId));
   });
 
-  await t.test('unsupported content, attributes, URLs, depth, node count, and bytes fail without new history', async () => {
+  await t.test('malformed native content, properties, URLs and resource limits fail without new history', async () => {
     const before = await database.prisma.document.findUniqueOrThrow({ where: { id: documentId } });
     const beforeCount = await revisionCount();
-    const envelope = (nodes: unknown[]) => ({ format: 'prosemirror-json', schemaVersion: 1, document: { type: 'doc', content: nodes } });
+    const envelope = (document: unknown[]) => ({ format: 'blocknote-json', schemaVersion: 1, editorVersion: '0.55.0', document });
     const invalid = [
       { ...initialContent, schemaVersion: 2 }, { ...initialContent, format: 'html' }, { ...initialContent, extra: true },
-      envelope([{ type: 'image', attrs: { src: 'https://example.test/synthetic.png' } }]),
-      envelope([{ type: 'paragraph', attrs: { hidden: true }, content: [{ type: 'text', text: 'Synthetic content' }] }]),
-      envelope([{ type: 'heading', attrs: { level: 7 }, content: [{ type: 'text', text: 'Synthetic content' }] }]),
-      envelope([{ type: 'paragraph', content: [{ type: 'text', text: 'Synthetic content', marks: [{ type: 'unknown' }] }] }]),
-      envelope([{ type: 'codeBlock', content: [{ type: 'text', text: 'Synthetic code', marks: [{ type: 'bold' }] }] }]),
+      { ...initialContent, format: 'prosemirror-json' }, { ...initialContent, editorVersion: 'future' },
+      envelope([{ id: 'unsupported', type: 'unregisteredCustomBlock' }]),
+      envelope([{ id: 'paragraph', type: 'paragraph', props: { hidden: true }, content: [{ type: 'text', text: 'Synthetic content', styles: {} }] }]),
+      envelope([{ id: 'heading', type: 'heading', props: { level: 7 }, content: [{ type: 'text', text: 'Synthetic content', styles: {} }] }]),
+      envelope([{ id: 'paragraph', type: 'paragraph', content: [{ type: 'text', text: 'Synthetic content', styles: { unknown: true } }] }]),
+      envelope([{ id: 'code', type: 'codeBlock', content: [{ type: 'text', text: 'Synthetic code', styles: { bold: true } }] }]),
     ];
     for (const href of ['javascript:alert(1)', 'data:text/plain,synthetic', 'file:///synthetic', '/relative',
       'https://user:password@example.test', 'https://example.test/%0a', 'https://example.test/ space']) {
-      invalid.push(envelope([{ type: 'paragraph', content: [{ type: 'text', text: 'Synthetic content',
-        marks: [{ type: 'link', attrs: { href } }] }] }]));
+      invalid.push(envelope([{ id: 'paragraph', type: 'paragraph', content: [{ type: 'link', href,
+        content: [{ type: 'text', text: 'Synthetic content', styles: {} }] }] }]));
+      invalid.push(envelope([{ id: 'media', type: 'image', props: { url: href } }]));
     }
     for (const malformed of invalid) {
       expectProblem(await editor.send('PATCH', documentPath(), { content: malformed }, { 'if-match': etag }), 400);
@@ -587,17 +618,17 @@ test('P2 documents and immutable history against PostgreSQL and authenticated HT
       }, { 'if-match': etag }), 400);
     }
     assert.equal(await database.prisma.document.count(), beforeDocuments);
-    let nested: unknown = { type: 'paragraph', content: [] };
-    for (let i = 0; i < 17; i++) {
-      nested = { type: 'bulletList', content: [{ type: 'listItem', content: [{ type: 'paragraph', content: [] }, nested] }] };
+    let nested: unknown = { id: 'leaf', type: 'paragraph', content: [] };
+    for (let i = 0; i < CONTENT_LIMITS.maxDepth; i++) {
+      nested = { id: `nested-${i}`, type: 'bulletListItem', children: [nested] };
     }
     const tooDeep = envelope([nested]);
-    const tooMany = envelope(Array.from({ length: 10_000 }, () => ({ type: 'paragraph', content: [] })));
-    const tooManyBytes = content('🙂'.repeat(66_000));
+    const tooMany = envelope(Array.from({ length: 10_000 }, (_, index) => ({ id: `many-${index}`, type: 'paragraph', content: [] })));
+    const tooManyBytes = envelope([{ id: 'large', type: 'paragraph', content: [{ type: 'text', text: '🙂'.repeat(66_000), styles: {} }] }]);
     for (const oversized of [tooDeep, tooMany, tooManyBytes]) {
       expectProblem(await editor.send('PATCH', documentPath(), { content: oversized }, { 'if-match': etag }), 413);
     }
-    expectProblem(await editor.send('PATCH', documentPath(), { content: content('x'.repeat(1_048_576)) }, { 'if-match': etag }), 413);
+    expectProblem(await editor.send('PATCH', documentPath(), { content: envelope([{ id: 'large', type: 'paragraph', content: [{ type: 'text', text: 'x'.repeat(1_048_576), styles: {} }] }]) }, { 'if-match': etag }), 413);
     await assert.rejects(core.documents.update(new Headers({ cookie: editor.cookie }), documentId, { content: tooManyBytes }, etag),
       (error: unknown) => error instanceof HttpProblem && error.status === 413);
     assert.equal(await revisionCount(), beforeCount);
@@ -638,4 +669,136 @@ test('P2 documents and immutable history against PostgreSQL and authenticated HT
     assert.equal(grant.status, 200);
     assert.equal((await editor.send('GET', documentPath())).status, 200);
   });
+
+  await t.test('same-space organization requires current grants and ETags without rewriting content history', async () => {
+    const first = await editor.send('POST', `/api/v1/spaces/${spaceId}/documents`, { title: 'Organization parent A', content: content('Parent A') });
+    const second = await editor.send('POST', `/api/v1/spaces/${spaceId}/documents`, { title: 'Organization parent B', content: content('Parent B') });
+    assert.equal(first.status, 201); assert.equal(second.status, 201); assert.equal(first.data.parentDocumentId, null);
+    const child = await editor.send('POST', `/api/v1/spaces/${spaceId}/documents`, {
+      title: 'Organization child', content: content('Complete native child'), parentDocumentId: first.data.id,
+    });
+    assert.equal(child.status, 201); assert.equal(child.data.parentDocumentId, first.data.id);
+    const path = `/api/v1/documents/${child.data.id}`, condition = { 'if-match': String(child.headers.etag) };
+    expectProblem(await editor.send('POST', path + '/move', { parentDocumentId: second.data.id }), 428);
+    expectProblem(await reader.send('POST', path + '/move', { parentDocumentId: null }, condition), 404);
+    expectProblem(await outsider.send('GET', path), 404);
+    expectProblem(await outsider.send('GET', `/api/v1/spaces/${spaceId}/documents`), 404);
+    const foreign = await admin.send('POST', `/api/v1/spaces/${privateSpaceId}/documents`, { title: 'Private parent', content: content('Private') });
+    assert.equal(foreign.status, 201);
+    expectProblem(await editor.send('POST', path + '/move', { parentDocumentId: foreign.data.id }, condition), 404);
+    expectProblem(await admin.send('POST', path + '/move', { parentDocumentId: foreign.data.id }, condition), 404);
+    expectProblem(await editor.send('POST', path + '/move', {}, condition), 400);
+    const self = await editor.send('POST', path + '/move', { parentDocumentId: child.data.id }, condition);
+    expectProblem(self, 409); assert.equal(self.data.code, 'DOCUMENT_HIERARCHY_CYCLE');
+    expectProblem(await admin.send('POST', `/api/v1/spaces/${spaceId}/documents`, {
+      title: 'Denied cross-space child', content: content('Denied'), parentDocumentId: foreign.data.id,
+    }), 404);
+    await assert.rejects(core.documents.move(new Headers({ cookie: reader.cookie }), child.data.id,
+      { parentDocumentId: null }, String(child.headers.etag)), error => error instanceof HttpProblem && error.status === 404);
+    const originalRevision = await database.prisma.documentRevision.findFirstOrThrow({ where: { documentId: child.data.id } });
+    const moved = await editor.send('POST', path + '/move', { parentDocumentId: second.data.id }, condition);
+    assert.equal(moved.status, 200); assert.equal(moved.data.parentDocumentId, second.data.id);
+    assert.equal(moved.data.lockVersion, child.data.lockVersion + 1); assert.equal(moved.data.currentRevisionNumber, 1);
+    assert.equal(moved.data.slug, child.data.slug); assert.deepEqual(moved.data.revision, child.data.revision);
+    expectProblem(await editor.send('PATCH', path, { title: 'Stale structural baseline' }, condition), 412);
+    expectProblem(await editor.send('POST', path + '/move', { parentDocumentId: null }, condition), 412);
+    const noop = await editor.send('POST', path + '/move', { parentDocumentId: second.data.id }, { 'if-match': String(moved.headers.etag) });
+    assert.equal(noop.status, 200); assert.equal(noop.headers.etag, moved.headers.etag);
+    assert.deepEqual(await database.prisma.documentRevision.findFirstOrThrow({ where: { documentId: child.data.id } }), originalRevision);
+    assert.equal(await database.prisma.documentRevision.count({ where: { documentId: child.data.id } }), 1);
+    const root = await editor.send('POST', path + '/move', { parentDocumentId: null }, { 'if-match': String(noop.headers.etag) });
+    assert.equal(root.status, 200); assert.equal(root.data.parentDocumentId, null);
+    const read = await reader.send('GET', path); assert.equal(read.status, 200); assert.equal(read.data.parentDocumentId, null);
+    await assert.rejects(database.pool.query('UPDATE "Document" SET "parentDocumentId" = $1 WHERE "id" = $2', [foreign.data.id, child.data.id]),
+      error => error instanceof Error && 'code' in error && error.code === '23503');
+    await assert.rejects(database.pool.query('UPDATE "Document" SET "parentDocumentId" = $1 WHERE "id" = $2', [child.data.id, child.data.id]),
+      error => error instanceof Error && 'code' in error && error.code === '23514');
+    assert.equal((await editor.send('GET', path)).data.parentDocumentId, null);
+  });
+
+  await t.test('reciprocal and stale concurrent moves cannot create cycles or extra revisions', async () => {
+    const a = await editor.send('POST', `/api/v1/spaces/${spaceId}/documents`, { title: 'Concurrent parent A', content: content('A') });
+    const b = await editor.send('POST', `/api/v1/spaces/${spaceId}/documents`, { title: 'Concurrent parent B', content: content('B') });
+    const results = await Promise.all([
+      editor.send('POST', `/api/v1/documents/${a.data.id}/move`, { parentDocumentId: b.data.id }, { 'if-match': String(a.headers.etag) }),
+      editor.send('POST', `/api/v1/documents/${b.data.id}/move`, { parentDocumentId: a.data.id }, { 'if-match': String(b.headers.etag) }),
+    ]);
+    assert.deepEqual(results.map(result => result.status).sort(), [200, 409]);
+    assert.equal(results.find(result => result.status === 409)!.data.code, 'DOCUMENT_HIERARCHY_CYCLE');
+    const child = await editor.send('POST', `/api/v1/spaces/${spaceId}/documents`, { title: 'Concurrent moving child', content: content('Unchanged child') });
+    const writes = await Promise.all([
+      editor.send('POST', `/api/v1/documents/${child.data.id}/move`, { parentDocumentId: a.data.id }, { 'if-match': String(child.headers.etag) }),
+      editor.send('POST', `/api/v1/documents/${child.data.id}/move`, { parentDocumentId: b.data.id }, { 'if-match': String(child.headers.etag) }),
+    ]);
+    assert.deepEqual(writes.map(result => result.status).sort(), [200, 412]);
+    const saved = await editor.send('GET', `/api/v1/documents/${child.data.id}`);
+    assert.equal(saved.data.lockVersion, 2); assert.equal(saved.data.currentRevisionNumber, 1);
+    assert.equal(await database.prisma.documentRevision.count({ where: { documentId: child.data.id } }), 1);
+  });
+
+  await t.test('archive never cascades or leaves an active child below an archived parent', async () => {
+    const parent = await editor.send('POST', `/api/v1/spaces/${spaceId}/documents`, { title: 'Archive parent', content: content('Parent') });
+    const child = await editor.send('POST', `/api/v1/spaces/${spaceId}/documents`, { title: 'Archive child', content: content('Child'), parentDocumentId: parent.data.id });
+    const parentPath = `/api/v1/documents/${parent.data.id}`, childPath = `/api/v1/documents/${child.data.id}`;
+    const denied = await editor.send('POST', parentPath + '/archive', {}, { 'if-match': String(parent.headers.etag) });
+    expectProblem(denied, 409); assert.equal(denied.data.code, 'DOCUMENT_HAS_ACTIVE_CHILDREN');
+    assert.equal((await editor.send('GET', parentPath)).headers.etag, parent.headers.etag);
+    const archivedChild = await editor.send('POST', childPath + '/archive', {}, { 'if-match': String(child.headers.etag) }); assert.equal(archivedChild.status, 200);
+    const archivedParent = await editor.send('POST', parentPath + '/archive', {}, { 'if-match': String(parent.headers.etag) }); assert.equal(archivedParent.status, 200);
+    expectProblem(await editor.send('POST', childPath + '/unarchive', {}, { 'if-match': String(archivedChild.headers.etag) }), 409);
+    expectProblem(await editor.send('POST', `/api/v1/spaces/${spaceId}/documents`, { title: 'Denied archived parent', content: content('Denied'), parentDocumentId: parent.data.id }), 409);
+    const moved = await editor.send('POST', childPath + '/move', { parentDocumentId: null }, { 'if-match': String(archivedChild.headers.etag) }); assert.equal(moved.status, 200);
+    const active = await editor.send('POST', childPath + '/unarchive', {}, { 'if-match': String(moved.headers.etag) }); assert.equal(active.status, 200);
+    assert.equal(active.data.parentDocumentId, null); assert.equal(active.data.currentRevisionNumber, 1);
+    assert.equal(await database.prisma.documentRevision.count({ where: { documentId: parent.data.id } }), 1);
+    assert.equal(await database.prisma.documentRevision.count({ where: { documentId: child.data.id } }), 1);
+    assert((await editor.send('GET', parentPath)).data.archivedAt);
+  });
+
+  await t.test('hierarchy depth includes the entire moved subtree and live storage remains unchanged', async () => {
+    let last: string | null = null, depth31: string | null = null;
+    for (let depth = 1; depth <= 32; depth++) {
+      const created = await editor.send('POST', `/api/v1/spaces/${spaceId}/documents`, { title: `Depth ${depth}`, content: content('Bounded depth'), parentDocumentId: last });
+      assert.equal(created.status, 201); last = created.data.id; if (depth === 31) depth31 = created.data.id;
+    }
+    const deep = await editor.send('POST', `/api/v1/spaces/${spaceId}/documents`, { title: 'Too deep', content: content('Rejected'), parentDocumentId: last });
+    expectProblem(deep, 409); assert.equal(deep.data.code, 'DOCUMENT_HIERARCHY_TOO_DEEP');
+    const root = await editor.send('POST', `/api/v1/spaces/${spaceId}/documents`, { title: 'Moving subtree root', content: content('Native root') });
+    const child = await editor.send('POST', `/api/v1/spaces/${spaceId}/documents`, { title: 'Moving subtree child', content: content('Native child'), parentDocumentId: root.data.id });
+    assert.equal(child.status, 201);
+    const denied = await editor.send('POST', `/api/v1/documents/${root.data.id}/move`, { parentDocumentId: depth31 }, { 'if-match': String(root.headers.etag) });
+    expectProblem(denied, 409); assert.equal(denied.data.code, 'DOCUMENT_HIERARCHY_TOO_DEEP');
+    const enrolled = await core.documents.live.enroll(new Headers({ cookie: editor.cookie }), root.data.id, String(root.headers.etag));
+    const before = await database.prisma.documentLive.findFirstOrThrow({ where: { documentId: root.data.id } });
+    const liveParent = await editor.send('POST', `/api/v1/spaces/${spaceId}/documents`, { title: 'Live organization parent', content: content('Parent') });
+    assert.equal(liveParent.status, 201);
+    const moved = await editor.send('POST', `/api/v1/documents/${root.data.id}/move`, { parentDocumentId: liveParent.data.id }, { 'if-match': enrolled.documentEtag });
+    assert.equal(moved.status, 200); assert.equal(moved.data.editingMode, 'live');
+    assert.deepEqual(await database.prisma.documentLive.findFirstOrThrow({ where: { documentId: root.data.id } }), before);
+    assert.equal(moved.data.currentRevisionNumber, 1);
+  });
+
+
+  await t.test('a queued move rechecks a revoked grant without changing hierarchy, versions or history', async () => {
+    const parent = await editor.send('POST', `/api/v1/spaces/${spaceId}/documents`, { title: 'Revocation target', content: content('Target') });
+    const child = await editor.send('POST', `/api/v1/spaces/${spaceId}/documents`, { title: 'Revoked moving document', content: content('Complete retained body') });
+    assert.equal(parent.status, 201); assert.equal(child.status, 201);
+    const before = await database.prisma.document.findUniqueOrThrow({ where: { id: child.data.id } });
+    const lock = await database.pool.connect(); await lock.query('BEGIN');
+    let pending: ReturnType<typeof editor.send> | undefined;
+    try {
+      await lock.query('SELECT "id" FROM "Space" WHERE "id" = $1 FOR UPDATE', [spaceId]);
+      pending = editor.send('POST', `/api/v1/documents/${child.data.id}/move`, { parentDocumentId: parent.data.id }, { 'if-match': String(child.headers.etag) });
+      let blocked = false;
+      for (let i = 0; i < 100; i++) { if (await blockedSpaceWriters() === 1) { blocked = true; break; } await delay(10); }
+      assert(blocked, 'The move must be waiting for the space lock');
+      await lock.query('DELETE FROM "SpaceMembership" WHERE "spaceId" = $1 AND "userId" = $2', [spaceId, editorUser.id]);
+      await lock.query('UPDATE "Space" SET "lockVersion" = "lockVersion" + 1 WHERE "id" = $1', [spaceId]);
+      await lock.query('COMMIT'); expectProblem(await pending, 404);
+      assert.deepEqual(await database.prisma.document.findUniqueOrThrow({ where: { id: child.data.id } }), before);
+      assert.equal(await database.prisma.documentRevision.count({ where: { documentId: child.data.id } }), 1);
+      assert.equal((await editor.send('GET', '/api/v1/me')).status, 200);
+    } finally { await lock.query('ROLLBACK'); lock.release(); if (pending) await Promise.allSettled([pending]); }
+  });
+
 });

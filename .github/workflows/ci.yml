@@ -1,8 +1,11 @@
 name: Foundation checks
 
 on:
-  push:
-  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -10,10 +13,10 @@ permissions:
 jobs:
   foundation:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     services:
       postgres:
-        image: postgres:17
+        image: postgres:18
         env:
           POSTGRES_USER: docs
           POSTGRES_PASSWORD: ci-only-example
@@ -38,6 +41,8 @@ jobs:
       - run: npm run check
       - run: npm run db:migrate
       - run: npm run test:db
+        env:
+          SCRAWL_PG_CLIENT_CONTAINER: ${{ job.services.postgres.id }}
       - run: PLAYWRIGHT_SKIP_BROWSER_GC=1 npx playwright install --with-deps chromium
       - run: npm run test:browser
       - run: npm run openapi:export

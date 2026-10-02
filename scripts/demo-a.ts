@@ -7,15 +7,22 @@ import { constants } from 'node:fs';
 import { mkdir, open } from 'node:fs/promises';
 import { validateContent } from '../src/core/documents/content.js';
 import { readDemoConfig, readDemoCredentials, readPrivateDemoEnvironment } from './demo-config.js';
+import { demoContent, richDemoContent } from './demo-content.js';
 
 let stage = 'configuration';
 let checks = 0;
+class DemoAssertionError extends Error {}
 function check(condition: boolean, label: string): asserts condition {
-  if (!condition) throw new Error(label);
+  if (!condition) throw new DemoAssertionError(label);
   checks++;
 }
 function same(actual: unknown, expected: unknown, label: string) {
   check(isDeepStrictEqual(actual, expected), label);
+}
+function sameContent(actual: unknown, expected: unknown, label: string) {
+  // Native optional undefined fields disappear on the JSON wire, then the
+  // official parser restores them. Compare canonical native content on both sides.
+  same(validateContent(actual).content, validateContent(expected).content, label);
 }
 function record(value: unknown): Record<string, unknown> {
   check(value !== null && typeof value === 'object' && !Array.isArray(value), 'Expected an object');
@@ -29,12 +36,6 @@ function snapshot(value: unknown) {
   const document = record(value);
   return { document, revision: record(document.revision), id: uuid(document.id) };
 }
-function content(lines: string[]) {
-  return validateContent({ format: 'prosemirror-json', schemaVersion: 1, document: {
-    type: 'doc', content: lines.map(text => ({ type: 'paragraph', content: [{ type: 'text', text }] })),
-  } }).content;
-}
-
 function client(origin: string, peer: string) {
   // Each real socket client has its own cookie jar. Nothing is persisted or printed.
   const cookies = new Map<string, string>();
@@ -90,7 +91,9 @@ async function expect(actor: Client, method: string, path: string, status: numbe
   return response;
 }
 function version(response: Awaited<ReturnType<Client['request']>>) {
-  check(typeof response.etag === 'string' && /^"(?:doc|space)-[0-9a-f-]+-v[1-9][0-9]*"$/i.test(response.etag), 'Missing server ETag');
+  check(typeof response.etag === 'string', 'Missing server ETag');
+  const matched = /^"(doc|space)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-(bn1-)?v[1-9][0-9]*"$/.exec(response.etag);
+  check(matched !== null && (matched[1] === 'doc' ? matched[2] === 'bn1-' : matched[2] === undefined), 'Missing server ETag');
   return response.etag;
 }
 async function history(actor: Client, path: string) {
@@ -158,7 +161,7 @@ async function main() {
   hidden(await expect(reader, 'PUT', `${spacePath}/members/${credentials.accounts.outsider.id}`, 404, { role: 'editor' }, spaceTag));
 
   stage = 'document create';
-  const initialContent = content(['Run tests before deploying.']);
+  const initialContent = demoContent(['Run tests before deploying.']);
   const created = await expect(editor, 'POST', spacePath + '/documents', 201, { title: 'Release checklist', content: initialContent });
   const initial = snapshot(created.data);
   const documentId = initial.id;
@@ -175,15 +178,15 @@ async function main() {
   check(version(secondRead) === startingTag, 'Isolated clients read different ETags');
 
   stage = 'stale save';
-  const secondContent = content(['Run tests before deploying.', 'Verify the backup.']);
+  const secondContent = richDemoContent(['Run tests before deploying.', 'Verify the backup.']);
   const saved = await expect(editor, 'PATCH', path, 200, { content: secondContent }, startingTag);
   const second = snapshot(saved.data);
   let tag = version(saved);
   check(second.document.currentRevisionNumber === 2 && second.revision.revisionNumber === 2, 'Save did not append revision 2');
-  same(second.revision.content, secondContent, 'Saved content mismatch');
+  sameContent(second.revision.content, secondContent, 'Saved content mismatch');
   const beforeRejected = await history(reader, path);
   check(beforeRejected.length === 2, 'Save did not add exactly one revision');
-  hidden(await expect(otherEditor, 'PATCH', path, 412, { content: content(['Stale edit must not commit.']) }, startingTag));
+  hidden(await expect(otherEditor, 'PATCH', path, 412, { content: demoContent(['Stale edit must not commit.']) }, startingTag));
   same(await history(reader, path), beforeRejected, 'Stale save changed history');
   same((await expect(reader, 'GET', path, 200)).data, saved.data, 'Stale save changed the head');
 
@@ -209,18 +212,43 @@ async function main() {
   hidden(await expect(outsider, 'PATCH', path, 404, { title: 'Outsider must not edit' }, tag));
   same(await history(reader, path), beforeRejected, 'Outsider denial changed history');
 
+  stage = 'invalid native save';
+  for (const malformedContent of [
+    { ...initialContent, document: [{ id: 'rejected-unknown', type: 'unknownBlock', props: {}, children: [] }] },
+    { ...initialContent, document: [{
+      id: 'rejected-link', type: 'paragraph', props: { textColor: 'default', backgroundColor: 'default', textAlignment: 'left' },
+      content: [{ type: 'link', href: 'javascript:alert(1)', content: [{ type: 'text', text: 'Rejected unsafe link', styles: {} }] }],
+      children: [],
+    }] },
+  ]) {
+    hidden(await expect(editor, 'PATCH', path, 400, { content: malformedContent }, tag));
+    same(await history(reader, path), beforeRejected, 'Rejected native content changed history');
+    same((await expect(reader, 'GET', path, 200)).data, saved.data, 'Rejected native content changed the head');
+  }
+
+  stage = 'native rich export';
+  const richExport = record((await expect(reader, 'GET', path + '/export', 200)).data);
+  same(Object.keys(richExport).sort(), ['content', 'document', 'exportVersion', 'format', 'revision'], 'Rich export field scope changed');
+  const parsedRichExport = validateContent(richExport.content);
+  same(parsedRichExport.content, secondContent, 'Rich blocks changed during native export');
+  check(parsedRichExport.content.format === 'blocknote-json' && parsedRichExport.content.schemaVersion === 1
+    && parsedRichExport.content.editorVersion === '0.55.0', 'Native content version metadata mismatch');
+  check(parsedRichExport.plainText.includes('Check\tResult\nNative blocks\tPreserved')
+    && parsedRichExport.plainText.includes('Nested review notes'), 'Rich text extraction omitted table or nested content');
+  same(await history(reader, path), beforeRejected, 'Export changed content history');
+
   stage = 'restore';
   const restored = await expect(editor, 'POST', path + '/restore', 200, { revisionId: firstRevisionId }, tag);
   const selected = snapshot(restored.data);
   tag = version(restored);
   check(selected.document.currentRevisionNumber === 3 && selected.revision.revisionNumber === 3
     && selected.revision.id !== firstRevisionId, 'Restore rewrote history');
-  same(selected.revision.content, initialContent, 'Restore content mismatch');
+  sameContent(selected.revision.content, initialContent, 'Restore content mismatch');
   const restoredHistory = await history(reader, path);
   check(restoredHistory.length === 3, 'Restore did not append exactly one revision');
   same(restoredHistory.slice(1), beforeRejected, 'Restore changed existing revision metadata');
-  same(record((await expect(reader, 'GET', path + '/revisions/' + firstRevisionId, 200)).data).content, initialContent, 'Original history changed');
-  same(record((await expect(reader, 'GET', path + '/revisions/' + uuid(second.revision.id), 200)).data).content, secondContent, 'Intervening history changed');
+  sameContent(record((await expect(reader, 'GET', path + '/revisions/' + firstRevisionId, 200)).data).content, initialContent, 'Original history changed');
+  sameContent(record((await expect(reader, 'GET', path + '/revisions/' + uuid(second.revision.id), 200)).data).content, secondContent, 'Intervening history changed');
 
   stage = 'native export';
   hidden(await expect(outsider, 'GET', path + '/export', 404));
@@ -286,8 +314,11 @@ async function main() {
   console.log(`Demo A passed (${checks} assertions). Space ${spaceId}; document ${documentId}; revision 3. Export: artifacts/demo/export.json`);
 }
 
-main().catch(() => {
+main().catch((error: unknown) => {
   // Assertion, parser, transport, and library errors may contain response bodies or credentials.
   console.error(`Demo A failed at ${stage}. Check the running demo API and fixture setup.`);
+  // Only this script's literal assertion labels are safe to reveal. Never log
+  // parser/HTTP/library error messages, submitted values, or response bodies.
+  if (error instanceof DemoAssertionError) console.error(`Assertion: ${error.message}`);
   process.exitCode = 1;
 });

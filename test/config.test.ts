@@ -13,6 +13,8 @@ test('development defaults are local and explicit', () => {
   assert.equal(config.port, 3000);
   assert.equal(config.apiDocsEnabled, true);
   assert.equal(config.databasePoolMax, 5);
+  assert.equal(config.publicPublishingEnabled, false);
+  assert.equal(config.collaborationEnabled, false);
 });
 test('production disables API docs by default', () => {
   assert.equal(readConfig({ ...base, NODE_ENV: 'production' }).apiDocsEnabled, false);
@@ -23,14 +25,30 @@ test('boolean false is not truthy', () => {
 test('invalid boolean rejected', () => {
   assert.throws(() => readConfig({ ...base, API_DOCS_ENABLED: 'yes' }), /API_DOCS_ENABLED/);
 });
+test('publishing requires an explicit valid boolean in every environment', () => {
+  assert.equal(readConfig({ ...base, NODE_ENV: 'production' }).publicPublishingEnabled, false);
+  assert.equal(readConfig({ ...base, PUBLIC_PUBLISHING_ENABLED: 'true' }).publicPublishingEnabled, true);
+  assert.equal(readConfig({ ...base, PUBLIC_PUBLISHING_ENABLED: 'false' }).publicPublishingEnabled, false);
+  assert.throws(() => readConfig({ ...base, PUBLIC_PUBLISHING_ENABLED: 'yes' }), /PUBLIC_PUBLISHING_ENABLED/);
+});
 test('fractional port rejected', () => {
   assert.throws(() => readConfig({ ...base, PORT: '3000.5' }), /PORT/);
+});
+test('collaboration requires an explicit valid boolean and defaults off in production', () => {
+  assert.equal(readConfig({ ...base, NODE_ENV: 'production' }).collaborationEnabled, false);
+  assert.equal(readConfig({ ...base, COLLABORATION_ENABLED: 'true' }).collaborationEnabled, true);
+  assert.throws(() => readConfig({ ...base, COLLABORATION_ENABLED: 'yes' }), /COLLABORATION_ENABLED/);
 });
 test('out of range ports rejected', () => {
   for (const PORT of ['0', '65536', '-1']) assert.throws(() => readConfig({ ...base, PORT }), /PORT/);
 });
 test('invalid pool size rejected', () => {
   assert.throws(() => readConfig({ ...base, DB_POOL_MAX: '0' }), /DB_POOL_MAX/);
+});
+test('enabled collaboration reserves a pool slot without starving application queries', () => {
+  assert.equal(readConfig({ ...base, DB_POOL_MAX: '1' }).databasePoolMax, 1);
+  assert.throws(() => readConfig({ ...base, COLLABORATION_ENABLED: 'true', DB_POOL_MAX: '1' }), /DB_POOL_MAX/);
+  assert.equal(readConfig({ ...base, COLLABORATION_ENABLED: 'true', DB_POOL_MAX: '2' }).databasePoolMax, 2);
 });
 test('missing database URL rejected', () => {
   assert.throws(() => readConfig({}), /DATABASE_URL/);

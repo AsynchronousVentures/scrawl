@@ -8,6 +8,11 @@ import { createAuth } from './auth.js';
 
 export type Principal = Readonly<{ userId: string; sessionId: string }>;
 
+function userProfile(user: { id: string; name: string; email: string; role: string | null }) {
+  if (user.role !== 'administrator' && user.role !== 'member') throw new HttpProblem(404, 'NOT_FOUND');
+  return { id: user.id, name: user.name, email: user.email, role: user.role };
+}
+
 export function createIdentity(prisma: PrismaClient, config: IdentityConfig) {
   const auth = createAuth(prisma, config);
 
@@ -29,11 +34,51 @@ export function createIdentity(prisma: PrismaClient, config: IdentityConfig) {
     return { id, name, email, role };
   }
 
+  async function lockActors(db: Prisma.TransactionClient, principals: readonly Principal[]) {
+    const users = [...new Set(principals.map(principal => principal.userId))];
+    const sessions = [...new Set(principals.map(principal => principal.sessionId))];
+    // Match recovery's user-before-session order. Stable batch ordering also
+    // covers several connections belonging to the same account.
+    await db.$queryRaw`SELECT "id" FROM "user" WHERE "id" = ANY(${users}::text[]) ORDER BY "id" FOR SHARE`;
+    await db.$queryRaw`SELECT "id" FROM "session" WHERE "id" = ANY(${sessions}::text[]) ORDER BY "id" FOR SHARE`;
+  }
+
   return {
     handle: auth.handler,
     origin: config.origin,
     resolve,
     actor,
+    async connectionSession(principal: Principal) {
+      await actor(principal);
+      const session = await prisma.session.findUnique({ where: { id: principal.sessionId }, select: { expiresAt: true } });
+      if (!session || session.expiresAt <= new Date()) throw new HttpProblem(401, 'AUTHENTICATION_REQUIRED');
+      return { expiresAt: session.expiresAt.getTime() };
+    },
+    lockActors,
+    async publicNames(db: Prisma.TransactionClient, userIds: readonly string[]) {
+      return db.user.findMany({ where: { id: { in: [...userIds] }, OR: [
+        { banned: false }, { banned: null }, { banned: true, banExpires: { lte: new Date() } },
+      ] },
+        select: { id: true, name: true, role: true } });
+    },
+    async lookupUser(headers: Headers, email: string) {
+      const principal = await resolve(headers);
+      const normalized = email.trim().toLowerCase();
+      if (normalized.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) throw new HttpProblem(400, 'INVALID_REQUEST');
+      return prisma.$transaction(async db => {
+        await lockActors(db, [principal]);
+        if ((await actor(principal, db)).role !== 'administrator') throw new HttpProblem(404, 'NOT_FOUND');
+        const user = await db.user.findUnique({ where: { email: normalized }, select: { id: true, name: true, email: true, role: true } });
+        if (!user) throw new HttpProblem(404, 'NOT_FOUND');
+        return userProfile(user);
+      });
+    },
+    // Space operations supply only IDs from an already-authorized member page.
+    async memberProfiles(db: Prisma.TransactionClient, principal: Principal, userIds: readonly string[]) {
+      if ((await actor(principal, db)).role !== 'administrator') throw new HttpProblem(404, 'NOT_FOUND');
+      const users = await db.user.findMany({ where: { id: { in: [...userIds] } }, select: { id: true, name: true, email: true, role: true } });
+      return users.map(userProfile);
+    },
     async me(headers: Headers) { return actor(await resolve(headers)); },
     async requireUser(db: Prisma.TransactionClient, userId: string) {
       if (!await db.user.findUnique({ where: { id: userId }, select: { id: true } })) {

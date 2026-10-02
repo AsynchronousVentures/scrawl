@@ -7,6 +7,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Core } from '../core/index.js';
 import { spaceEtag } from '../core/spaces/index.js';
 import { HttpProblem, problemSchema } from './problems.js';
+import { slugSchema } from './slugs.js';
 
 const userSchema = {
   type: 'object', additionalProperties: false, required: ['id', 'email', 'name', 'role'],
@@ -17,9 +18,9 @@ const userSchema = {
 } as const;
 const spaceSchema = {
   type: 'object', additionalProperties: false,
-  required: ['id', 'name', 'createdBy', 'createdAt', 'updatedAt', 'lockVersion', 'access'],
+  required: ['id', 'name', 'slug', 'createdBy', 'createdAt', 'updatedAt', 'lockVersion', 'access'],
   properties: {
-    id: { type: 'string', format: 'uuid' }, name: { type: 'string' }, createdBy: { type: 'string' },
+    id: { type: 'string', format: 'uuid' }, name: { type: 'string' }, slug: slugSchema, createdBy: { type: 'string' },
     createdAt: { type: 'string', format: 'date-time' }, updatedAt: { type: 'string', format: 'date-time' },
     lockVersion: { type: 'integer', minimum: 1 },
     access: { type: 'string', enum: ['reader', 'editor'], description: 'Current caller access; the server checks every operation.' },
@@ -41,9 +42,25 @@ const preconditionHeaders = {
 } as const;
 
 export function registerCoreRoutes(app: FastifyInstance, core: Core) {
+  app.get<{ Params: { slug: string } }>('/api/v1/spaces/by-slug/:slug', { schema: {
+    operationId: 'readSpaceBySlug', tags: ['Spaces'],
+    params: { type: 'object', additionalProperties: false, required: ['slug'], properties: { slug: slugSchema } },
+    response: { 200: spaceSchema, ...errors },
+  } }, async (request, reply) => {
+    const space = await core.spaces.readBySlug(fromNodeHeaders(request.headers), request.params.slug);
+    return reply.header('etag', spaceEtag(space)).send(space);
+  });
+
   app.get('/api/v1/me', { schema: {
     operationId: 'getMe', tags: ['Identity'], response: { 200: userSchema, ...errors },
   } }, (request) => core.identity.me(fromNodeHeaders(request.headers)));
+
+  app.post<{ Body: { email: string } }>('/api/v1/users/lookup', { schema: {
+    operationId: 'lookupUser', tags: ['Identity'], description: 'Administrator-only exact lookup of an existing account. Does not provision users.',
+    body: { type: 'object', additionalProperties: false, required: ['email'], properties: {
+      email: { type: 'string', format: 'email', maxLength: 254 },
+    } }, response: { 200: userSchema, ...errors },
+  } }, request => core.identity.lookupUser(fromNodeHeaders(request.headers), request.body.email));
 
   app.post<{ Body: { name: string } }>('/api/v1/spaces', { schema: {
     operationId: 'createSpace', tags: ['Spaces'],
@@ -71,6 +88,23 @@ export function registerCoreRoutes(app: FastifyInstance, core: Core) {
   } }, async (request, reply) => {
     const space = await core.spaces.read(fromNodeHeaders(request.headers), request.params.id);
     return reply.header('etag', spaceEtag(space)).send(space);
+  });
+
+  app.get<{ Params: { id: string }; Querystring: { limit?: number; cursor?: string } }>('/api/v1/spaces/:id/members', { schema: {
+    operationId: 'listSpaceMembers', tags: ['Spaces'], description: 'Administrator-only current member grants. Administrators also have implicit space access.',
+    params: spaceParams,
+    querystring: { type: 'object', additionalProperties: false, properties: {
+      limit: { type: 'integer', minimum: 1, maximum: 100 }, cursor: { type: 'string', minLength: 1, maxLength: 128 },
+    } },
+    response: { 200: { type: 'object', additionalProperties: false, required: ['spaceId', 'lockVersion', 'items', 'nextCursor'], properties: {
+      spaceId: { type: 'string', format: 'uuid' }, lockVersion: { type: 'integer', minimum: 1 },
+      items: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['user', 'role'], properties: {
+        user: userSchema, role: { type: 'string', enum: ['reader', 'editor'] },
+      } } }, nextCursor: { type: ['string', 'null'] },
+    } }, ...errors },
+  } }, async (request, reply) => {
+    const result = await core.spaces.listMembers(fromNodeHeaders(request.headers), { spaceId: request.params.id, ...request.query });
+    return reply.header('etag', spaceEtag({ id: result.spaceId, lockVersion: result.lockVersion })).send(result);
   });
 
   app.put<{ Params: { id: string; userId: string }; Body: { role: 'reader' | 'editor' } }>(

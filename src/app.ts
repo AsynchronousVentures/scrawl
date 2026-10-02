@@ -2,15 +2,26 @@
 // Copyright (C) 2026 Asynchronous Ventures and contributors
 
 import { randomUUID } from 'node:crypto';
+import type { Socket } from 'node:net';
 import Fastify from 'fastify';
 import swagger from '@fastify/swagger';
 import type { AppConfig } from './config.js';
-import { registerProblemHandlers } from './http/problems.js';
+import { registerProblemHandlers, problemSchema } from './http/problems.js';
 import { registerSystemRoutes } from './modules/system/routes.js';
 import { registerAuthRoutes, registerCoreRoutes } from './http/core-routes.js';
 import type { Core } from './core/index.js';
 import { registerDocumentRoutes } from './http/document-routes.js';
+import { registerSearchRoutes } from './http/search-routes.js';
+import { registerFavoriteRoutes } from './http/favorite-routes.js';
+import { registerAttachmentRoutes } from './http/attachment-routes.js';
+import { registerPublishingRoutes } from './http/publishing-routes.js';
+import type { Publishing } from './capabilities/publishing/index.js';
+import { registerExportRoutes } from './http/export-routes.js';
+import type { Exporting } from './capabilities/exporting/index.js';
 import { registerFrontend } from './http/frontend.js';
+import { registerLiveRoutes } from './http/live-routes.js';
+import type { Collaboration } from './capabilities/collaboration/index.js';
+import { fromNodeHeaders } from 'better-auth/node';
 
 type BuildOptions = {
   config: AppConfig;
@@ -18,10 +29,13 @@ type BuildOptions = {
   logging?: boolean;
   core?: Core;
   frontendRoot?: string;
+  exporting?: Exporting;
+  publishing?: Publishing;
+  collaboration?: Collaboration;
 };
 
 /** Builds the HTTP application without opening a port or connecting a database. */
-export async function buildApp({ config, checkDatabase, logging = true, core, frontendRoot }: BuildOptions) {
+export async function buildApp({ config, checkDatabase, logging = true, core, frontendRoot, exporting, publishing, collaboration }: BuildOptions) {
   const app = Fastify({
     logger: logging ? {
       level: config.logLevel,
@@ -30,8 +44,9 @@ export async function buildApp({ config, checkDatabase, logging = true, core, fr
         remove: true,
       },
       serializers: {
-        // Query strings can contain secrets; omit them and all request headers/body.
-        req: (request) => ({ method: request.method, url: request.url.split('?')[0] ?? '' }),
+        // Query strings can contain secrets, and slugs contain private names.
+        // Log route patterns instead of caller URLs, headers or bodies.
+        req: (request) => ({ method: request.method, url: request.routeOptions?.url ?? '/unmatched' }),
       },
     } : false,
     genReqId: () => randomUUID(),
@@ -40,6 +55,35 @@ export async function buildApp({ config, checkDatabase, logging = true, core, fr
     bodyLimit: 1024 * 1024,
     requestTimeout: 30_000,
     ajv: { customOptions: { removeAdditional: false } },
+  });
+
+  // Track accepted work separately from TCP connections. Node's idle sweep
+  // misses partial first headers and connections becoming idle during drain.
+  const connections = new Map<Socket, { active: number }>();
+  let closing = false;
+  app.server.on('connection', socket => {
+    if (closing) { socket.destroy(); return; }
+    connections.set(socket, { active: 0 });
+    socket.once('close', () => connections.delete(socket));
+  });
+  app.server.prependListener('request', (request, response) => {
+    const socket = request.socket, state = connections.get(socket);
+    if (!state) return;
+    state.active++;
+    let finished = false;
+    const complete = () => {
+      if (finished) return;
+      finished = true; state.active--;
+      // Every pipelined response must finish before flushing and closing.
+      if (closing && state.active === 0 && connections.get(socket) === state && !socket.destroyed) socket.destroySoon();
+    };
+    response.once('finish', complete); response.once('close', complete);
+  });
+  // Accepted upgrades belong to the collaboration transport's drain path.
+  app.server.on('upgrade', request => connections.delete(request.socket));
+  app.addHook('preClose', async () => {
+    closing = true;
+    for (const [socket, state] of connections) if (state.active === 0) socket.destroySoon();
   });
 
   registerProblemHandlers(app);
@@ -57,6 +101,17 @@ export async function buildApp({ config, checkDatabase, logging = true, core, fr
         const body = document.openapiObject.paths?.[`/api/v1/documents/{id}/${operation}`]?.post?.requestBody;
         if (body && !('$ref' in body)) body.required = false;
       }
+      const optionalLiveBodies = ['enrollLiveDocument', 'deleteLiveComment', 'deleteLiveCommentThread',
+        'resolveLiveCommentThread', 'unresolveLiveCommentThread', 'removeLiveCommentReaction'];
+      for (const path of Object.values(document.openapiObject.paths ?? {})) {
+        for (const method of ['post', 'delete'] as const) {
+          const operation = path?.[method];
+          const body = operation?.requestBody;
+          if (optionalLiveBodies.includes(operation?.operationId ?? '') && body && !('$ref' in body)) body.required = false;
+        }
+      }
+      const upload = document.openapiObject.paths?.['/api/v1/documents/{id}/attachments']?.post?.requestBody;
+      if (upload && !('$ref' in upload)) upload.content = { 'application/octet-stream': { schema: { type: 'string', format: 'binary' } } };
       return document.openapiObject;
     },
     openapi: {
@@ -79,8 +134,23 @@ export async function buildApp({ config, checkDatabase, logging = true, core, fr
   if (core) {
     registerAuthRoutes(app, core);
     registerCoreRoutes(app, core);
-    registerDocumentRoutes(app, core);
+    registerDocumentRoutes(app, core, collaboration);
+    registerAttachmentRoutes(app, core);
+    registerSearchRoutes(app, core);
+    registerFavoriteRoutes(app, core);
+    app.get('/api/v1/collaboration', { schema: {
+      operationId: 'getCollaborationAvailability', tags: ['Collaboration'], response: {
+        200: { type: 'object', additionalProperties: false, required: ['enabled'], properties: { enabled: { type: 'boolean' } } },
+        '4xx': problemSchema, '5xx': problemSchema,
+      },
+    } }, async request => {
+      await core.identity.me(fromNodeHeaders(request.headers));
+      return { enabled: Boolean(collaboration) };
+    });
   }
+  if (exporting) registerExportRoutes(app, exporting);
+  if (collaboration && core) registerLiveRoutes(app, collaboration);
+  if (publishing) registerPublishingRoutes(app, publishing);
   if (config.apiDocsEnabled) {
     app.get('/openapi.json', { schema: { hide: true } }, async () => app.swagger());
   }

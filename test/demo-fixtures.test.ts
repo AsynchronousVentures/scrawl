@@ -13,6 +13,8 @@ import {
   readPrivateDemoEnvironment, readDemoCredentials,
 } from '../scripts/demo-config.js';
 import { initializeDemo } from '../scripts/demo-fixtures.js';
+import { demoContent, richDemoContent } from '../scripts/demo-content.js';
+import { validateContent } from '../src/core/documents/content.js';
 
 const valid = {
   NODE_ENV: 'development', SCRAWL_DEMO_DISPOSABLE: DEMO_DATABASE,
@@ -20,12 +22,47 @@ const valid = {
   AUTH_SECRET: 'x'.repeat(32), DATABASE_URL: `postgresql://demo:synthetic-password@127.0.0.1:5433/${DEMO_DATABASE}`,
 };
 
+test('native demo versions retain stable block IDs and the pinned content envelope', () => {
+  const initial = demoContent(['Run tests before deploying.']);
+  const next = demoContent(['Run tests before deploying.', 'Verify the backup.']);
+  assert.equal(initial.format, 'blocknote-json');
+  assert.equal(initial.schemaVersion, 1);
+  assert.equal(initial.editorVersion, '0.55.0');
+  assert.deepEqual(next.document[0], initial.document[0]);
+  assert.equal(validateContent(next).plainText, 'Run tests before deploying.\nVerify the backup.');
+  assert.deepEqual(validateContent(JSON.parse(JSON.stringify(next))).content, next);
+  assert.throws(() => demoContent([]));
+});
+
+test('rich demo fixture preserves native formatting, table cells, and nested blocks', () => {
+  const content = richDemoContent(['Synthetic release checklist']);
+  const parsed = validateContent(content);
+  assert.deepEqual(validateContent(JSON.parse(JSON.stringify(content))).content, content);
+  assert.deepEqual(content.document.map(block => block.type), [
+    'paragraph', 'heading', 'paragraph', 'quote', 'bulletListItem', 'numberedListItem',
+    'toggleListItem', 'table', 'codeBlock', 'divider',
+  ]);
+  assert(parsed.plainText.includes('Check\tResult\nNative blocks\tPreserved'));
+  assert(parsed.plainText.includes('Nested review notes\nNesting is preserved'));
+  const serialized = JSON.stringify(content);
+  for (const style of ['bold', 'italic', 'underline', 'strike', 'code', 'textColor', 'backgroundColor']) {
+    assert(serialized.includes(`"${style}"`));
+  }
+  assert(serialized.includes('"type":"link"'));
+  assert(serialized.includes('"type":"tableCell"'));
+  assert(serialized.includes('"type":"checkListItem"'));
+});
+
 test('demo configuration accepts designated local targets and configurable local ports', () => {
   assert.equal(readDemoConfig(valid).config.databaseUrl, valid.DATABASE_URL);
   const result = readDemoConfig({ ...valid, PORT: '3201', APP_ORIGIN: 'http://127.0.0.1:3201',
     DATABASE_URL: `postgresql://another:synthetic-password@localhost:5432/${DEMO_DATABASE}` });
   assert.equal(result.config.port, 3201);
   assert.equal(result.identity.secureCookies, false);
+  assert.equal(readDemoConfig({ ...valid, DEMO_DB_PORT: '5433' }).config.databaseUrl, valid.DATABASE_URL);
+  assert.equal(readDemoConfig({ ...valid, DEMO_DB_PORT: '5434',
+    DATABASE_URL: `postgresql://demo:synthetic-password@127.0.0.1:5434/${DEMO_DATABASE}` }).config.databaseUrl,
+    `postgresql://demo:synthetic-password@127.0.0.1:5434/${DEMO_DATABASE}`);
 });
 
 test('demo configuration refuses production, missing markers, non-demo databases, remote targets, and URL options', () => {
@@ -33,6 +70,8 @@ test('demo configuration refuses production, missing markers, non-demo databases
     { NODE_ENV: 'production' }, { NODE_ENV: 'test' }, { SCRAWL_DEMO_DISPOSABLE: undefined },
     { SCRAWL_DEMO_DISPOSABLE: 'true' }, { HOST: '0.0.0.0' }, { APP_ORIGIN: 'http://example.test:3100' },
     { DB_POOL_MAX: '1' },
+    { DEMO_DB_PORT: '5434' }, { DEMO_DB_PORT: '0' }, { DEMO_DB_PORT: '65536' },
+    { DEMO_DB_PORT: '-1' }, { DEMO_DB_PORT: '5433.0' }, { DEMO_DB_PORT: 'invalid' },
     { APP_ORIGIN: 'http://127.0.0.1:3101' }, { POSTGRES_DB: 'production' },
     { POSTGRES_USER: 'other' }, { POSTGRES_PASSWORD: 'other' },
     { DATABASE_URL: 'postgresql://demo:secret@127.0.0.1:5433/scrawl' },
@@ -54,6 +93,9 @@ test('demo init is exclusive, private, random, and reads configuration from its 
   assert.equal(env.SCRAWL_DEMO_DISPOSABLE, DEMO_DATABASE);
   assert.equal(env.POSTGRES_PASSWORD?.length, 43);
   assert.equal(env.AUTH_SECRET?.length, 64);
+  assert.equal(env.DEMO_DB_PORT, '5434');
+  assert(env.DATABASE_URL);
+  assert.equal(new URL(env.DATABASE_URL).port, '5434');
   readDemoConfig(env);
   const original = await readFile(path, 'utf8');
   await assert.rejects(initializeDemo(directory));

@@ -12,7 +12,7 @@ import { frontendRootIfBuilt } from '../src/http/frontend.js';
 
 const config = readConfig({ NODE_ENV: 'test', DATABASE_URL: 'postgresql://unused@localhost/unused' });
 
-test('built frontend serves only the root shell and assets without changing API errors or OpenAPI', async (t) => {
+test('built frontend serves private/public shells and assets without changing API errors or OpenAPI', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'scrawl-frontend-'));
   const root = join(directory, 'web');
   await mkdir(join(root, 'assets'), { recursive: true });
@@ -29,11 +29,15 @@ test('built frontend serves only the root shell and assets without changing API 
   await t.test('HTML and assets retain no-store and server-generated request IDs', async () => {
     for (const [url, type, text] of [
       ['/?space=synthetic', /text\/html/, 'Scrawl shell'],
+      ['/spaces/demo-handbook', /text\/html/, 'Scrawl shell'],
+      ['/spaces/demo-handbook/documents/getting-started', /text\/html/, 'Scrawl shell'],
+      ['/publications/00000000-0000-4000-8000-000000000001', /text\/html/, 'Scrawl shell'],
       ['/assets/app.js', /(?:text|application)\/javascript/, 'Scrawl asset'],
     ] as const) {
       const result = await app.inject(url);
       assert.equal(result.statusCode, 200);
       assert.match(String(result.headers['content-type']), type);
+      if (!url.startsWith('/assets/')) assert.equal(result.headers['cross-origin-opener-policy'], 'same-origin');
       assert.equal(result.headers['cache-control'], 'no-store');
       assert.equal(result.headers['x-content-type-options'], 'nosniff');
       assert.match(String(result.headers['x-request-id']), /^[0-9a-f-]{36}$/);
