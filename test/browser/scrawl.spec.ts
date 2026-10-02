@@ -14,6 +14,7 @@ import type { DemoBResult } from '../../scripts/demo-b.js';
 import type { operations } from '../../web/src/api/schema.js';
 import { createBrowserDemo, type BrowserDemo } from './fixture.js';
 import { richDemoContent } from '../../scripts/demo-content.js';
+import { editDocument, readingTitle, replaceDocumentBody } from './editor-mode.js';
 
 type Document = operations['readDocument']['responses'][200]['content']['application/json'];
 let demo: BrowserDemo;
@@ -67,7 +68,7 @@ test('native document-end shortcuts preserve selection, rich content and a trail
     const response = await apiRequest(context, `/api/v1/documents/${seeded.documentId}`, {
       method: 'PATCH', headers: { origin: demo.origin, 'if-match': baseline.etag }, data: { title: 'Synthetic keyboard reference', content },
     }); expect(response.status()).toBe(200);
-    const saved = await readDocument(context); await page.reload(); await expect(body(page)).toBeEditable();
+    const saved = await readDocument(context); await page.reload(); await editDocument(page); await expect(body(page)).toBeEditable();
     const initial = body(page).locator('.bn-inline-content').first(); await initial.click();
     await page.keyboard.press('ControlOrMeta+End');
     expect(await body(page).evaluate(editor => {
@@ -103,7 +104,7 @@ test('favorites preserve complete dirty edits, ETags and conflict reconciliation
   expect((await apiRequest(context, `/api/v1/documents/${other.id}/favorite`, {
     method: 'PUT', headers: { origin: demo.origin }, data: { favorited: true },
   })).status()).toBe(200);
-  await title(page).fill('Unsaved favorite title'); await body(page).fill('Complete unsaved favorite body.');
+  await title(page).fill('Unsaved favorite title'); await replaceDocumentBody(page, 'Complete unsaved favorite body.');
   await favoriteAction(page);
   await expect(favoriteLink(page, baseline.data)).toBeVisible();
   await expect(title(page)).toHaveValue('Unsaved favorite title'); await expect(body(page)).toHaveText('Complete unsaved favorite body.');
@@ -111,7 +112,7 @@ test('favorites preserve complete dirty edits, ETags and conflict reconciliation
   const opened = context.waitForEvent('page');
   await favoriteNavigation(page).getByRole('link', { name: /Another handbook/ }).click({ modifiers: ['ControlOrMeta'] });
   const tab = await opened;
-  try { await expect(title(tab)).toHaveValue(other.revision.title); }
+  try { await expect(readingTitle(tab)).toHaveText(other.revision.title); }
   finally { await tab.close(); }
   await expect(title(page)).toHaveValue('Unsaved favorite title');
   await expect(body(page)).toHaveText('Complete unsaved favorite body.');
@@ -130,7 +131,7 @@ test('favorites preserve complete dirty edits, ETags and conflict reconciliation
   await expect(title(page)).toHaveValue('Unsaved favorite title');
   await favoriteNavigation(page).getByRole('link', { name: /Another handbook/ }).click();
   await discard.getByRole('button', { name: 'Discard changes', exact: true }).click();
-  await expect(title(page)).toHaveValue(other.revision.title);
+  await expect(readingTitle(page)).toHaveText(other.revision.title);
   await expect(page).toHaveURL(`${demo.origin}/spaces/${other.spaceSlug}/documents/${other.slug}`);
   expect((await readDocument(context)).data.revision.title).toBe('Newer saved favorite title');
 });
@@ -158,7 +159,7 @@ test('favorites allow reader preferences, isolate accounts and disappear immedia
 
 test('favorites never retry an uncertain accepted write and recover only through a deliberate status read', async ({ page, context }) => {
   await login(page); const baseline = await readDocument(context);
-  await title(page).fill('Draft surviving favorite response failure'); await body(page).fill('Private local work remains unsaved.');
+  await title(page).fill('Draft surviving favorite response failure'); await replaceDocumentBody(page, 'Private local work remains unsaved.');
   let writes = 0;
   await page.route(`**/api/v1/documents/${seeded.documentId}/favorite`, async route => {
     if (route.request().method() !== 'PUT') return route.continue();
@@ -231,7 +232,7 @@ test('favorites recheck revoked access through an existing session and preserve 
   await login(page); const baseline = await readDocument(context); await favoriteAction(page);
   await expect(favoriteLink(page, baseline.data)).toBeVisible();
   const before = await (await apiRequest(context, '/api/v1/favorites')).json() as operations['listFavorites']['responses'][200]['content']['application/json'];
-  await title(page).fill('Retained title after favorite access loss'); await body(page).fill('Retained body after favorite access loss.');
+  await title(page).fill('Retained title after favorite access loss'); await replaceDocumentBody(page, 'Retained body after favorite access loss.');
   await demo.database.prisma.spaceMembership.deleteMany({ where: { spaceId: seeded.spaceId, userId: demo.accountId('editor') } });
   await favoriteAction(page, 'Remove from favorites');
   await expect(page.getByRole('alert')).toContainText('Access to this document is unavailable.');
@@ -267,7 +268,7 @@ test('favorites reject a delayed previous-account response after logout and a ne
     release(); await lateResponse;
     await expect.poll(() => reads).toBeGreaterThan(1);
     await expect(favoriteNavigation(page).getByRole('link')).toHaveCount(0);
-    await expect(title(page)).toHaveCount(0);
+    await expect(title(page)).toHaveCount(0); await expect(readingTitle(page)).toHaveCount(0);
   } finally { release(); }
 });
 
@@ -281,7 +282,7 @@ test('duplicate saved document retains a complete dirty draft, selects its known
   });
   expect(changed.status()).toBe(200);
   const latest = await readDocument(context);
-  await title(page).fill('Complete unsaved source title'); await body(page).fill('Complete unsaved source body.');
+  await title(page).fill('Complete unsaved source title'); await replaceDocumentBody(page, 'Complete unsaved source body.');
   await page.getByLabel('Document actions', { exact: true }).click();
   await page.getByRole('button', { name: 'Duplicate saved document', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Duplicate saved document', exact: true });
@@ -311,7 +312,7 @@ test('duplicate saved document retains a complete dirty draft, selects its known
 
 test('duplicate saved document never retries an uncertain accepted creation or replaces dirty content', async ({ page, context }) => {
   await login(page); const baseline = await readDocument(context);
-  await title(page).fill('Unsent title after a failed copy'); await body(page).fill('Unsent body after a failed copy.');
+  await title(page).fill('Unsent title after a failed copy'); await replaceDocumentBody(page, 'Unsent body after a failed copy.');
   let writes = 0;
   await page.route('**/api/v1/documents/*/duplicate', async route => {
     writes++;
@@ -346,7 +347,7 @@ test('duplicate saved document is keyboard usable on mobile and canceling makes 
   await page.getByLabel('Copy title', { exact: true }).fill('Canceled synthetic copy');
   await evidence(page, 'duplicate-mobile');
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-  await page.keyboard.press('Escape'); await expect(page.getByRole('dialog')).toHaveCount(0);
+  await page.keyboard.press('Escape'); await expect(page.getByRole('dialog', { name: 'Duplicate saved document', exact: true })).toHaveCount(0);
   await expect(page.getByLabel('Document actions', { exact: true })).toBeFocused();
   expect(await readDocument(context)).toEqual(baseline);
   const after = await apiRequest(context, `/api/v1/spaces/${seeded.spaceId}/documents`); expect(await after.json()).toEqual(listBefore);
@@ -357,7 +358,7 @@ test('duplicate saved document from history opens rich revision one and edits pe
   const updated = await apiRequest(context, `/api/v1/documents/${seeded.documentId}`, {
     method: 'PATCH', headers: { origin: demo.origin, 'if-match': original.etag }, data: { title: 'Latest source heading' },
   }); expect(updated.status()).toBe(200);
-  await page.reload(); await expect(title(page)).toHaveValue('Latest source heading');
+  await page.reload(); await expect(readingTitle(page)).toHaveText('Latest source heading');
   await page.getByRole('button', { name: 'History', exact: true }).click();
   await page.getByRole('button', { name: 'Revision 1', exact: true }).click();
   await page.getByRole('button', { name: 'Duplicate revision 1', exact: true }).click();
@@ -367,12 +368,12 @@ test('duplicate saved document from history opens rich revision one and edits pe
   await dialog.getByRole('button', { name: 'Create copy', exact: true }).click();
   const accepted = await response; expect(accepted.status()).toBe(201); const copy: Document = await accepted.json();
   await dialog.getByRole('link', { name: 'Open copy', exact: true }).click();
-  await expect(title(page)).toHaveValue('Independent rich handbook');
+  await expect(readingTitle(page)).toHaveText('Independent rich handbook');
   await expect(body(page).getByRole('table')).toHaveCount(1);
   await expect(page.getByRole('navigation', { name: 'On this page', exact: true }).getByRole('link', { name: 'Rich blocks', exact: true })).toBeVisible();
   expect((await readDocument(context, copy.id)).data.revision.content).toEqual(original.data.revision.content);
-  await title(page).fill('Edited independent handbook'); await explicitSave(page);
-  await page.reload(); await expect(title(page)).toHaveValue('Edited independent handbook');
+  await editDocument(page); await title(page).fill('Edited independent handbook'); await explicitSave(page);
+  await page.reload(); await expect(readingTitle(page)).toHaveText('Edited independent handbook');
   await expect(body(page).getByRole('table')).toHaveCount(1);
   const saved = await readDocument(context, copy.id);
   expect(saved.data.currentRevisionNumber).toBe(2); expect(saved.data.revision.content).toEqual(original.data.revision.content);
@@ -383,7 +384,7 @@ test('duplicate saved document refuses a grant revoked after the dialog opens an
   await login(page); const original = await readDocument(context);
   await expect(page.getByRole('combobox', { name: 'Space', exact: true })).toBeVisible();
   const me = await apiRequest(context, '/api/v1/me'); const editor: { id: string } = await me.json();
-  await title(page).fill('Local title after copy access loss'); await body(page).fill('Complete local body after copy access loss.');
+  await title(page).fill('Local title after copy access loss'); await replaceDocumentBody(page, 'Complete local body after copy access loss.');
   await page.getByLabel('Document actions', { exact: true }).click();
   await page.getByRole('button', { name: 'Duplicate saved document', exact: true }).click();
   const administrator = await browser.newContext();
@@ -395,11 +396,11 @@ test('duplicate saved document refuses a grant revoked after the dialog opens an
     }); expect(revoked.status()).toBe(200);
     const response = page.waitForResponse(response => response.url().endsWith('/duplicate') && response.request().method() === 'POST');
     await page.getByRole('button', { name: 'Create copy', exact: true }).click(); expect((await response).status()).toBe(404);
-    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(page.getByRole('dialog', { name: 'Duplicate saved document', exact: true })).toHaveCount(0);
     await expect(title(page)).toHaveValue('Local title after copy access loss'); await expect(body(page)).toHaveText('Complete local body after copy access loss.');
     await expect(body(page)).not.toBeEditable(); await expect(page.getByLabel('Document actions', { exact: true })).toHaveCount(0);
     await expect(page.getByRole('combobox', { name: 'Space', exact: true })).toHaveCount(0);
-    await expect(page.getByRole('status').filter({ hasText: /Created/ })).toHaveCount(0);
+    await expect(page.getByRole('dialog', { name: 'Notification', exact: true }).filter({ hasText: /Created/ })).toHaveCount(0);
     expect((await readDocument(administrator)).data.revision).toEqual(original.data.revision);
   } finally { await administrator.close(); }
 });
@@ -439,7 +440,7 @@ test('duplicate saved document controls and direct writes are denied to readers 
   const outsider = await browser.newContext();
   try {
     const hidden = await outsider.newPage(); await login(hidden, 'outsider');
-    await expect(title(hidden)).toHaveCount(0); await expect(hidden.getByLabel('Document actions', { exact: true })).toHaveCount(0);
+    await expect(title(hidden)).toHaveCount(0); await expect(readingTitle(hidden)).toHaveCount(0); await expect(hidden.getByLabel('Document actions', { exact: true })).toHaveCount(0);
     for (const agent of [context, outsider]) {
       const denied = await apiRequest(agent, `/api/v1/documents/${seeded.documentId}/duplicate`, {
         method: 'POST', headers: { origin: demo.origin }, data: { title: 'Forbidden private copy', revisionId: baseline.data.revision.id },
@@ -456,11 +457,11 @@ test('copy private link uses the saved readable URL without saving drafts or gra
   const original = await readDocument(context);
   const canonical = `${demo.origin}/spaces/${original.data.spaceSlug}/documents/${original.data.slug}`;
   await title(page).fill('Unsent title must not appear in the copied link');
-  await body(page).fill('Complete unsaved body stays in the editor.');
+  await replaceDocumentBody(page, 'Complete unsaved body stays in the editor.');
   await page.getByLabel('Document actions', { exact: true }).focus(); await page.keyboard.press('Enter');
   const copy = page.getByRole('button', { name: 'Copy private link', exact: true });
   await copy.focus(); await evidence(page, 'private-link'); await page.keyboard.press('Enter');
-  await expect(page.getByRole('status').filter({ hasText: 'Private link copied. Only people with space access can open it.' })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Notification', exact: true }).filter({ hasText: 'Private link copied. Only people with space access can open it.' })).toBeVisible();
   const copied = await page.evaluate(() => navigator.clipboard.readText());
   expect(copied).toBe(canonical);
   await expect(page.getByLabel('Document actions', { exact: true })).toBeFocused();
@@ -470,12 +471,12 @@ test('copy private link uses the saved readable URL without saving drafts or gra
   const reader = await browser.newContext(), outsider = await browser.newContext();
   try {
     const readerPage = await reader.newPage(); await login(readerPage, 'reader', copied);
-    await expect(title(readerPage)).toHaveValue(original.data.revision.title);
+    await expect(readingTitle(readerPage)).toHaveText(original.data.revision.title);
     await expect(body(readerPage)).not.toBeEditable();
     await readerPage.getByLabel('Document actions', { exact: true }).click();
     await expect(readerPage.getByRole('button', { name: 'Copy private link', exact: true })).toBeEnabled();
     const outsiderPage = await outsider.newPage(); await login(outsiderPage, 'outsider', copied);
-    await expect(title(outsiderPage)).toHaveCount(0);
+    await expect(title(outsiderPage)).toHaveCount(0); await expect(readingTitle(outsiderPage)).toHaveCount(0);
     await expect(outsiderPage.getByRole('button', { name: 'Copy private link', exact: true })).toHaveCount(0);
     await expect(outsiderPage.getByRole('link', { name: original.data.revision.title, exact: true })).toHaveCount(0);
     const denied = await outsider.request.get(`${demo.origin}/api/v1/spaces/${seeded.spaceId}/documents/by-slug/${original.data.slug}`);
@@ -493,11 +494,11 @@ test('a browser clipboard-policy denial retains drafts and never reports a succe
   });
   await login(page); const original = await readDocument(context);
   await title(page).fill('Draft retained after denied clipboard access');
-  await body(page).fill('The browser refused the copy, not the save.');
+  await replaceDocumentBody(page, 'The browser refused the copy, not the save.');
   await page.getByLabel('Document actions', { exact: true }).click();
   await page.getByRole('button', { name: 'Copy private link', exact: true }).click();
-  await expect(page.getByRole('status').filter({ hasText: 'Copy is unavailable. Copy the document URL from your browser address bar.' })).toBeVisible();
-  await expect(page.getByRole('status').filter({ hasText: 'Private link copied.' })).toHaveCount(0);
+  await expect(page.getByRole('dialog', { name: 'Notification', exact: true }).filter({ hasText: 'Copy is unavailable. Copy the document URL from your browser address bar.' })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Notification', exact: true }).filter({ hasText: 'Private link copied.' })).toHaveCount(0);
   await expect(title(page)).toHaveValue('Draft retained after denied clipboard access');
   await expect(body(page)).toHaveText('The browser refused the copy, not the save.');
   await expect(save(page)).toBeEnabled();
@@ -513,14 +514,14 @@ test('document links support Back/Forward and opening a separate tab without dis
   const originalUrl = page.url(), secondUrl = `${demo.origin}/spaces/${second.spaceSlug}/documents/${second.slug}`;
   await page.getByRole('link', { name: 'Another handbook', exact: true }).click();
   await expect(page).toHaveURL(secondUrl);
-  await expect(title(page)).toHaveValue('Another handbook');
+  await expect(readingTitle(page)).toHaveText('Another handbook');
   await page.goBack();
   await expect(page).toHaveURL(originalUrl);
-  await expect(title(page)).toHaveValue(original.data.revision.title);
+  await expect(readingTitle(page)).toHaveText(original.data.revision.title);
   await page.goForward();
-  await expect(title(page)).toHaveValue('Another handbook');
-  await title(page).fill('Complete local draft in the current tab');
-  await body(page).fill('Unsaved body stays here while another tab opens.');
+  await expect(readingTitle(page)).toHaveText('Another handbook');
+  await editDocument(page); await title(page).fill('Complete local draft in the current tab');
+  await replaceDocumentBody(page, 'Unsaved body stays here while another tab opens.');
   await page.getByRole('link', { name: original.data.revision.title, exact: true }).click({ modifiers: ['ControlOrMeta'] });
   // Opener isolation can replace the initial about:blank target. Observe the
   // actual rendered native tab rather than keeping that transient page handle.
@@ -529,7 +530,7 @@ test('document links support Back/Forward and opening a separate tab without dis
     for (const candidate of context.pages()) {
       if (candidate === page || candidate.isClosed() || candidate.url() !== originalUrl) continue;
       try {
-        if (await title(candidate).count() === 1) { opened = candidate; return true; }
+        if (await readingTitle(candidate).count() === 1) { opened = candidate; return true; }
       } catch { /* A transient target can close during opener isolation. */ }
     }
     return false;
@@ -537,7 +538,7 @@ test('document links support Back/Forward and opening a separate tab without dis
   if (!opened) throw new Error('The native document tab did not finish loading');
   try {
     await expect(opened).toHaveURL(originalUrl);
-    await expect(title(opened)).toHaveValue(original.data.revision.title);
+    await expect(readingTitle(opened)).toHaveText(original.data.revision.title);
     await expect(title(page)).toHaveValue('Complete local draft in the current tab');
     await expect(body(page)).toContainText('Unsaved body stays here while another tab opens.');
     await expect(page.getByRole('dialog', { name: 'Unsaved changes' })).toHaveCount(0);
@@ -553,9 +554,9 @@ test('Back and Forward require deliberate discard and Keep editing preserves the
   await expect(page).toHaveURL(`${demo.origin}/spaces/${original.data.spaceSlug}/documents/${original.data.slug}`);
   const originalUrl = page.url();
   await page.getByRole('link', { name: 'Another handbook', exact: true }).click();
-  await expect(title(page)).toHaveValue('Another handbook');
+  await expect(readingTitle(page)).toHaveText('Another handbook');
   const secondUrl = page.url();
-  await title(page).fill('Unsent title'); await body(page).fill('Unsent body, retained after canceled Back.');
+  await editDocument(page); await title(page).fill('Unsent title'); await replaceDocumentBody(page, 'Unsent body, retained after canceled Back.');
   let writes = 0;
   page.on('request', request => { if (['PATCH', 'POST', 'DELETE'].includes(request.method())) writes++; });
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -570,8 +571,8 @@ test('Back and Forward require deliberate discard and Keep editing preserves the
   await page.evaluate(() => history.back());
   await page.getByRole('dialog', { name: 'Unsaved changes' }).getByRole('button', { name: 'Discard changes', exact: true }).click();
   await expect(page).toHaveURL(originalUrl);
-  await expect(title(page)).toHaveValue(original.data.revision.title);
-  await title(page).fill('Unsent original title'); await body(page).fill('Complete forward draft.');
+  await expect(readingTitle(page)).toHaveText(original.data.revision.title);
+  await editDocument(page); await title(page).fill('Unsent original title'); await replaceDocumentBody(page, 'Complete forward draft.');
   await page.evaluate(() => history.forward());
   const dialog = page.getByRole('dialog', { name: 'Unsaved changes' });
   await expect(dialog).toBeVisible();
@@ -581,7 +582,7 @@ test('Back and Forward require deliberate discard and Keep editing preserves the
   await expect(body(page)).toContainText('Complete forward draft.');
   await page.evaluate(() => history.forward());
   await page.getByRole('dialog', { name: 'Unsaved changes' }).getByRole('button', { name: 'Discard changes', exact: true }).click();
-  await expect(title(page)).toHaveValue('Another handbook');
+  await expect(readingTitle(page)).toHaveText('Another handbook');
   expect(writes).toBe(0);
   expect(await readDocument(context)).toEqual(original);
   expect((await readDocument(context, second.id)).data).toEqual(second);
@@ -594,9 +595,9 @@ test('Back cannot abandon an in-flight explicit Save and a committed save adds o
   await expect(page).toHaveURL(`${demo.origin}/spaces/${original.data.spaceSlug}/documents/${original.data.slug}`);
   const originalUrl = page.url();
   await page.getByRole('link', { name: 'Another handbook', exact: true }).click();
-  await expect(title(page)).toHaveValue('Another handbook');
-  await title(page).fill('Saved despite Back during request');
-  await body(page).fill('Complete saved body.');
+  await expect(readingTitle(page)).toHaveText('Another handbook');
+  await editDocument(page); await title(page).fill('Saved despite Back during request');
+  await replaceDocumentBody(page, 'Complete saved body.');
   let release!: () => void;
   const held = new Promise<void>(resolve => { release = resolve; });
   await page.route(`**/api/v1/documents/${second.id}`, async route => {
@@ -613,14 +614,14 @@ test('Back cannot abandon an in-flight explicit Save and a committed save adds o
     release();
     await expect(save(page)).toBeDisabled();
     await expect(page.getByText('Saved · revision 2', { exact: true })).toBeVisible();
-    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(page.getByRole('dialog', { name: 'Please wait', exact: true })).toHaveCount(0);
     const saved = await readDocument(context, second.id);
     expect(saved.data.currentRevisionNumber).toBe(2);
     expect(saved.data.revision.title).toBe('Saved despite Back during request');
     expect(saved.data.revision.plainText).toContain('Complete saved body.');
     await page.goBack();
     await expect(page).toHaveURL(originalUrl);
-    await expect(title(page)).toHaveValue(original.data.revision.title);
+    await expect(readingTitle(page)).toHaveText(original.data.revision.title);
   } finally { release(); }
 });
 
@@ -633,20 +634,20 @@ test('readable document links survive login, reload, title changes and legacy bo
   await explicitSave(page);
   await expect(page).toHaveURL(readable);
   await page.reload();
-  await expect(title(page)).toHaveValue('Renamed handbook with a stable link');
+  await expect(readingTitle(page)).toHaveText('Renamed handbook with a stable link');
   await page.goto(url());
-  await expect(title(page)).toHaveValue('Renamed handbook with a stable link');
+  await expect(readingTitle(page)).toHaveText('Renamed handbook with a stable link');
   await expect(page).toHaveURL(readable);
 
   const readerContext = await browser.newContext(), outsiderContext = await browser.newContext();
   try {
     const reader = await readerContext.newPage();
     await login(reader, 'reader', readable);
-    await expect(title(reader)).toHaveValue('Renamed handbook with a stable link');
-    await expect(title(reader)).toHaveAttribute('readonly', '');
+    await expect(readingTitle(reader)).toHaveText('Renamed handbook with a stable link');
+    await expect(reader.getByRole('button', { name: 'Edit', exact: true })).toHaveCount(0);
     const outsider = await outsiderContext.newPage();
     await login(outsider, 'outsider', readable);
-    await expect(title(outsider)).toHaveCount(0);
+    await expect(title(outsider)).toHaveCount(0); await expect(readingTitle(outsider)).toHaveCount(0);
     await expect(body(outsider)).toHaveCount(0);
     await expect(outsider.getByRole('navigation', { name: 'Documents', exact: true })).toHaveCount(0);
     expect((await apiRequest(outsiderContext, `/api/v1/spaces/${seeded.spaceId}/documents/by-slug/${original.data.slug}`)).status()).toBe(404);
@@ -658,11 +659,11 @@ test('unknown slug links show no unrelated space or document and never fall back
   const original = await readDocument(context);
   await page.goto(`${demo.origin}/spaces/${original.data.spaceSlug}/documents/not-a-document`);
   await expect(page.getByRole('alert')).toContainText('Access to this document is unavailable.');
-  await expect(title(page)).toHaveCount(0);
+  await expect(title(page)).toHaveCount(0); await expect(readingTitle(page)).toHaveCount(0);
   await expect(page.getByRole('navigation', { name: 'Documents', exact: true })).toHaveCount(0);
   await page.goto(`${demo.origin}/spaces/not-a-space/documents/not-a-document`);
   await expect(page.getByRole('alert')).toContainText('Access to this document is unavailable.');
-  await expect(title(page)).toHaveCount(0);
+  await expect(title(page)).toHaveCount(0); await expect(readingTitle(page)).toHaveCount(0);
   expect(await readDocument(context)).toEqual(original);
 });
 function title(page: Page) { return page.getByRole('textbox', { name: 'Document title', exact: true }); }
@@ -697,9 +698,12 @@ async function signIn(page: Page, role: DemoRole) {
   }
 }
 
-async function login(page: Page, role: DemoRole = 'editor', location = url()) {
+async function login(page: Page, role: DemoRole = 'editor', location = url(), mode: 'edit' | 'read' = 'edit') {
   await page.goto(location);
   await signIn(page, role);
+  // These regression workflows author content; entering Edit is always a real
+  // deliberate UI action after verifying the default reading view.
+  if (mode === 'edit' && (role === 'editor' || role === 'administrator')) await editDocument(page);
 }
 
 async function readDocument(context: BrowserContext, id = seeded.documentId) {
@@ -790,7 +794,7 @@ test('keyboard login/logout uses real sessions and protected same-origin respons
   await expect(page.getByRole('button', { name: 'Log in', exact: true })).toBeFocused();
   try {
     await page.keyboard.press('Enter');
-    await expect(title(page)).toHaveValue('Release checklist');
+    await expect(readingTitle(page)).toHaveText('Release checklist');
   } finally { demo.authenticationCompleted(); if (await password.isVisible()) await password.fill(''); }
   expect((await apiRequest(context, '/api/v1/me')).status()).toBe(200);
   const protectedWrite = await apiRequest(context, `/api/v1/documents/${seeded.documentId}`, {
@@ -828,9 +832,11 @@ test('real search finds authorized saved text across spaces and keeps dirty edit
   expect(local.status()).toBe(201);
   const target: unknown = await created.json();
   if (!target || typeof target !== 'object' || !('id' in target) || typeof target.id !== 'string') throw new Error('Search fixture was not created');
+  let targetReads = 0;
+  page.on('request', request => { if (request.method() === 'GET' && new URL(request.url()).pathname === `/api/v1/documents/${target.id}`) targetReads++; });
   const baseline = await readDocument(context);
   await title(page).fill('Unsaved title retained while searching');
-  await body(page).fill('The full unsaved body survives search and cancel.');
+  await replaceDocumentBody(page, 'The full unsaved body survives search and cancel.');
   await title(page).focus();
   await page.keyboard.press('ControlOrMeta+k');
   const search = page.getByRole('dialog', { name: 'Search documents', exact: true });
@@ -899,7 +905,8 @@ test('real search finds authorized saved text across spaces and keeps dirty edit
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await option.click();
   await discard.getByRole('button', { name: 'Discard changes', exact: true }).click();
-  await expect(title(page)).toHaveValue(targetTitle);
+  await expect(readingTitle(page)).toHaveText(targetTitle);
+  expect(targetReads).toBe(1);
   await page.setViewportSize({ width: 1440, height: 1000 });
   await expect(page.getByRole('combobox', { name: 'Space', exact: true })).toHaveValue(other.spaceId);
   const destination = await readDocument(context, target.id);
@@ -965,7 +972,7 @@ test('native upload stores a private image, explicit Save references it, and rel
   await login(page);
   const baseline = await readDocument(context);
   const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgaGD4DwAChAGA+gVWHQAAAABJRU5ErkJggg==', 'base64');
-  await body(page).fill('Uploaded native image body.');
+  await replaceDocumentBody(page, 'Uploaded native image body.');
   await slashBlock(page, 'image', 'Image');
   const uploaded = page.waitForResponse(response => response.request().method() === 'POST'
     && new URL(response.url()).pathname === `/api/v1/documents/${seeded.documentId}/attachments`);
@@ -1000,7 +1007,7 @@ test('a new native document enables supplied Upload after its first Save without
   await login(page);
   await page.getByRole('button', { name: 'New document', exact: true }).click();
   await title(page).fill('First saved attachment document');
-  await body(page).fill('Native body before first Save.');
+  await replaceDocumentBody(page, 'Native body before first Save.');
   await slashBlock(page, 'image', 'Image');
   await expect(page.getByRole('tab', { name: 'Upload', exact: true })).toHaveCount(0);
   await expect(page.getByText('Save this document before uploading attachments.', { exact: true })).toBeVisible();
@@ -1031,14 +1038,14 @@ test('rapid new-draft navigation never inherits another document attachment auth
   for (let attempt = 0; attempt < 6; attempt++) {
     await page.getByRole('button', { name: 'New document', exact: true }).click();
     await title(page).fill('Complete unsaved new document');
-    await body(page).fill('Complete unsaved body.');
+    await replaceDocumentBody(page, 'Complete unsaved body.');
     await slashBlock(page, 'image', 'Image');
     await expect(page.getByRole('tab', { name: 'Upload', exact: true })).toHaveCount(0);
     await expect(page.getByText('Save this document before uploading attachments.', { exact: true })).toBeVisible();
     await page.keyboard.press('Escape');
     await page.getByRole('link', { name: original.data.revision.title, exact: true }).click();
     await page.getByRole('dialog', { name: 'Unsaved changes' }).getByRole('button', { name: 'Discard changes', exact: true }).click();
-    await expect(title(page)).toHaveValue(original.data.revision.title);
+    await expect(readingTitle(page)).toHaveText(original.data.revision.title);
   }
   expect(writes).toBe(0);
   expect(await readDocument(context)).toEqual(original);
@@ -1048,7 +1055,7 @@ test('a rejected native upload retains the entire local draft and creates no rev
   await login(page);
   const baseline = await readDocument(context);
   await title(page).fill('Unsaved title before rejected upload');
-  await body(page).fill('Complete unsaved body before rejected upload.');
+  await replaceDocumentBody(page, 'Complete unsaved body before rejected upload.');
   await slashBlock(page, 'file', 'File');
   const uploaded = page.waitForResponse(response => response.request().method() === 'POST'
     && new URL(response.url()).pathname === `/api/v1/documents/${seeded.documentId}/attachments`);
@@ -1068,11 +1075,11 @@ test('a rejected native upload retains the entire local draft and creates no rev
 test('native JSON, PDF and DOCX downloads use saved current or selected history and never checkpoint dirty work', async ({ page, context }) => {
   await login(page);
   await title(page).fill('Synthetic saved file export');
-  await body(page).fill('Saved text included in rendered exports.');
+  await replaceDocumentBody(page, 'Saved text included in rendered exports.');
   await explicitSave(page);
   const saved = await readDocument(context);
   await title(page).fill('Unsaved title excluded from exported files');
-  await body(page).fill('Unsaved body excluded from exported files.');
+  await replaceDocumentBody(page, 'Unsaved body excluded from exported files.');
   for (const format of ['pdf', 'docx'] as const) {
     await actions(page);
     const download = page.waitForEvent('download');
@@ -1148,10 +1155,10 @@ test('native JSON, PDF and DOCX downloads use saved current or selected history 
 test('explicit publication selects immutable history, preserves dirty work and undo, and private saves never advance it', async ({ page, context, browser }) => {
   await login(page, 'administrator');
   await title(page).fill('Saved private revision two');
-  await body(page).fill('Saved private body two.');
+  await replaceDocumentBody(page, 'Saved private body two.');
   await explicitSave(page);
   await title(page).fill('Unsaved private publication title');
-  await body(page).fill('Unsaved private publication body.');
+  await replaceDocumentBody(page, 'Unsaved private publication body.');
   await page.getByRole('button', { name: 'History', exact: true }).click();
   const history = page.getByRole('complementary', { name: 'Revision history', exact: true });
   await history.getByRole('button', { name: 'Revision 1', exact: true }).click();
@@ -1230,7 +1237,7 @@ test('stale publication returns 412, retains complete work and cannot publish or
   await login(page, 'administrator');
   const baseline = await readDocument(context);
   await title(page).fill('Stale local publication title');
-  await body(page).fill('Complete stale local publication body.');
+  await replaceDocumentBody(page, 'Complete stale local publication body.');
   await actions(page);
   await page.getByRole('button', { name: 'Publish saved revision', exact: true }).click();
   const changed = await apiRequest(context, `/api/v1/documents/${seeded.documentId}`, {
@@ -1306,7 +1313,7 @@ test('public native images use the selected revision allowlist and archive/unarc
     ]) },
   });
   expect(changed.status()).toBe(200);
-  await page.reload(); await expect(title(page)).toHaveValue('Release checklist');
+  await page.reload(); await expect(readingTitle(page)).toHaveText('Release checklist');
   await actions(page); await page.getByRole('button', { name: 'Publish saved revision', exact: true }).click();
   const published = page.waitForResponse(response => response.request().method() === 'POST'
     && new URL(response.url()).pathname === `/api/v1/documents/${seeded.documentId}/publication`);
@@ -1345,7 +1352,7 @@ test('create, edit, explicit save and reload persist the real selected revision'
   await expect(title(page)).toHaveValue('Release checklist');
   await page.getByRole('button', { name: 'New document', exact: true }).click();
   await title(page).fill('Deployment checklist');
-  await body(page).fill('Check tests and migrations before deployment.');
+  await replaceDocumentBody(page, 'Check tests and migrations before deployment.');
   await expect(page.getByText(/Unsaved changes/).first()).toBeVisible();
   const created = page.waitForResponse(response => response.request().method() === 'POST'
     && new URL(response.url()).pathname === `/api/v1/spaces/${seeded.spaceId}/documents`);
@@ -1358,14 +1365,14 @@ test('create, edit, explicit save and reload persist the real selected revision'
   }
   await expect(save(page)).toBeDisabled();
   await title(page).fill('Deployment checklist updated');
-  await body(page).fill('Check tests, migrations, and the backup.');
+  await replaceDocumentBody(page, 'Check tests, migrations, and the backup.');
   await explicitSave(page);
   const before = await readDocument(context, initial.id);
   expect(before.data.currentRevisionNumber).toBe(2);
   expect(before.data.revision.title).toBe('Deployment checklist updated');
   expect(before.data.revision.plainText).toBe('Check tests, migrations, and the backup.');
   await page.reload();
-  await expect(title(page)).toHaveValue(before.data.revision.title);
+  await expect(readingTitle(page)).toHaveText(before.data.revision.title);
   await expect(body(page)).toHaveText(before.data.revision.plainText);
   expect((await readDocument(context, initial.id)).data.revision.id).toBe(before.data.revision.id);
   await assertNoBrowserPersistence(page);
@@ -1414,6 +1421,7 @@ test('editor round-trips native standard blocks, styles, nesting, media placehol
   }
   const before = await readDocument(context, created.id);
   await page.goto(url({ ...seeded, documentId: created.id }));
+  await editDocument(page);
   await expect(title(page)).toHaveValue('Native BlockNote content');
   await expect(body(page).locator('h1,h2,h3,h4,h5,h6')).toHaveCount(7);
   await expect(body(page).getByRole('table')).toHaveCount(1);
@@ -1437,7 +1445,7 @@ test('editor round-trips native standard blocks, styles, nesting, media placehol
 test('normal rich HTML paste preserves underline, quote and table content through a real save', async ({ page, context }) => {
   await login(page);
   await title(page).fill('Native rich paste');
-  await body(page).fill('');
+  await replaceDocumentBody(page, '');
   await body(page).evaluate(element => {
     const clipboard = new DataTransfer();
     clipboard.setData('text/html', '<p><u>Underlined synthetic text</u></p><blockquote>A native quote</blockquote><table><tbody><tr><td>Check</td><td>Result</td></tr><tr><td>Rich paste</td><td>Retained</td></tr></tbody></table>');
@@ -1459,7 +1467,7 @@ test('normal rich HTML paste preserves underline, quote and table content throug
   expect(saved.data.revision.plainText).toContain('Underlined synthetic text');
   expect(saved.data.revision.plainText).toContain('Retained');
   await page.reload();
-  await expect(title(page)).toHaveValue('Native rich paste');
+  await expect(readingTitle(page)).toHaveText('Native rich paste');
   await expect(body(page).locator('u')).toHaveText('Underlined synthetic text');
   await expect(body(page).getByRole('cell', { name: 'Retained', exact: true })).toBeVisible();
 });
@@ -1468,7 +1476,7 @@ test('history restore appends a revision, archive preserves history, and native 
   await login(page);
   const first = await readDocument(context);
   await title(page).fill('Revised release checklist');
-  await body(page).fill('Verify the backup before deployment.');
+  await replaceDocumentBody(page, 'Verify the backup before deployment.');
   await explicitSave(page);
   const second = await readDocument(context);
   await page.getByRole('button', { name: 'History', exact: true }).click();
@@ -1479,7 +1487,7 @@ test('history restore appends a revision, archive preserves history, and native 
     && new URL(response.url()).pathname === `/api/v1/documents/${seeded.documentId}/restore`);
   await page.getByRole('button', { name: 'Restore revision 1', exact: true }).click();
   expect((await restoredResponse).status()).toBe(200);
-  await expect(title(page)).toHaveValue(first.data.revision.title);
+  await expect(readingTitle(page)).toHaveText(first.data.revision.title);
   const restored = await readDocument(context);
   expect(restored.data.currentRevisionNumber).toBe(3);
   expect(restored.data.revision.id).not.toBe(first.data.revision.id);
@@ -1529,8 +1537,8 @@ test('reader controls are read-only and real API denies every mutation', async (
   await expect(search.getByRole('combobox', { name: 'Search accessible documents', exact: true })).toBeFocused();
   await page.keyboard.press('Escape');
   await expect(search).not.toBeVisible();
-  await expect(title(page)).toHaveValue('Release checklist');
-  await expect(title(page)).toHaveAttribute('readonly', '');
+  await expect(readingTitle(page)).toHaveText('Release checklist');
+  await expect(page.getByRole('button', { name: 'Edit', exact: true })).toHaveCount(0);
   await expect(body(page)).toHaveAttribute('contenteditable', 'false');
   await expect(body(page).getByRole('checkbox').first()).toBeDisabled();
   await cannotSave(page);
@@ -1601,12 +1609,13 @@ test('two tabs preserve complete local work on 412 and require deliberate reconc
   const second = await context.newPage();
   try {
     await second.goto(url());
+    await editDocument(second);
     await expect(title(second)).toHaveValue('Release checklist');
     const original = await readDocument(context);
     await title(page).fill('First tab server title');
-    await body(page).fill('First tab committed body.');
+    await replaceDocumentBody(page, 'First tab committed body.');
     await title(second).fill('Second tab local title');
-    await body(second).fill('Second tab complete unsaved body.\nAnother local paragraph.');
+    await replaceDocumentBody(second, 'Second tab complete unsaved body.\nAnother local paragraph.');
     const localBody = await body(second).innerText();
     await explicitSave(page);
     const winner = await readDocument(context);
@@ -1665,7 +1674,7 @@ test('dirty navigation keeps edits until an explicit discard and warns before re
   const anotherSpace = await demo.seed();
   await login(page);
   await title(page).fill('Unsaved local title');
-  await body(page).fill('Keep this unsaved body.');
+  await replaceDocumentBody(page, 'Keep this unsaved body.');
   const dialog = page.getByRole('dialog', { name: 'Unsaved changes', exact: true });
   await page.getByRole('combobox', { name: 'Space', exact: true }).selectOption(anotherSpace.spaceId);
   await expect(dialog).toBeVisible();
@@ -1698,7 +1707,7 @@ test('dirty navigation keeps edits until an explicit discard and warns before re
 test('a failed save retains the title/body, does not retry, and never reports success', async ({ page, context }) => {
   await login(page);
   await title(page).fill('Unsaved after failure');
-  await body(page).fill('This complete body must survive the failed request.');
+  await replaceDocumentBody(page, 'This complete body must survive the failed request.');
   let attempts = 0;
   await page.route(`**/api/v1/documents/${seeded.documentId}`, async route => {
     if (route.request().method() !== 'PATCH') return route.continue();
@@ -1724,7 +1733,7 @@ test('a failed save retains the title/body, does not retry, and never reports su
 test('an expired real session leaves unsaved work intact and does not report a successful save', async ({ page }) => {
   await login(page);
   await title(page).fill('Unsaved after session expiry');
-  await body(page).fill('Keep this body when the session expires.');
+  await replaceDocumentBody(page, 'Keep this body when the session expires.');
   await demo.database.prisma.session.updateMany({
     where: { userId: demo.accountId('editor') }, data: { expiresAt: new Date(Date.now() - 1000) },
   });
@@ -1743,7 +1752,7 @@ test('session expiry before a first save retains a new draft through deliberate 
   await login(page);
   await page.getByRole('button', { name: 'New document', exact: true }).click();
   await title(page).fill('New draft after session expiry');
-  await body(page).fill('Keep the entire new document until it is explicitly created.');
+  await replaceDocumentBody(page, 'Keep the entire new document until it is explicitly created.');
   await demo.database.prisma.session.updateMany({
     where: { userId: demo.accountId('editor') }, data: { expiresAt: new Date(Date.now() - 1000) },
   });
@@ -1795,9 +1804,9 @@ test('a mismatched space/document query cannot grant editor controls for a reade
         method: 'PUT', headers: { Origin: demo.origin, 'If-Match': space.headers().etag! }, data: { role: 'reader' },
       });
     expect(downgrade.status()).toBe(200);
-    await login(page, 'editor', url({ ...seeded, documentId: readerSpace.documentId }));
+    await login(page, 'editor', url({ ...seeded, documentId: readerSpace.documentId }), 'read');
     await expect(page.getByRole('alert').filter({ hasText: 'Access to this document is unavailable' })).toBeVisible();
-    await expect(title(page)).toHaveCount(0);
+    await expect(title(page)).toHaveCount(0); await expect(readingTitle(page)).toHaveCount(0);
     await expect(body(page)).toHaveCount(0);
     await expect(page.getByText('Reader-only other-space document', { exact: true })).toHaveCount(0);
     await expect(page.getByText('Keep this body out of the wrong space pane.', { exact: false })).toHaveCount(0);
@@ -1812,7 +1821,7 @@ test('membership revocation blocks an existing browser session without losing it
   await login(page);
   const cookieCount = (await context.cookies()).length;
   await title(page).fill('Unsaved after revocation');
-  await body(page).fill('The local draft survives revoked access.');
+  await replaceDocumentBody(page, 'The local draft survives revoked access.');
   const administratorContext = await browser.newContext();
   try {
     const administratorPage = await administratorContext.newPage();
@@ -1847,10 +1856,10 @@ test('loading, safe read retry and empty states are visible without replacing lo
     await gate;
     await route.continue();
   });
-  await login(page);
+  await login(page, 'editor', url(), 'read');
   await expect(page.getByText(/Loading document/).first()).toBeVisible();
   release();
-  await expect(title(page)).toHaveValue('Release checklist');
+  await expect(readingTitle(page)).toHaveText('Release checklist');
   await page.unroute(`**/api/v1/documents/${seeded.documentId}`);
   const original = await readDocument(context);
   const slugRead = `**/api/v1/spaces/${seeded.spaceId}/documents/by-slug/${original.data.slug}`;
@@ -1865,7 +1874,7 @@ test('loading, safe read retry and empty states are visible without replacing lo
   await expect(page.getByRole('button', { name: 'Retry', exact: true }).first()).toBeVisible();
   await page.unroute(slugRead);
   await page.getByRole('button', { name: 'Retry', exact: true }).first().click();
-  await expect(title(page)).toHaveValue('Release checklist');
+  await expect(readingTitle(page)).toHaveText('Release checklist');
   const archived = await apiRequest(context, `/api/v1/documents/${seeded.documentId}/archive`, {
     method: 'POST', headers: { Origin: demo.origin, 'If-Match': original.etag }, data: {},
   });
@@ -1890,14 +1899,14 @@ test('a new draft supersedes an in-flight document read without adopting its con
     catch { /* The test may have closed the page after releasing its held request. */ }
   });
   try {
-    await login(page);
+    await login(page, 'editor', url(), 'read');
     await expect.poll(() => fetched).toBe(1);
     await expect(page.getByText('Loading document…', { exact: true })).toBeVisible();
     const original = await readDocument(context);
     await page.getByRole('button', { name: 'New document', exact: true }).click();
     await expect(title(page)).toHaveValue('Untitled document');
     await title(page).fill('Complete new draft while the prior document loads');
-    await body(page).fill('The complete new body belongs to an unsaved document.');
+    await replaceDocumentBody(page, 'The complete new body belongs to an unsaved document.');
     await expect(page.getByText('Loading document…', { exact: true })).toHaveCount(0);
     await expect(save(page)).toBeEnabled();
     const staleRead = page.waitForResponse(response => response.request().method() === 'GET'
@@ -1970,7 +1979,7 @@ test('Demo A remains executable against the same running real API', async () => 
 test('failed recovery reads and their explicit retry preserve a dirty draft until reconciliation', async ({ page }) => {
   await login(page);
   await title(page).fill('Unsaved through recovery read failure');
-  await body(page).fill('Keep this entire body through login and a failed workspace read.');
+  await replaceDocumentBody(page, 'Keep this entire body through login and a failed workspace read.');
   await demo.database.prisma.session.updateMany({
     where: { userId: demo.accountId('editor') }, data: { expiresAt: new Date(Date.now() - 1000) },
   });
@@ -2061,9 +2070,9 @@ test('the outline follows actual document headings with reloadable section links
   await expect.poll(() => new URL(page.url()).hash).toBe(fragment);
   const [opened] = await Promise.all([context.waitForEvent('page'), lastLink.click({ modifiers: ['ControlOrMeta'] })]);
   try {
-    await expect(title(opened)).toHaveValue(baseline.data.revision.title);
+    await expect(readingTitle(opened)).toHaveText(baseline.data.revision.title);
     await expect.poll(() => new URL(opened.url()).hash).toBe(fragment);
-    await expect.poll(() => selectedBlockId(opened)).toBe(headingId);
+    await expect(body(opened).getByRole('heading', { name: lastName, exact: true })).toBeFocused();
     await expect(title(page)).toHaveValue('Complete unsaved title during section navigation');
     expect(await readDocument(context)).toEqual(baseline);
   } finally { await opened.close(); }
@@ -2081,9 +2090,9 @@ test('the outline follows actual document headings with reloadable section links
   await expect(outline.getByRole('link', { name: 'Updated synthetic section', exact: true })).toHaveAttribute('href', fragment);
   const sectionUrl = page.url();
   await page.reload();
-  await expect(body(page).getByRole('heading', { name: 'Updated synthetic section', exact: true })).toBeVisible();
-  await expect.poll(() => selectedBlockId(page)).toBe(headingId);
-  await expect(save(page)).toBeDisabled();
+  await expect(body(page).getByRole('heading', { name: 'Updated synthetic section', exact: true })).toBeFocused();
+  await expect(body(page)).not.toBeEditable();
+  await expect(save(page)).toHaveCount(0);
   await page.getByRole('button', { name: 'History', exact: true }).click();
   const history = page.getByRole('complementary', { name: 'Revision history', exact: true });
   await history.getByRole('button', { name: 'Revision 1', exact: true }).click();
@@ -2121,7 +2130,8 @@ test('short documents with repeated headings keep distinct section links and the
   if (!document || typeof document !== 'object' || !('id' in document) || typeof document.id !== 'string') throw new Error('Missing native document identity');
   const original = await readDocument(context, document.id);
   await page.goto(`${demo.origin}/spaces/${original.data.spaceSlug}/documents/${original.data.slug}`);
-  await expect(title(page)).toHaveValue('Short sections');
+  await expect(readingTitle(page)).toHaveText('Short sections');
+  await editDocument(page);
   const links = page.getByRole('navigation', { name: 'On this page', exact: true }).getByRole('link', { name: 'Repeated section', exact: true });
   await expect(links).toHaveCount(2);
   await expect(links.first()).toHaveAttribute('href', '#section-short-first');
@@ -2133,10 +2143,10 @@ test('short documents with repeated headings keep distinct section links and the
   await expect(links.first()).not.toHaveAttribute('aria-current', 'location');
   expect(new URL(page.url()).hash).toBe('#section-short-second');
   await page.reload();
-  await expect.poll(() => selectedBlockId(page)).toBe('short-second');
+  await expect(body(page).getByRole('heading', { name: 'Repeated section', exact: true }).last()).toBeFocused();
   await expect(links.last()).toHaveAttribute('aria-current', 'location');
   await expect(body(page).getByRole('heading', { name: 'Repeated section', exact: true }).last()).toBeInViewport({ ratio: 1 });
-  await expect(save(page)).toBeDisabled();
+  await expect(save(page)).toHaveCount(0);
   expect(await readDocument(context, document.id)).toEqual(original);
 });
 
@@ -2152,10 +2162,12 @@ test('a direct section link waits for the initial permission check before placin
   try {
     await page.goto(`${demo.origin}/spaces/${original.data.spaceSlug}/documents/${original.data.slug}#section-${encodeURIComponent(id!)}`);
     await page.reload();
-    await expect(title(page)).toHaveValue(original.data.revision.title);
+    await expect(readingTitle(page)).toHaveText(original.data.revision.title);
     await expect(body(page)).not.toBeEditable();
     release?.();
-    await expect(body(page)).toBeEditable();
+    await editDocument(page);
+    await expect(title(page)).toBeFocused();
+    await page.getByRole('navigation', { name: 'On this page', exact: true }).getByRole('link', { name: 'Nested review notes', exact: true }).click();
     await expect.poll(() => selectedBlockId(page)).toBe(id);
     await expect(heading).toBeInViewport({ ratio: 1 });
     await expect(page.getByRole('navigation', { name: 'On this page', exact: true }).getByRole('link', { name: 'Nested review notes', exact: true })).toHaveAttribute('aria-current', 'location');
@@ -2183,7 +2195,8 @@ test('nested native heading navigation opens its toggle ancestors without changi
   if (value === null || typeof value !== 'object' || !('id' in value) || typeof value.id !== 'string') throw new Error('Missing native document ID');
   const original = await readDocument(context, value.id);
   await page.goto(url({ ...seeded, documentId: value.id }));
-  await expect(title(page)).toHaveValue('Nested native outline');
+  await expect(readingTitle(page)).toHaveText('Nested native outline');
+  await editDocument(page);
   const target = body(page).getByRole('heading', { name: 'Nested outline target', exact: true });
   await expect(target).not.toBeVisible();
   const link = page.getByRole('navigation', { name: 'On this page', exact: true }).getByRole('link', { name: 'Nested outline target', exact: true });
@@ -2201,7 +2214,7 @@ test('nested native heading navigation opens its toggle ancestors without changi
 test('supplied formatting controls and native undo/redo work across successful saves and first creation', async ({ page, context }) => {
   await login(page);
   await expect(title(page)).toHaveValue('Release checklist');
-  await body(page).fill('Native supplied formatting');
+  await replaceDocumentBody(page, 'Native supplied formatting');
   await body(page).locator('p').first().selectText();
   const toolbar = formatting(page);
   const bold = toolbar.getByRole('button', { name: 'Bold', exact: true });
@@ -2233,13 +2246,13 @@ test('supplied formatting controls and native undo/redo work across successful s
   expect((await readDocument(context)).data).toEqual(saved.data);
   expect(await demo.database.prisma.documentRevision.count({ where: { documentId: seeded.documentId } })).toBe(2);
   await page.reload();
-  await expect(title(page)).toHaveValue(saved.data.revision.title);
+  await expect(readingTitle(page)).toHaveText(saved.data.revision.title);
   await expect(body(page).getByRole('heading', { name: 'Native supplied formatting', exact: true })).toBeVisible();
   await expect(body(page).locator('u')).toHaveText('Native supplied formatting');
 
   await page.getByRole('button', { name: 'New document', exact: true }).click();
   await title(page).fill('Undo after first creation');
-  await body(page).fill('The first saved body remains in native editor history.');
+  await replaceDocumentBody(page, 'The first saved body remains in native editor history.');
   const created = page.waitForResponse(response => response.request().method() === 'POST'
     && new URL(response.url()).pathname === `/api/v1/spaces/${seeded.spaceId}/documents`);
   await save(page).click();
@@ -2258,7 +2271,7 @@ test('supplied formatting controls and native undo/redo work across successful s
 
 test('supplied slash menu creates rich blocks and editable tables that persist natively', async ({ page, context }) => {
   await login(page);
-  await body(page).fill('A native rich document');
+  await replaceDocumentBody(page, 'A native rich document');
   await slashBlock(page, 'h2', 'Heading 2');
   await page.keyboard.insertText('Created through the slash menu');
   await slashBlock(page, 'check', 'Check List');
@@ -2279,7 +2292,7 @@ test('supplied slash menu creates rich blocks and editable tables that persist n
   expect(saved.data.revision.plainText).toContain('Created through the slash menu');
   expect(saved.data.revision.plainText).toContain('Native table edit');
   await page.reload();
-  await expect(title(page)).toHaveValue('Release checklist');
+  await expect(readingTitle(page)).toHaveText('Release checklist');
   await expect(body(page).getByRole('cell', { name: 'Native table edit', exact: true })).toBeVisible();
   await expect(page.getByRole('navigation', { name: 'On this page', exact: true })
     .getByRole('link', { name: 'Created through the slash menu', exact: true })).toBeVisible();
@@ -2289,7 +2302,7 @@ test('official media embed accepts a URL, renders the image and preserves it thr
   await login(page);
   const mediaURL = `${demo.origin}/synthetic-native-image.png`;
   await page.route(mediaURL, route => route.fulfill({ status: 200, contentType: 'image/png', body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aLXsAAAAASUVORK5CYII=', 'base64') }));
-  await body(page).fill('A linked native image');
+  await replaceDocumentBody(page, 'A linked native image');
   await slashBlock(page, 'image', 'Image');
   await expect(page.getByRole('tab', { name: 'Upload', exact: true })).toBeVisible();
   await page.getByRole('tab', { name: 'Embed', exact: true }).click();
@@ -2317,7 +2330,7 @@ test('supplied link UI creates, edits, cancels and removes native links without 
   const browserErrors: string[] = [];
   page.on('pageerror', error => browserErrors.push(error.message));
   await login(page);
-  await body(page).fill('Read the synthetic release guide.');
+  await replaceDocumentBody(page, 'Read the synthetic release guide.');
   await body(page).locator('p').first().selectText();
   await formatting(page).getByRole('button', { name: 'Create link', exact: true }).click();
   const href = page.getByPlaceholder('Edit URL', { exact: true });
@@ -2392,7 +2405,7 @@ test('supplied external link and file actions sever the opener and preserve the 
     await expect(page).toHaveURL(`${demo.origin}/spaces/${original.data.spaceSlug}/documents/${original.data.slug}`);
     const originalURL = page.url();
     await title(page).fill('Complete unsaved title before external navigation');
-    await body(page).fill('The complete unsaved linked body must remain in this tab.');
+    await replaceDocumentBody(page, 'The complete unsaved linked body must remain in this tab.');
     await body(page).locator('p').first().selectText();
     await formatting(page).getByRole('button', { name: 'Create link', exact: true }).click();
     const href = page.getByPlaceholder('Edit URL', { exact: true });
@@ -2446,7 +2459,7 @@ test('invalid native link content stays local, blocks Save and can be undone wit
   await login(page);
   const original = await readDocument(context);
   await title(page).fill('Unsaved title before invalid link');
-  await body(page).fill('Keep the entire local body.');
+  await replaceDocumentBody(page, 'Keep the entire local body.');
   await body(page).locator('p').first().selectText();
   await formatting(page).getByRole('button', { name: 'Create link', exact: true }).click();
   const href = page.getByPlaceholder('Edit URL', { exact: true });
@@ -2477,7 +2490,7 @@ test('discard requires confirmation and resets the complete title/body baseline 
   const toolbar = formatting(page);
   await expect(discardChanges(page)).toBeDisabled();
   await title(page).fill('Unsaved title to discard');
-  await body(page).fill('The full local body is different from the baseline.');
+  await replaceDocumentBody(page, 'The full local body is different from the baseline.');
   await body(page).locator('p').selectText();
   await toolbar.getByRole('button', { name: 'Bold', exact: true }).click();
   const dirtyBody = await body(page).innerText();
@@ -2520,7 +2533,7 @@ test('discarding a new document returns its initial local baseline without creat
   await page.getByRole('button', { name: 'New document', exact: true }).click();
   await expect(title(page)).toHaveValue('Untitled document');
   await title(page).fill('Never-created draft title');
-  await body(page).fill('This discarded body must never reach the API.');
+  await replaceDocumentBody(page, 'This discarded body must never reach the API.');
   let creations = 0;
   page.on('request', request => {
     if (request.method() === 'POST' && new URL(request.url()).pathname === `/api/v1/spaces/${seeded.spaceId}/documents`) creations++;
@@ -2543,14 +2556,15 @@ test('discard after a stale save keeps the old baseline and requires deliberate 
   const second = await context.newPage();
   try {
     await second.goto(url());
+    await editDocument(second);
     await expect(title(second)).toHaveValue(original.data.revision.title);
     const baselineBody = await body(second).innerText();
     await title(page).fill('Latest server title stays separate');
-    await body(page).fill('Only the first tab saved this server body.');
+    await replaceDocumentBody(page, 'Only the first tab saved this server body.');
     await explicitSave(page);
     const latest = await readDocument(context);
     await title(second).fill('Discard this conflicted local title');
-    await body(second).fill('Discard this complete conflicted local body.');
+    await replaceDocumentBody(second, 'Discard this complete conflicted local body.');
     let attempts = 0;
     const etags: Array<string | undefined> = [];
     second.on('request', request => {
@@ -2601,7 +2615,7 @@ test('administrator space creation preserves the complete draft and saves it onl
   const originalUrl = page.url();
   const revisionCount = await demo.database.prisma.documentRevision.count({ where: { documentId: seeded.documentId } });
   await title(page).fill('Unsaved handbook title');
-  await body(page).fill('Complete unsaved handbook body.');
+  await replaceDocumentBody(page, 'Complete unsaved handbook body.');
   await page.getByRole('button', { name: 'New space', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'New space', exact: true });
   await expect(dialog.getByLabel('Space name')).toBeFocused();
@@ -2613,7 +2627,7 @@ test('administrator space creation preserves the complete draft and saves it onl
   await dialog.getByRole('button', { name: 'Create space', exact: true }).click();
   expect((await createdResponse).status()).toBe(201);
   await expect(dialog).toBeHidden();
-  await expect(page.getByRole('status').filter({ hasText: 'Created space "Product engineering".' })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Notification', exact: true }).filter({ hasText: 'Created space "Product engineering".' })).toBeVisible();
   await expect(page).toHaveURL(originalUrl);
   await expect(title(page)).toHaveValue('Unsaved handbook title');
   await expect(body(page)).toContainText('Complete unsaved handbook body.');
@@ -2628,18 +2642,18 @@ test('administrator space creation preserves the complete draft and saves it onl
   await page.getByRole('combobox', { name: 'Space', exact: true }).selectOption(created.id);
   await expect(page.getByRole('heading', { name: 'No documents yet', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'New document', exact: true }).click();
-  await title(page).fill('Engineering start here'); await body(page).fill('A real first document in the new space.');
+  await title(page).fill('Engineering start here'); await replaceDocumentBody(page, 'A real first document in the new space.');
   await save(page).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved · revision 1' })).toBeVisible();
   await page.reload();
-  await expect(title(page)).toHaveValue('Engineering start here');
+  await expect(readingTitle(page)).toHaveText('Engineering start here');
   await expect(body(page)).toContainText('A real first document in the new space.');
 });
 
 test('space creation failure and keyboard cancellation retain document edits without automatic retry', async ({ page, context }) => {
   await login(page, 'administrator');
   const original = await readDocument(context), count = await demo.database.prisma.space.count();
-  await title(page).fill('Retained after a failed space request'); await body(page).fill('Retained unsaved body.');
+  await title(page).fill('Retained after a failed space request'); await replaceDocumentBody(page, 'Retained unsaved body.');
   let creates = 0;
   await page.route('**/api/v1/spaces', async route => {
     if (route.request().method() !== 'POST') return route.continue();
@@ -2687,7 +2701,7 @@ test('space creation is absent for readers and outsiders and the server rejects 
 test('space creation preserves a stale-save conflict without adopting a newer document ETag', async ({ page, context }) => {
   await login(page, 'administrator');
   const original = await readDocument(context);
-  await title(page).fill('Local conflict title'); await body(page).fill('Complete local conflict body.');
+  await title(page).fill('Local conflict title'); await replaceDocumentBody(page, 'Complete local conflict body.');
   const concurrent = await apiRequest(context, `/api/v1/documents/${seeded.documentId}`, {
     method: 'PATCH', headers: { origin: demo.origin, 'if-match': original.etag },
     data: { title: 'Concurrent server title', content: original.data.revision.content },
@@ -2715,7 +2729,7 @@ test('mobile space creation blocks dismissal and duplicate submission while its 
   await page.setViewportSize({ width: 390, height: 844 });
   await login(page, 'administrator');
   const original = await readDocument(context);
-  await title(page).fill('Mobile local draft'); await body(page).fill('Complete mobile draft.');
+  await title(page).fill('Mobile local draft'); await replaceDocumentBody(page, 'Complete mobile draft.');
   await page.getByRole('button', { name: 'Navigation', exact: true }).click();
   await page.getByRole('button', { name: 'New space', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'New space', exact: true });
@@ -2748,7 +2762,7 @@ test('space access grants, changes and revokes an existing session without savin
   await login(page, 'administrator');
   const original = await readDocument(context);
   const baselineBody = await body(page).innerText();
-  await title(page).fill('Administrator local access-management draft'); await body(page).fill('Complete unsaved access-management body.');
+  await title(page).fill('Administrator local access-management draft'); await replaceDocumentBody(page, 'Complete unsaved access-management body.');
   await page.getByRole('button', { name: 'Space access', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Space access', exact: true });
   await expect(dialog.getByLabel('Existing account email')).toBeFocused();
@@ -2758,13 +2772,13 @@ test('space access grants, changes and revokes an existing session without savin
   const outsiderContext = await browser.newContext();
   try {
     const outsider = await outsiderContext.newPage(); await login(outsider, 'outsider');
-    await expect(title(outsider)).toHaveValue(original.data.revision.title);
-    await expect(title(outsider)).toHaveAttribute('readonly', ''); await expect(save(outsider)).toHaveCount(0);
+    await expect(readingTitle(outsider)).toHaveText(original.data.revision.title);
+    await expect(outsider.getByRole('button', { name: 'Edit', exact: true })).toHaveCount(0); await expect(save(outsider)).toHaveCount(0);
     const row = dialog.locator('li').filter({ hasText: demo.accountEmail('outsider') });
     await row.getByRole('combobox').selectOption('editor'); await row.getByRole('button', { name: 'Apply', exact: true }).click();
     await expect(row.getByRole('combobox')).toHaveValue('editor');
-    await outsider.reload(); await expect(body(outsider)).toBeEditable();
-    await title(outsider).fill('Retained after membership revocation'); await body(outsider).fill('Complete revoked local draft.');
+    await outsider.reload(); await editDocument(outsider); await expect(body(outsider)).toBeEditable();
+    await title(outsider).fill('Retained after membership revocation'); await replaceDocumentBody(outsider, 'Complete revoked local draft.');
     await row.getByRole('button', { name: 'Remove', exact: true }).click();
     await dialog.getByRole('button', { name: 'Keep access', exact: true }).click();
     expect((await apiRequest(outsiderContext, `/api/v1/documents/${seeded.documentId}`)).status()).toBe(200);
@@ -2792,7 +2806,7 @@ test('space access grants, changes and revokes an existing session without savin
 test('space access requires deliberate reload and resubmission after concurrent membership changes', async ({ page, context }) => {
   await login(page, 'administrator');
   const original = await readDocument(context);
-  await title(page).fill('Local draft during access conflict'); await body(page).fill('Complete body during access conflict.');
+  await title(page).fill('Local draft during access conflict'); await replaceDocumentBody(page, 'Complete body during access conflict.');
   await page.getByRole('button', { name: 'Space access', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Space access', exact: true });
   await expect(dialog.getByRole('button', { name: 'Reload access', exact: true })).toHaveCount(0);
@@ -2825,7 +2839,7 @@ test('space access requires deliberate reload and resubmission after concurrent 
 test('space access failures retain requested changes and never provision accounts or retry writes', async ({ page, context }) => {
   await login(page, 'administrator');
   const original = await readDocument(context), users = await demo.database.prisma.user.count();
-  await title(page).fill('Draft retained through access failure'); await body(page).fill('Retained document body.');
+  await title(page).fill('Draft retained through access failure'); await replaceDocumentBody(page, 'Retained document body.');
   await page.getByRole('button', { name: 'Space access', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Space access', exact: true });
   await dialog.getByLabel('Existing account email').fill('not-provisioned@example.test');
@@ -2858,7 +2872,7 @@ test('space access failures retain requested changes and never provision account
 test('space access loss rechecks permissions and retains the entire local draft without unrelated navigation', async ({ page, context }) => {
   await login(page, 'administrator');
   const original = await readDocument(context);
-  await title(page).fill('Full local title after administrator downgrade'); await body(page).fill('Full local body after administrator downgrade.');
+  await title(page).fill('Full local title after administrator downgrade'); await replaceDocumentBody(page, 'Full local body after administrator downgrade.');
   await page.getByRole('button', { name: 'Space access', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Space access', exact: true });
   await dialog.getByLabel('Existing account email').fill(demo.accountEmail('reader'));
@@ -2940,19 +2954,19 @@ test('save shortcut persists complete native edits and a clean shortcut creates 
   page.on('request', request => { if (request.method() === 'PATCH' && new URL(request.url()).pathname === `/api/v1/documents/${seeded.documentId}`) writes++; });
   await expect(save(page)).toHaveAttribute('aria-keyshortcuts', 'Control+s Meta+s');
   await title(page).fill('Saved with the document shortcut');
-  await body(page).fill('Complete native keyboard save.');
+  await replaceDocumentBody(page, 'Complete native keyboard save.');
   await body(page).press('ControlOrMeta+s');
   await expect(page.getByRole('status').filter({ hasText: 'Saved · revision 2' })).toBeVisible();
   expect(writes).toBe(1);
   await body(page).press('ControlOrMeta+s');
   expect(writes).toBe(1); expect((await readDocument(context)).data.currentRevisionNumber).toBe(2);
-  await page.reload(); await expect(title(page)).toHaveValue('Saved with the document shortcut');
+  await page.reload(); await expect(readingTitle(page)).toHaveText('Saved with the document shortcut');
   await expect(body(page)).toHaveText('Complete native keyboard save.');
   await assertNoBrowserPersistence(page);
 });
 
 test('save shortcut cannot duplicate a pending write and failed work requires deliberate retry', async ({ page, context }) => {
-  await login(page); await title(page).fill('Keyboard work retained after failure'); await body(page).fill('Full unsaved body remains local.');
+  await login(page); await title(page).fill('Keyboard work retained after failure'); await replaceDocumentBody(page, 'Full unsaved body remains local.');
   let release!: () => void, writes = 0;
   const gate = new Promise<void>(resolve => { release = resolve; });
   page.on('request', request => { if (request.method() === 'PATCH' && new URL(request.url()).pathname === `/api/v1/documents/${seeded.documentId}`) writes++; });
@@ -2972,7 +2986,7 @@ test('save shortcut cannot duplicate a pending write and failed work requires de
 
 test('save shortcut retains stale work and requires deliberate reconciliation before another write', async ({ page, context }) => {
   await login(page); await expect(save(page)).toBeDisabled(); const original = await readDocument(context);
-  await title(page).fill('Complete local shortcut draft'); await body(page).fill('Complete retained native body.');
+  await title(page).fill('Complete local shortcut draft'); await replaceDocumentBody(page, 'Complete retained native body.');
   const localBody = await body(page).innerText();
   const remote = await apiRequest(context, `/api/v1/documents/${seeded.documentId}`, { method: 'PATCH', headers: { origin: demo.origin, 'if-match': original.etag }, data: { title: 'New remote saved title' } });
   expect(remote.status()).toBe(200);
@@ -3016,7 +3030,7 @@ test('an authorized structural move preserves readable links and forces delibera
   expect(parentResponse.status()).toBe(201);
   const parent: unknown = await parentResponse.json();
   if (!parent || typeof parent !== 'object' || !('id' in parent) || typeof parent.id !== 'string') throw new Error('Missing parent identity');
-  await title(page).fill('Complete local title after structural move'); await body(page).fill('Complete unsaved body after structural move.');
+  await title(page).fill('Complete local title after structural move'); await replaceDocumentBody(page, 'Complete unsaved body after structural move.');
   const moved = await apiRequest(context, `/api/v1/documents/${seeded.documentId}/move`, {
     method: 'POST', headers: { origin: demo.origin, 'if-match': original.etag }, data: { parentDocumentId: parent.id },
   });
@@ -3029,16 +3043,16 @@ test('an authorized structural move preserves readable links and forces delibera
   await page.getByRole('button', { name: 'Use my changes', exact: true }).click(); await save(page).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved · revision 2' })).toBeVisible();
   const saved = await readDocument(context); expect(saved.data.parentDocumentId).toBe(parent.id); expect(saved.data.currentRevisionNumber).toBe(2);
-  await page.reload(); await expect(title(page)).toHaveValue(saved.data.revision.title);
+  await page.reload(); await expect(readingTitle(page)).toHaveText(saved.data.revision.title);
   await expect(body(page)).toHaveText('Complete unsaved body after structural move.');
   await expect(page).toHaveURL(`${demo.origin}/spaces/${original.data.spaceSlug}/documents/${original.data.slug}`);
   const reader = await browser.newContext(), outsider = await browser.newContext();
   try {
     const readOnly = await reader.newPage(); await login(readOnly, 'reader', page.url());
-    await expect(title(readOnly)).toHaveValue(saved.data.revision.title); await expect(body(readOnly)).toHaveAttribute('aria-readonly', 'true'); await expect(save(readOnly)).toHaveCount(0);
+    await expect(readingTitle(readOnly)).toHaveText(saved.data.revision.title); await expect(body(readOnly)).toHaveAttribute('aria-readonly', 'true'); await expect(save(readOnly)).toHaveCount(0);
     const denied = await outsider.newPage(); await login(denied, 'outsider', page.url());
     await expect(denied.getByText(/No accessible spaces|Access to this document is unavailable/).first()).toBeVisible();
-    await expect(denied.getByRole('navigation', { name: 'Documents', exact: true })).toHaveCount(0); await expect(title(denied)).toHaveCount(0); await expect(body(denied)).toHaveCount(0);
+    await expect(denied.getByRole('navigation', { name: 'Documents', exact: true })).toHaveCount(0); await expect(title(denied)).toHaveCount(0); await expect(readingTitle(denied)).toHaveCount(0); await expect(body(denied)).toHaveCount(0);
     const response = await apiRequest(outsider, `/api/v1/documents/${seeded.documentId}`); expect(response.status()).toBe(404);
     expect(await response.text()).not.toContain('parentDocumentId'); expect(await response.text()).not.toContain('Organization API parent');
   } finally { await reader.close(); await outsider.close(); }
@@ -3058,7 +3072,7 @@ test('organization creates a native child with guarded drafts, breadcrumbs and a
   await confirmation.getByRole('button', { name: 'Discard changes', exact: true }).click();
   await expect(page.getByLabel('New document location')).toHaveValue(original.data.id);
   await title(page).fill('Nested onboarding guide');
-  await body(page).fill('Native child body survives its first explicit save.');
+  await replaceDocumentBody(page, 'Native child body survives its first explicit save.');
   await save(page).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved · revision 1' })).toBeVisible();
   const current = page.url();
@@ -3082,7 +3096,7 @@ test('organization moves use the saved ETag without creating history or changing
   await login(page);
   const original = await readDocument(context), parent = await navigationDocument(context);
   await page.reload();
-  await expect(title(page)).toHaveValue(original.data.revision.title);
+  await expect(readingTitle(page)).toHaveText(original.data.revision.title);
   const location = page.url();
   await page.getByLabel('Document actions').focus();
   await page.keyboard.press('Enter');
@@ -3117,7 +3131,7 @@ test('organization moves use the saved ETag without creating history or changing
 test('organization stale moves retain the complete local snapshot and require deliberate reconciliation', async ({ page, context }) => {
   await login(page);
   const original = await readDocument(context), parent = await navigationDocument(context);
-  await page.reload();
+  await page.reload(); await editDocument(page);
   await expect(title(page)).toHaveValue(original.data.revision.title);
   const localBody = await body(page).innerText();
   const changed = await apiRequest(context, `/api/v1/documents/${original.data.id}`, {
@@ -3140,7 +3154,7 @@ test('organization stale moves retain the complete local snapshot and require de
   await expect(save(page)).toBeDisabled();
   expect((await readDocument(context)).data).toEqual(latest.data);
   await page.getByRole('button', { name: 'Use server version', exact: true }).click();
-  await expect(title(page)).toHaveValue('Remote saved heading');
+  await expect(readingTitle(page)).toHaveText('Remote saved heading');
   await expect(page.getByRole('heading', { name: 'Save conflict', exact: true })).toHaveCount(0);
   expect((await readDocument(context)).data).toEqual(latest.data);
 });
@@ -3148,7 +3162,7 @@ test('organization stale moves retain the complete local snapshot and require de
 test('organization an uncertain move never retries and requires comparison before another mutation', async ({ page, context }) => {
   await login(page);
   const original = await readDocument(context), parent = await navigationDocument(context);
-  await page.reload();
+  await page.reload(); await editDocument(page);
   await expect(title(page)).toHaveValue(original.data.revision.title);
   let attempts = 0;
   await page.route(`**/api/v1/documents/${original.data.id}/move`, async route => {
@@ -3186,7 +3200,7 @@ test('organization parent archive is explicit and readers and outsiders cannot a
   expect(created.status()).toBe(201);
   const child = await created.json() as Document;
   await page.reload();
-  await expect(title(page)).toHaveValue(parent.data.revision.title);
+  await expect(readingTitle(page)).toHaveText(parent.data.revision.title);
   await page.getByLabel('Document actions').click();
   const archive = page.waitForResponse(response => new URL(response.url()).pathname.endsWith('/archive'));
   await page.getByRole('button', { name: 'Archive', exact: true }).click();
@@ -3198,7 +3212,7 @@ test('organization parent archive is explicit and readers and outsiders cannot a
   try {
     const reader = await readerContext.newPage();
     await login(reader, 'reader', `${demo.origin}/spaces/${child.spaceSlug}/documents/${child.slug}`);
-    await expect(title(reader)).toHaveValue(child.revision.title);
+    await expect(readingTitle(reader)).toHaveText(child.revision.title);
     await expect(reader.getByRole('navigation', { name: 'Document path' }).getByRole('link', { name: parent.data.revision.title, exact: true })).toBeVisible();
     await reader.getByLabel('Document actions').click();
     await expect(reader.getByRole('button', { name: 'Move document', exact: true })).toHaveCount(0);
@@ -3246,13 +3260,13 @@ test('organization assembles all authorized cursor pages before locating a child
   expect(first.items.some(item => item.id === parent.id)).toBe(false);
   expect(first.nextCursor).toBeTruthy();
   await page.goto(`${demo.origin}/spaces/${child.spaceSlug}/documents/${child.slug}`);
-  await expect(title(page)).toHaveValue(child.revision.title);
+  await expect(readingTitle(page)).toHaveText(child.revision.title);
   await expect(page.getByRole('navigation', { name: 'Document path' }).getByRole('link', { name: parent.revision.title, exact: true })).toBeVisible();
   const navigation = page.getByRole('navigation', { name: 'Documents', exact: true });
   await expect(navigation.getByRole('button', { name: `Child documents of ${parent.revision.title}`, exact: true })).toHaveAttribute('aria-expanded', 'true');
   await expect(navigation.getByRole('link', { name: child.revision.title, exact: true })).toBeVisible();
   expect((await readDocument(context, child.id)).data.revision).toEqual(before.data.revision);
-  await title(page).fill('Complete pagination draft remains local');
+  await editDocument(page); await title(page).fill('Complete pagination draft remains local');
   await page.getByLabel('Show archived', { exact: true }).check();
   await expect(title(page)).toHaveValue('Complete pagination draft remains local');
   await expect(navigation.getByRole('link', { name: parent.revision.title, exact: true })).toBeVisible();
@@ -3274,7 +3288,7 @@ test('organization a 32-level branch stays usable on mobile and cannot offer an 
   const before = await readDocument(context, leaf.id);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`${demo.origin}/spaces/${leaf.spaceSlug}/documents/${leaf.slug}`);
-  await expect(title(page)).toHaveValue(leaf.revision.title);
+  await expect(readingTitle(page)).toHaveText(leaf.revision.title);
   const path = page.getByRole('navigation', { name: 'Document path', exact: true });
   await expect(path.locator('a')).toHaveCount(32);
   await expect(path.getByRole('link')).toHaveCount(3);
@@ -3314,7 +3328,7 @@ test('organization a 32-level branch stays usable on mobile and cannot offer an 
   await page.getByRole('button', { name: 'New document', exact: true }).click();
   await expect(page.getByLabel('New document location')).toHaveValue('');
   await title(page).fill('New root outside the deep branch');
-  await body(page).fill('A new root remains available after the nesting limit is reached.');
+  await replaceDocumentBody(page, 'A new root remains available after the nesting limit is reached.');
   await save(page).click();
   await expect(page.locator('.documentbar').getByRole('status')).toHaveText('Saved · revision 1');
   expect((await readDocument(context, leaf.id)).data).toEqual(before.data);
@@ -3345,10 +3359,10 @@ test('organization opening a space selects its first active alphabetical root in
   const documents = await listed.json() as operations['listDocuments']['responses'][200]['content']['application/json'];
   expect(documents.items[0]?.title).not.toBe('A root');
   await page.goto(`${demo.origin}/spaces/${first.spaceSlug}`);
-  await expect(title(page)).toHaveValue('A root');
+  await expect(readingTitle(page)).toHaveText('A root');
   await expect(page).toHaveURL(`${demo.origin}/spaces/${first.spaceSlug}/documents/${first.slug}`);
   expect((await readDocument(context, first.id)).data).toEqual(first);
   await page.reload();
-  await expect(title(page)).toHaveValue('A root');
+  await expect(readingTitle(page)).toHaveText('A root');
   expect((await readDocument(context, first.id)).data).toEqual(first);
 });

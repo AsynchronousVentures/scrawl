@@ -81,6 +81,7 @@ export function useFavorites(ownerId: string | null, documentId: string | null, 
   const visibleFeedback = feedback.owner === ownerId && feedback.id === documentId ? feedback : null;
   return { items, cursor: list.owner === ownerId ? list.cursor : null, pending, value,
     listLoading: Boolean(ownerId && (listLoading || list.owner !== ownerId && listError.owner !== ownerId)),
+    loaded: list.owner === ownerId,
     listError: listError.owner === ownerId ? listError.message : '', stateLoading,
     stateError: visibleFeedback?.error ?? '', notice: visibleFeedback?.notice ?? '',
     refresh() { void load(); if (documentId) void read(); }, more() { if (list.cursor) void load(list.cursor); },
@@ -92,13 +93,13 @@ export function FavoritesNavigation({ favorites, currentId, blocked }: {
 }) {
   return <nav className="favorites-nav" aria-label="Favorites">
     <div className="listhead"><span>Favorites</span></div>
-    {favorites.listLoading && <p role="status" className="muted">Loading favorites…</p>}
+    {favorites.listLoading && !favorites.loaded && <p role="status" className="muted">Loading favorites…</p>}
     <ul>{favorites.items.map(item => <li key={item.id}><Link to={`/spaces/${item.spaceSlug}/documents/${item.slug}`}
       className={item.id === currentId ? 'active' : ''} aria-current={item.id === currentId ? 'page' : undefined}
       aria-disabled={blocked || undefined} onClick={event => { if (blocked) event.preventDefault(); }}>
       <span>{item.title}</span>{' '}<small>{item.spaceName}</small>
     </Link></li>)}</ul>
-    {!favorites.listLoading && !favorites.listError && favorites.items.length === 0 && <p className="muted">No favorites yet.</p>}
+    {favorites.loaded && !favorites.listError && favorites.items.length === 0 && <p className="muted">No favorites yet.</p>}
     {favorites.listError && <p role="alert">{favorites.listError}</p>}
     {favorites.listError && <button disabled={blocked || favorites.listLoading} onClick={favorites.refresh}>Refresh favorites</button>}
     {favorites.cursor && <button disabled={blocked || favorites.listLoading} onClick={favorites.more}>More favorites</button>}

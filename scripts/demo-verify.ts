@@ -30,6 +30,10 @@ async function main() {
       stage = `${role} login page load`;
       const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
       const page = await context.newPage();
+      let documentWrites = 0;
+      page.on('request', request => {
+        if (request.method() !== 'GET' && /\/api\/v1\/(?:documents\/|spaces\/[^/]+\/documents)/.test(new URL(request.url()).pathname)) documentWrites++;
+      });
       page.on('pageerror', () => failures.push('Browser execution failed'));
       try {
         await page.goto(location);
@@ -43,6 +47,7 @@ async function main() {
         if (role === 'outsider') {
           stage = 'outsider isolation';
           await expect(page.getByRole('textbox', { name: 'Document title', exact: true })).toHaveCount(0);
+          await expect(page.locator('h1#document-title')).toHaveCount(0);
           await expect(page.getByRole('textbox', { name: 'Document body', exact: true })).toHaveCount(0);
           assert(!await page.getByText('Scrawl field guide', { exact: true }).count());
           const denied: APIResponse = await context.request.get(`${origin}/api/v1/documents/${manifest.startDocumentId}`);
@@ -50,9 +55,9 @@ async function main() {
           await expect(page.getByRole('button', { name: 'New space', exact: true })).toHaveCount(0);
         } else {
           stage = `${role} native saved content and private image`;
-          const title = page.getByRole('textbox', { name: 'Document title', exact: true });
+          const title = page.locator('h1#document-title');
           const body = page.getByRole('textbox', { name: 'Document body', exact: true });
-          await expect(title).toHaveValue('Start here');
+          await expect(title).toHaveText('Start here');
           stage = `${role} readable link and reload`;
           const routeResponse: APIResponse = await context.request.get(`${origin}/api/v1/documents/${manifest.startDocumentId}`);
           assert.equal(routeResponse.status(), 200);
@@ -61,7 +66,7 @@ async function main() {
             && 'slug' in route && typeof route.slug === 'string');
           await expect(page).toHaveURL(`${origin}/spaces/${route.spaceSlug}/documents/${route.slug}`);
           await page.reload();
-          await expect(title).toHaveValue('Start here');
+          await expect(title).toHaveText('Start here');
           await expect(body).toContainText('A saved document has one current revision.');
           const image = body.locator('img').first();
           await expect(image).toBeVisible();
@@ -71,18 +76,12 @@ async function main() {
           assert.match(new URL(page.url()).hash, /^#section-/);
           const sectionUrl = page.url();
           await page.reload();
-          await expect(title).toHaveValue('Start here');
+          await expect(title).toHaveText('Start here');
           await expect(body.getByRole('heading', { name: 'What Save commits', exact: true })).toBeInViewport({ ratio: 1 });
-          if (role !== 'reader') {
-            await expect.poll(() => body.getByRole('heading', { name: 'What Save commits', exact: true }).evaluate(element => {
-              const selected = document.getSelection()?.anchorNode;
-              const selectedElement = selected instanceof Element ? selected : selected?.parentElement;
-              return selectedElement?.closest('[data-id]') === element.closest('[data-id]');
-            })).toBe(true);
-          }
+          await expect(body).not.toBeEditable();
+          await expect(body.getByRole('heading', { name: 'What Save commits', exact: true })).toBeFocused();
           await expect(page.getByRole('navigation', { name: 'On this page', exact: true }).getByRole('link', { name: 'What Save commits', exact: true })).toHaveAttribute('aria-current', 'location');
           assert.equal(page.url(), sectionUrl);
-          if (role === 'reader') await expect(body.getByRole('heading', { name: 'What Save commits', exact: true })).toBeFocused();
           if (role === 'administrator') await page.screenshot({ path: `${evidenceDirectory}/section-link.png`, mask: [page.locator('.account')], maskColor: '#1b1e20' });
           await page.evaluate(() => window.scrollTo(0, 0));
           if (role === 'administrator') {
@@ -104,7 +103,7 @@ async function main() {
           }
           if (role === 'reader') {
             await expect(page.getByRole('button', { name: 'New space', exact: true })).toHaveCount(0);
-            await expect(title).toHaveAttribute('readonly', '');
+            await expect(page.getByRole('button', { name: 'Edit', exact: true })).toHaveCount(0);
             await expect(body).toHaveAttribute('aria-readonly', 'true');
             await expect(page.getByRole('button', { name: 'Save', exact: true })).toHaveCount(0);
           } else {
@@ -117,7 +116,7 @@ async function main() {
             await page.screenshot({ path: `${evidenceDirectory}/new-space.png`, mask: [page.locator('.account')], maskColor: '#1b1e20' });
             await page.keyboard.press('Escape');
             await expect(dialog).toBeHidden(); await expect(trigger).toBeFocused();
-            await expect(title).toHaveValue('Start here');
+            await expect(title).toHaveText('Start here');
             stage = 'administrator current space access and exact account lookup';
             await page.getByRole('button', { name: 'Space access', exact: true }).click();
             const accessDialog = page.getByRole('dialog', { name: 'Space access', exact: true });
@@ -131,11 +130,30 @@ async function main() {
             assert.deepEqual(Object.keys(profile).sort(), ['email', 'id', 'name', 'role']);
             await accessDialog.getByRole('button', { name: 'Done', exact: true }).click();
             await expect(page.getByRole('button', { name: 'Space access', exact: true })).toBeFocused();
-            await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
+            await expect(page.getByRole('button', { name: 'Save', exact: true })).toHaveCount(0);
             await page.screenshot({ path: `${evidenceDirectory}/workspace.png`, mask: [page.locator('.account')], maskColor: '#1b1e20' });
             await image.scrollIntoViewIfNeeded();
             await page.screenshot({ path: `${evidenceDirectory}/private-image.png`, mask: [page.locator('.account')], maskColor: '#1b1e20' });
             await page.evaluate(() => window.scrollTo(0, 0));
+            stage = 'administrator notification without document displacement';
+            await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin });
+            const titleBox = await title.boundingBox();
+            await page.getByLabel('Document actions', { exact: true }).click();
+            await page.getByRole('button', { name: 'Copy private link', exact: true }).click();
+            const notification = page.getByRole('dialog', { name: 'Notification', exact: true });
+            await expect(notification).toContainText('Private link copied.');
+            assert.deepEqual(await title.boundingBox(), titleBox);
+            await page.screenshot({ path: `${evidenceDirectory}/notification.png`, mask: [page.locator('.account')], maskColor: '#1b1e20' });
+            await notification.getByRole('button', { name: 'Dismiss notification' }).click();
+            stage = 'administrator deliberate editing and return to reading without writes';
+            await page.getByRole('button', { name: 'Edit', exact: true }).click();
+            await expect(body).toBeEditable();
+            await expect(page.getByRole('textbox', { name: 'Document title', exact: true })).toHaveValue('Start here');
+            await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
+            await page.screenshot({ path: `${evidenceDirectory}/editing.png`, mask: [page.locator('.account')], maskColor: '#1b1e20' });
+            await page.getByRole('button', { name: 'Done editing', exact: true }).click();
+            await expect(title).toHaveText('Start here');
+            await expect(body).not.toBeEditable();
           }
           stage = `${role} indexed search`;
           await page.getByRole('button', { name: 'Search documents', exact: true }).click();
@@ -210,18 +228,18 @@ async function main() {
             stage = 'saved native tables, checklists and code';
             const startUrl = page.url();
             await page.getByRole('link', { name: 'Service runbook', exact: true }).click();
-            await expect(title).toHaveValue('Service runbook');
+            await expect(title).toHaveText('Service runbook');
             await expect(body.locator('code').first()).toContainText('curl --fail');
             await expect(body.locator('table').first()).toBeVisible();
             await body.locator('table').first().scrollIntoViewIfNeeded();
             await page.screenshot({ path: `${evidenceDirectory}/rich-document.png`, mask: [page.locator('.account')], maskColor: '#1b1e20' });
             await page.goBack();
             await expect(page).toHaveURL(startUrl);
-            await expect(title).toHaveValue('Start here');
+            await expect(title).toHaveText('Start here');
             await page.goForward();
-            await expect(title).toHaveValue('Service runbook');
+            await expect(title).toHaveText('Service runbook');
             await page.getByRole('link', { name: 'Start here', exact: true }).click();
-            await expect(title).toHaveValue('Start here');
+            await expect(title).toHaveText('Start here');
             stage = 'usable narrow-screen navigation';
             await page.setViewportSize({ width: 390, height: 844 });
             await expect(page.getByRole('button', { name: 'Navigation', exact: true })).toBeVisible();
@@ -229,6 +247,7 @@ async function main() {
             await page.screenshot({ path: `${evidenceDirectory}/mobile.png`, mask: [page.locator('.account')], maskColor: '#1b1e20' });
           }
         }
+        assert.equal(documentWrites, 0, 'Preview verification must not write documents or revisions');
         stage = `${role} logout`;
         await page.getByRole('button', { name: 'Log out', exact: true }).click();
         await expect(page.getByRole('button', { name: 'Log in', exact: true })).toBeVisible();

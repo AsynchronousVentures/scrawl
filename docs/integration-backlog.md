@@ -1,6 +1,6 @@
 # Integration demo work
 
-Local `bd147c7` resolves native document-end shortcuts through the supplied BlockNote/ProseMirror APIs. Standard checks pass 101/101 and four focused workflows pass. Complete regression finishes 116/117, including all 26 experimental live cases; its sole test-message expectation is corrected and passes separately, with no claim of a green repeated full suite. It is unpushed, with results in [validation](../VALIDATION.md). Retained collaboration remains disabled until its activation audit is complete. Actions minutes are exhausted, so development and checks remain local without CI-triggering pushes.
+Development has resumed from holding checkpoint `597fac7`. Reading mode is tracked in issue #12; current results and unresolved checks are recorded in [validation](../VALIDATION.md) and [status](status.md). The existing draft PR remains the integration review point. CI stays manual-only, and retained collaboration remains disabled pending its activation audit.
 
 Work is on `integration/blocknote-demo`. GitHub's `main` contains the completed P4 checkpoint `445bae2`; integration work is not merged or released. The maintainer authorized this session to continue across packet boundaries, push the integration branch and maintain a draft PR. A later explicit request authorizes public Tailscale Funnel access for the synthetic Scrawl preview and stale-preview cleanup. No merge or production deployment is authorized.
 
@@ -17,6 +17,8 @@ Navigation uses maintained [React Router navigation blocking](https://reactroute
 | Priority | Issue | State | Depends on |
 | --- | --- | --- | --- |
 | P0 | [Native BlockNote and finished private workflow](https://github.com/AsynchronousVentures/scrawl/issues/1) | Implemented on branch; current local checks pass 101/101, PostgreSQL 18 166/166 and browsers 116/116; hosted 13840c4 runs finish 113/116, including two corrected fixture locator failures. Native selection failures remain unexplained, so retained collaboration stays disabled | Existing P0-P4 |
+| P1 | [Reading mode until explicit Edit](https://github.com/AsynchronousVentures/scrawl/issues/12) | Implemented on branch and running preview; standard 101/101 and focused browser 7/7 pass. Complete regression in progress | Native private workflow (#1); isolated live mode (#5) |
+| P1 | [Stable navigation and confirmation toasts](https://github.com/AsynchronousVentures/scrawl/issues/13) | Implemented locally; focused verification in progress. No backend or migration change | #12, private workflow |
 | P1 | [Private attachments and PDF/DOCX exports](https://github.com/AsynchronousVentures/scrawl/issues/2) | Implemented and verified on branch | Native content |
 | P1 | [PostgreSQL 18 and indexed authorized search](https://github.com/AsynchronousVentures/scrawl/issues/3) | Implemented and verified on branch; retained-data copy rehearsal passed | Saved native content/text |
 | P2 | [Selected-revision publishing](https://github.com/AsynchronousVentures/scrawl/issues/4) | Implemented and verified on branch; default off | Native content and attachment grants |

@@ -9,6 +9,7 @@ import { withCollaboration } from '@blocknote/core/yjs';
 import { PrivateComments, type CommentState } from './PrivateComments';
 import type { LiveSession } from './live';
 import { DocumentEnd } from './document-end';
+import { SelectAll } from './select-all';
 import { contentSchema, isSafeLinkUrl, validateContent, type ContentEnvelope, type NativeBlock, type NativeBlockSchema } from '@scrawl/content';
 
 type Heading = { id: string; text: string; level: number; depth: number };
@@ -33,11 +34,12 @@ function documentHeadings(blocks: NativeBlock[], depth = 0): Heading[] {
   });
 }
 
-export function Editor({ initialContent, editable, onChange, onValidationChange, uploadFile, uploadAvailable = false, resolveFileUrl, header, label = 'Document body', live, onCommentStateChange, sectionLinks = false, onSectionNavigate }: {
+export function Editor({ initialContent, editable, disabled = false, onChange, onValidationChange, uploadFile, uploadAvailable = false, resolveFileUrl, header, label = 'Document body', live, onCommentStateChange, sectionLinks = false, onSectionNavigate }: {
   initialContent: ContentEnvelope;
   sectionLinks?: boolean;
   onSectionNavigate?: (hash: string) => void;
   editable: boolean;
+  disabled?: boolean;
   onChange: (content: ContentEnvelope) => void;
   onValidationChange?: (error: string | null) => void;
   uploadFile?: (file: File) => Promise<string>;
@@ -59,8 +61,8 @@ export function Editor({ initialContent, editable, onChange, onValidationChange,
   // Saving changes the comparison baseline, not this editor or its undo stack.
   // The parent remounts for an intentional navigation, restore, or discard.
   const [initial] = useState(() => validateContent(initialContent).content);
-  const [initialEditable] = useState(editable);
-  const [extensions] = useState(() => [DocumentEnd, ...(live?.extensions() ?? [])]);
+  const active = editable && !disabled;
+  const [extensions] = useState(() => [DocumentEnd, SelectAll, ...(live?.extensions() ?? [])]);
   const options = {
     schema: contentSchema,
     extensions,
@@ -142,17 +144,18 @@ export function Editor({ initialContent, editable, onChange, onValidationChange,
     follow();
     window.addEventListener('hashchange', follow); window.addEventListener('popstate', follow);
     return () => { window.removeEventListener('hashchange', follow); window.removeEventListener('popstate', follow); };
-  }, [headings, editor, sectionLinks]);
+  }, [headings, editor, sectionLinks, editable]);
 
   useLayoutEffect(() => {
-    // BlockNote 0.55 remounts the view when its editable prop changes. Its link
-    // UI can then receive an update before the new view exists. The public
-    // setter locks the mounted editor without interrupting UI or undo history.
-    editor.isEditable = editable;
+    // Mode/authority changes use the native view prop so block controls such
+    // as checkboxes remount with current authority. A temporary request lock
+    // uses the setter, avoiding a view remount during native UI callbacks.
+    // Both keep the same editor instance and its undo history.
+    editor.isEditable = active;
     const contenteditable = container.current?.querySelector<HTMLElement>('[role="textbox"]');
-    contenteditable?.setAttribute('aria-readonly', String(!editable));
+    contenteditable?.setAttribute('aria-readonly', String(!active));
     if (contenteditable) contenteditable.tabIndex = 0;
-  }, [editable, editor]);
+  }, [active, editable, editor]);
   useEffect(() => {
     const narrow = matchMedia('(max-width: 980px)');
     const resize = () => setOutlineOpen(!narrow.matches);
@@ -186,10 +189,12 @@ export function Editor({ initialContent, editable, onChange, onValidationChange,
     <div className="editor-content">
       {header}
       <p id={`${identifier}-error`} className="editor-error" role="alert" hidden={!error}>{error}</p>
-      <div ref={container} className="editor-mount">
+      <div ref={container} className="editor-mount" inert={disabled}>
         <UploadAvailability.Provider value={uploadAvailable}>
           <BlockNoteView<NativeBlockSchema, DefaultInlineContentSchema, DefaultStyleSchema>
-          editor={editor} theme="dark" editable={initialEditable} filePanel={false} {...(live ? { comments: false } : {})} onChange={(current, { getChanges }) => {
+          editor={editor} theme="dark" editable={editable} filePanel={false}
+          formattingToolbar={active} slashMenu={active} sideMenu={active} tableHandles={active} emojiPicker={active}
+          {...(live ? { comments: false } : {})} onChange={(current, { getChanges }) => {
           // The library also emits updates when editability changes during Save.
           // Those are not user edits and must not clear failure/access notices.
           if (getChanges().length === 0) return;
@@ -207,8 +212,8 @@ export function Editor({ initialContent, editable, onChange, onValidationChange,
           setError(message);
           callbacks.current.onValidationChange?.(message);
         }}>
-          {editable && <FilePanelController filePanel={DocumentFilePanel} />}
-          {live && <PrivateComments writable={editable} reactionStatus={live.snapshot().reactionStatus} {...(onCommentStateChange ? { onStateChange: onCommentStateChange } : {})} />}
+          {active && <FilePanelController filePanel={DocumentFilePanel} />}
+          {live && <PrivateComments writable={active} reactionStatus={live.snapshot().reactionStatus} {...(onCommentStateChange ? { onStateChange: onCommentStateChange } : {})} />}
         </BlockNoteView>
         </UploadAvailability.Provider>
       </div>

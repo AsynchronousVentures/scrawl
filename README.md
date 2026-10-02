@@ -25,6 +25,8 @@ P2 established document create/read/update, immutable revision history/restore, 
 
 P3 adds a repeatable real HTTP Demo A runner, explicit disposable fixture setup/reset, and authorized native single-document JSON export. Follow [the walkthrough](docs/demo-walkthrough.md#run-demo-a) to run it and inspect a local export.
 
+Saved documents open in reading mode. Choose Edit to change them; Save retains native undo and Done editing returns to reading with unsaved-work protection. New documents start editable.
+
 The React/Vite interface uses BlockNote's official shadcn editor in the approved charcoal/sage layout, with explicit saves, confirmed local draft discard, conflict comparison, revision history, lifecycle actions and native export. The integration branch adds private document-owned attachments, OSS PDF/DOCX exports, and real PostgreSQL search. Search applies current access before ranking or returning titles/excerpts. The disconnected prototype remains preserved, including its fixture search.
 
 Selected-revision publishing is implemented in the API and web application and defaults off. Administrator approval changes the public grant under the document ETag without adding a revision; private edits never advance it. Public reads include only the approved title/content/time and approved files. Archive invalidates prior approval even after unarchive. See [the integration backlog](docs/integration-backlog.md) for actual review state.

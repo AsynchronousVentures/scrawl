@@ -3,6 +3,7 @@
 
 import { test, expect } from '@playwright/test';
 import { createBrowserDemo, type BrowserDemo } from './fixture.js';
+import { readingTitle } from './editor-mode.js';
 
 let demo: BrowserDemo;
 // Account provisioning alone leaves this explicitly disposable database empty.
@@ -54,7 +55,8 @@ test('an administrator creates the first space and document in a genuinely empty
   await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved · revision 1' })).toBeVisible();
   await page.reload();
-  await expect(page.getByRole('textbox', { name: 'Document title', exact: true })).toHaveValue('Start here');
+  await expect(readingTitle(page)).toHaveText('Start here');
+  await expect(page.getByRole('textbox', { name: 'Document body', exact: true })).not.toBeEditable();
   await expect(page.getByRole('textbox', { name: 'Document body', exact: true })).toContainText('The first real saved document.');
   expect(await demo.database.prisma.documentRevision.count()).toBe(1);
 });

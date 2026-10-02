@@ -179,3 +179,7 @@
   .documentbar .doc-menu { position: static; }
   .documentbar .doc-menu .menu-items { top: 100%; left: 0; right: 0; min-width: 0; max-height: 60dvh; overflow: auto; }
 }
+
+/* Reading and editing share the document's typography and native renderer. */
+h1.title { overflow-wrap: anywhere; }
+.edit-document { display: inline-flex; align-items: center; gap: 7px; }

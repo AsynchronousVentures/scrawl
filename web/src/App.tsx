@@ -3,8 +3,10 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
-import { Search } from 'lucide-react';
-import { Link, useBlocker, useLocation, useNavigate } from 'react-router';
+import { Toast } from '@base-ui/react/toast';
+import { Notifications } from './Notifications';
+import { Pencil, Search } from 'lucide-react';
+import { Link, useBlocker, useLocation, useNavigate, useNavigationType } from 'react-router';
 import { extractPlainText, validateContent } from '@scrawl/content';
 import { Editor } from './Editor';
 import { SearchDialog } from './SearchDialog';
@@ -56,6 +58,7 @@ function Login({ onLogin }: { onLogin: (user: User) => Promise<void> }) {
 export function App() {
   const routeLocation = useLocation();
   const navigate = useNavigate();
+  const navigationType = useNavigationType();
   const handledHref = useRef(location.pathname + location.search);
   const canonicalTarget = useRef<string | null>(null);
   const [user, setUser] = useState<User | null>();
@@ -67,7 +70,6 @@ export function App() {
   const [spaceName, setSpaceName] = useState('');
   const [creatingSpace, setCreatingSpace] = useState(false);
   const [spaceCreateError, setSpaceCreateError] = useState('');
-  const [spaceNotice, setSpaceNotice] = useState('');
   const [spacesCursor, setSpacesCursor] = useState<string | null>(null);
   const [space, setSpace] = useState<Space | null>(null);
   const [documents, setDocuments] = useState<DocumentSummary[]>([]);
@@ -85,12 +87,13 @@ export function App() {
   const [loadingDocument, setLoadingDocument] = useState(false);
   const [base, setBase] = useState<LoadedDocument | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
+  const [editing, setEditing] = useState(false);
   const [editorKey, setEditorKey] = useState(0);
   const [contentError, setContentError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [busyLabel, setBusyLabel] = useState('Saving…');
   const [saveError, setSaveError] = useState('');
-  const [notice, setNotice] = useState('');
+  const [notifications] = useState(() => Toast.createToastManager());
   const [accessIssue, setAccessIssue] = useState<'session' | 'access' | null>(null);
   const [conflict, setConflict] = useState<{ latest: LoadedDocument | null; error: string; loading: boolean } | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -104,7 +107,6 @@ export function App() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [uploading, setUploading] = useState(0);
   const [uploadError, setUploadError] = useState('');
-  const [uploadMessage, setUploadMessage] = useState('');
   const [publishing, setPublishing] = useState<PublishingAvailability | null>(null);
   const [publication, setPublication] = useState<PublicationStatus | null>(null);
   const [publicationError, setPublicationError] = useState('');
@@ -125,14 +127,16 @@ export function App() {
   const generation = useRef(0);
   const historyGeneration = useRef(0);
   const listGeneration = useRef(0);
+  const indexedSpace = useRef<string | null>(null);
   const titleInput = useRef<HTMLInputElement>(null);
+  const titleHeading = useRef<HTMLHeadingElement>(null);
   const saveTrigger = useRef<HTMLButtonElement>(null);
   const spaceTrigger = useRef<HTMLButtonElement>(null);
   const accessTrigger = useRef<HTMLButtonElement>(null);
   const owner = useRef<string | null>(null);
   const draftSpaceId = useRef<string | null>(null);
   const newDraftBaseline = useRef<Draft | null>(null);
-  const requestedDocument = useRef<DocumentTarget | null>(null);
+  const requestedDocument = useRef<{ target: DocumentTarget; spaceId?: string } | null>(null);
   const dirty = Boolean(draft && (!base || draft.title !== base.document.revision.title
     || JSON.stringify(draft.content) !== JSON.stringify(base.document.revision.content)));
   const discardBaseline = base ? draftFrom(base) : newDraftBaseline.current;
@@ -147,13 +151,14 @@ export function App() {
   const mayEdit = Boolean(user && !accessIssue && collaborationKnown && !liveChecking && !liveCheckError && space?.access === 'editor' && !base?.document.archivedAt
     && (!base || base.document.editingMode === 'solo' || collaborationEnabled && liveState?.initialized)
     && (!live || liveState?.phase === 'connected' && liveState.metadata.canWrite));
+  const editable = editing && mayEdit;
   const blocked = busy || accessBusy || creatingSpace || uploading > 0 || commentState.pending || favorites.pending;
   const parentId = base?.document.parentDocumentId ?? null;
   const atNestingLimit = useMemo(() => documentAncestors(parentId, new Map(documents.map(item => [item.id, item]))).length >= 31, [parentId, documents]);
   const blockedRef = useRef(blocked); blockedRef.current = blocked;
   const mayPublish = Boolean(publishing?.mayPublish && user && !accessIssue && base && !base.document.archivedAt && !conflict);
-  const uploadContext = useRef({ id: base?.document.id ?? null, editable: mayEdit });
-  uploadContext.current = { id: base?.document.id ?? null, editable: mayEdit };
+  const uploadContext = useRef({ id: base?.document.id ?? null, editable });
+  uploadContext.current = { id: base?.document.id ?? null, editable };
   const navigationBlocker = useBlocker(({ currentLocation, nextLocation, historyAction }) => {
     const next = nextLocation.pathname + nextLocation.search;
     // Canonicalizing an authorized response is not navigation away from a draft.
@@ -164,6 +169,18 @@ export function App() {
     }
     return currentLocation.pathname + currentLocation.search !== next && (dirtyRef.current || blocked);
   });
+
+  function notify(message: string, channel = 'document') {
+    if (message) notifications.add({ id: channel, description: message });
+    else notifications.close(channel);
+  }
+  function notifySpace(message: string) { notify(message, 'space'); }
+  function notifyUpload(message: string) { notify(message, 'upload'); }
+  useEffect(() => { notifications.close(); }, [user?.id, accessIssue, notifications]);
+  useEffect(() => {
+    if (favorites.notice && !accessIssue) notifications.add({ id: 'favorite', description: favorites.notice });
+    else notifications.close('favorite');
+  }, [favorites.notice, accessIssue, notifications]);
 
   function rememberSelection(selectedSpace: string | null, selectedDocument: string | null, replace = true, preserveSection = false) {
     const url = new URL(location.href);
@@ -179,6 +196,7 @@ export function App() {
     void navigate(href, { replace, flushSync: true });
   }
   function resetDocument() {
+    setEditing(false);
     setDuplicateRevision(null);
     setAccessOpen(false); setMoveOpen(false); setMoveNeedsCompare(false); setMoveError(''); setDraftParentId(null);
     setLiveCheckError(false);
@@ -188,14 +206,15 @@ export function App() {
     newDraftBaseline.current = null;
     requestedDocument.current = null;
     setBase(null); setDraft(null); dirtyRef.current = false; setContentError(null);
-    setConflict(null); setSaveError(''); setNotice(''); setHistoryOpen(false);
+    setConflict(null); setSaveError(''); notify(''); setHistoryOpen(false);
     setRevisions([]); setRevision(null); historyGeneration.current++;
-    setUploadError(''); setUploadMessage('');
+    setUploadError(''); notifyUpload('');
     setPublication(null); setPublicationPrompt(null); setPublicationError('');
   }
   function adopt(loaded: LoadedDocument, preserveEditor = false) {
     setLiveCheckError(false);
     if (!preserveEditor) {
+      setEditing(false);
       liveRef.current?.destroy(); liveRef.current = null; setLive(null); setLiveState(null); setRetainedLiveDraft(null);
       if (collaborationEnabled && !loaded.document.archivedAt) setLiveChecking(true);
     }
@@ -203,7 +222,7 @@ export function App() {
     setMoveNeedsCompare(false); setMoveError(''); setBase(loaded); setDraftParentId(loaded.document.parentDocumentId); setDraft(draftFrom(loaded));
     if (!preserveEditor) setEditorKey(key => key + 1);
     dirtyRef.current = false; setContentError(null); setSaveError(''); setConflict(null);
-    setUploadError(''); setUploadMessage('');
+    setUploadError(''); notifyUpload('');
     const canonicalPath = `/spaces/${loaded.document.spaceSlug}/documents/${loaded.document.slug}`;
     const sameDocument = location.pathname.replace(/\/$/, '') === canonicalPath
       || new URLSearchParams(location.search).get('document') === loaded.document.id;
@@ -251,7 +270,7 @@ export function App() {
       const metadata = await api.enrollLive(base.document.id, base.etag);
       enrolled = true;
       const saved = await api.document(base.document.id);
-      setBase(saved); joinLive(metadata, user);
+      setBase(saved); joinLive(metadata, user); setEditing(true);
     } catch (error) { if (!unavailable(error)) { setLiveCheckError(enrolled); setSaveError(failureMessage(error)); } }
     finally { setBusy(false); }
   }
@@ -268,14 +287,14 @@ export function App() {
   }
   function unavailable(error: unknown) {
     if (!(error instanceof ApiError) || ![401,403,404].includes(error.status)) return false;
-    generation.current++; historyGeneration.current++;
+    generation.current++; historyGeneration.current++; indexedSpace.current = null;
     setAccessIssue(error.status === 401 ? 'session' : 'access');
-    setSearchOpen(false); setAccessOpen(false); setSpacePrompt(false); setSpaceNotice(''); setUploadMessage('');
+    setSearchOpen(false); setAccessOpen(false); setSpacePrompt(false); notifySpace(''); notifyUpload('');
     setDuplicateRevision(null);
     setPublication(null); setPublicationPrompt(null); setPublicationError('');
     setSpaces([]); setSpace(null); setDocuments([]); setSpacesCursor(null);
     setListLoading(false); setLoadingDocument(false); setHistoryOpen(false);
-    setRevisions([]); setRevision(null); setConflict(null); setNotice('');
+    setRevisions([]); setRevision(null); setConflict(null); notify('');
     if (!dirtyRef.current) resetDocument();
     if (error.status === 401) setUser(null);
     setSaveError(error.status === 401 ? 'Your session expired.' : 'Access to this document is unavailable.');
@@ -286,30 +305,68 @@ export function App() {
     setMobileOpen(false);
     if (dirtyRef.current) setPending({ action }); else action();
   }
+  function focusDocumentTitle() {
+    (titleInput.current ?? titleHeading.current)?.focus({ preventScroll: true });
+  }
+  function editDocument() {
+    if (!mayEdit || blocked) return;
+    setEditing(true);
+    requestAnimationFrame(focusDocumentTitle);
+  }
+  function finishEditing() {
+    if (blocked) return;
+    const finish = () => {
+      setEditing(false);
+      requestAnimationFrame(focusDocumentTitle);
+    };
+    // Reading a live document keeps the same room and comment composers.
+    // There is no safe full-document discard over collaborators' changes.
+    if (live) {
+      finish();
+      if (hasUnsavedWork) notify('Reading mode. Shared changes remain shared; unsent comments stay in this tab. Nothing was saved as a revision.');
+    } else guarded(finish);
+  }
   function resetDraftToBaseline() {
     if (live) return; // Leaving never rolls a shared document back over its peers.
     setDraft(base ? draftFrom(base) : newDraftBaseline.current);
     setEditorKey(key => key + 1);
     setContentError(null); setSaveError('');
-    setUploadError(''); setUploadMessage('');
+    setUploadError(''); notifyUpload('');
     dirtyRef.current = !base;
     // A local reset cannot adopt the latest ETag or resolve a stale-save conflict.
   }
   function discardChanges() {
-    if (!mayEdit || blocked || (!hasDraftChanges && !contentError)) return;
-    setPending({ action: () => setNotice('Unsaved changes discarded. Nothing was saved.') });
+    if (!editable || blocked || (!hasDraftChanges && !contentError)) return;
+    setPending({ action: () => notify('Unsaved changes discarded. Nothing was saved.') });
   }
 
-  async function loadDocument(target: DocumentTarget, ticket = generation.current, expectedSpaceId?: string) {
-    requestedDocument.current = target;
+  async function loadDocument(target: DocumentTarget, ticket = generation.current, expectedSpaceId?: string, refreshIndex = false) {
+    requestedDocument.current = { target, ...(expectedSpaceId ? { spaceId: expectedSpaceId } : {}) };
     setLoadingDocument(true); setSaveError('');
+    const scrollToTop = navigationType === 'PUSH';
     try {
-      const loaded = typeof target === 'string' ? await api.document(target) : await api.documentBySlug(target.spaceId, target.slug);
+      // Read current authority and content together. The retained navigation is
+      // metadata, never a cached document body or comparison ETag.
+      const [loaded, selected] = await Promise.all([
+        typeof target === 'string' ? api.document(target) : api.documentBySlug(target.spaceId, target.slug),
+        expectedSpaceId ? api.space(expectedSpaceId) : Promise.resolve(null),
+      ]);
       if (ticket !== generation.current) return;
       if (expectedSpaceId && loaded.document.spaceId !== expectedSpaceId) throw new ApiError(404);
+      resetDocument();
+      if (selected) {
+        setSpace(selected);
+        setSpaces(previous => previous.map(item => item.id === selected.id ? selected : item));
+      }
       adopt(loaded);
+      if (selected && refreshIndex) void listDocuments(selected);
+      requestAnimationFrame(() => { if (ticket === generation.current && scrollToTop && !location.hash) window.scrollTo({ top: 0, behavior: 'instant' }); });
     } catch (error) {
-      if (ticket === generation.current && !unavailable(error)) setSaveError(failureMessage(error));
+      if (ticket !== generation.current) return;
+      // A failed target must not leave the previous document under its URL.
+      resetDocument();
+      requestedDocument.current = { target, ...(expectedSpaceId ? { spaceId: expectedSpaceId } : {}) };
+      if (!unavailable(error)) setSaveError(failureMessage(error));
     } finally { if (ticket === generation.current) setLoadingDocument(false); }
   }
   async function listDocuments(selected: Space, archived = includeArchived) {
@@ -325,7 +382,7 @@ export function App() {
         if (ticket !== generation.current || request !== listGeneration.current) return null;
         items.push(...result.items); cursor = result.nextCursor ?? undefined;
       } while (cursor);
-      setDocuments(items);
+      indexedSpace.current = selected.id; setDocuments(items);
       return { items: items.filter(item => archived || !item.archivedAt), nextCursor: null };
     } catch (error) {
       if (ticket === generation.current && request === listGeneration.current && !unavailable(error)) setListError(failureMessage(error));
@@ -335,7 +392,7 @@ export function App() {
 
   function openSpacePrompt() {
     if (user?.role !== 'administrator' || accessIssue || blocked) return;
-    setMobileOpen(false); setSpaceName(''); setSpaceCreateError(''); setSpaceNotice(''); setSpacePrompt(true);
+    setMobileOpen(false); setSpaceName(''); setSpaceCreateError(''); notifySpace(''); setSpacePrompt(true);
   }
   async function createSpace() {
     if (user?.role !== 'administrator' || accessIssue || blocked || !spaceName.trim()) return;
@@ -345,7 +402,7 @@ export function App() {
       const created = await api.createSpace(spaceName.trim());
       if (ticket !== generation.current) return;
       setSpaces(previous => previous.some(item => item.id === created.id) ? previous : [...previous, created]);
-      setSpaceNotice(`Created space "${created.name}".`);
+      notifySpace(`Created space "${created.name}".`);
       // Creating a space is not document navigation. Keep the draft, editor
       // undo stack, save error and comparison ETag intact in an open workspace.
       if (!space && !draftRef.current) await selectSpace(created);
@@ -378,11 +435,11 @@ export function App() {
       if (ticket === generation.current && !unavailable(error)) setListError(failureMessage(error));
     } finally { if (ticket === generation.current) setListLoading(false); }
   }
-  async function selectSpace(selected: Space, documentTarget?: DocumentTarget) {
+  async function selectSpace(selected: Space, documentTarget?: DocumentTarget, ticket = ++generation.current) {
     // Search may reach an authorized space outside the loaded navigation page.
     setSpaces(previous => previous.some(item => item.id === selected.id)
       ? previous.map(item => item.id === selected.id ? selected : item) : [...previous, selected]);
-    const ticket = ++generation.current;
+    indexedSpace.current = null;
     resetDocument(); setSpace(selected); setDocuments([]); setAccessIssue(null);
     // Keep a direct link intact until its document has actually loaded. A
     // failed list/read must not replace the requested document with a default.
@@ -394,7 +451,7 @@ export function App() {
   }
   async function workspace(account: User, recover = false) {
     handledHref.current = location.pathname + location.search;
-    setSpacePrompt(false); setSpaceNotice('');
+    setSpacePrompt(false); notifySpace('');
     setUser(account); setBootError(''); setListLoading(true); setListError('');
     const ticket = ++generation.current;
     try {
@@ -411,7 +468,7 @@ export function App() {
         if (ticket !== generation.current) return;
         setSpace(selected); setAccessIssue(null); setSaveError('');
         setConflict(latest ? { latest, error: '', loading: false } : null); setHistoryOpen(false);
-        if (!latest) setNotice('Access verified. Your local draft has not been saved. Review it and explicitly Save.');
+        if (!latest) notify('Access verified. Your local draft has not been saved. Review it and explicitly Save.');
         await listDocuments(selected);
         return;
       }
@@ -421,7 +478,7 @@ export function App() {
         const selected = await api.spaceBySlug(slugs[1]!);
         if (ticket !== generation.current) return;
         setAccessIssue(null);
-        await selectSpace(selected, slugs[2] ? { spaceId: selected.id, slug: slugs[2] } : undefined);
+        await selectSpace(selected, slugs[2] ? { spaceId: selected.id, slug: slugs[2] } : undefined, ticket);
         return;
       }
       const params = new URLSearchParams(location.search);
@@ -432,11 +489,11 @@ export function App() {
       if (!spaceId && documentId) { const loaded = await api.document(documentId); selected = await api.space(loaded.document.spaceId); }
       if (ticket !== generation.current) return;
       setAccessIssue(null);
-      if (selected) await selectSpace(selected, documentId);
+      if (selected) await selectSpace(selected, documentId, ticket);
       else { setSpace(null); setDocuments([]); resetDocument(); }
     } catch (error) {
       if (ticket === generation.current && !unavailable(error)) setListError(failureMessage(error));
-    } finally { setListLoading(false); }
+    } finally { if (ticket === generation.current) setListLoading(false); }
   }
   async function start() {
     setUser(undefined); setBootError('');
@@ -451,7 +508,24 @@ export function App() {
     const href = routeLocation.pathname + routeLocation.search;
     if (!user || href === handledHref.current) return;
     handledHref.current = href;
-    setMobileOpen(false); resetDocument(); setSpace(null); setDocuments([]);
+    setMobileOpen(false);
+    const slugs = /^\/spaces\/([a-z0-9]+(?:-[a-z0-9]+)*)(?:\/documents\/([a-z0-9]+(?:-[a-z0-9]+)*))?\/?$/.exec(routeLocation.pathname);
+    const params = new URLSearchParams(routeLocation.search);
+    const sameSpace = space && !accessIssue && indexedSpace.current === space.id
+      && (slugs ? slugs[1] === space.slug : validId(params.get('space')) === space.id);
+    if (sameSpace) {
+      const firstDocument = initialDocument(documents.filter(item => includeArchived || !item.archivedAt))?.id;
+      const target = slugs ? slugs[2] ? { spaceId: space.id, slug: slugs[2] } : firstDocument
+        : validId(params.get('document')) ?? firstDocument;
+      if (target) {
+        const ticket = ++generation.current;
+        ++listGeneration.current; setListLoading(false);
+        void loadDocument(target, ticket, space.id, true);
+        return;
+      }
+    }
+    indexedSpace.current = null;
+    resetDocument(); setSpace(null); setDocuments([]);
     void workspace(user);
   }, [routeLocation.pathname, routeLocation.search, user?.id]);
   useEffect(() => {
@@ -521,7 +595,7 @@ export function App() {
   }
   async function mutate(operation: () => Promise<LoadedDocument>, label = 'Saving…', preserveEditor = false) {
     const ticket = generation.current;
-    setBusyLabel(label); setBusy(true); setSaveError(''); setNotice('');
+    setBusyLabel(label); setBusy(true); setSaveError(''); notify('');
     try {
       const loaded = await operation();
       if (ticket !== generation.current) return;
@@ -534,7 +608,7 @@ export function App() {
     } finally { setBusy(false); }
   }
   function save() {
-    if (!draft || !space || !mayEdit || !dirty || blocked || conflict || contentError) return;
+    if (!draft || !space || !editable || !dirty || blocked || loadingDocument || conflict || contentError) return;
     if (!draft.title.trim() || draft.title.length > 200) { setSaveError('Enter a title between 1 and 200 characters.'); return; }
     let checked: Draft;
     try { checked = { title: draft.title, content: validateContent(draft.content).content }; }
@@ -545,7 +619,7 @@ export function App() {
       setBusy(true); setBusyLabel('Saving…'); setSaveError('');
       void api.checkpointLive(base.document.id, base.etag, snapshot).then(saved => {
         if (ticket !== generation.current || liveRef.current !== session) return;
-        setBase(saved); session.checkpointAccepted(snapshot.sequence); setNotice(`Saved revision ${saved.document.currentRevisionNumber}.`);
+        setBase(saved); session.checkpointAccepted(snapshot.sequence); notify(`Saved revision ${saved.document.currentRevisionNumber}.`);
         if (space) void listDocuments(space);
       }).catch(async error => {
         if (ticket !== generation.current) return;
@@ -577,23 +651,24 @@ export function App() {
     guarded(() => {
       generation.current++; resetDocument();
       const initial = emptyDraft(); newDraftBaseline.current = initial; setDraft(initial);
+      setEditing(true);
       setEditorKey(key => key + 1);
       draftSpaceId.current = space?.id ?? null; setDraftParentId(parentId);
       if (space) void listDocuments(space);
       rememberSelection(space?.slug ?? null, null, false);
-      requestAnimationFrame(() => { titleInput.current?.focus(); titleInput.current?.select(); });
+      requestAnimationFrame(() => { focusDocumentTitle(); titleInput.current?.select(); });
     });
   }
   async function moveDocument() {
     if (!base || !space || space.access !== 'editor' || accessIssue || blocked || hasUnsavedWork || conflict || moveNeedsCompare || moveWriting.current || listLoading || listError || moveParentId === (base.document.parentDocumentId ?? '')) return;
     const ticket = generation.current, current = base;
-    moveWriting.current = true; setBusyLabel('Moving document…'); setBusy(true); setMoveError(''); setNotice('');
+    moveWriting.current = true; setBusyLabel('Moving document…'); setBusy(true); setMoveError(''); notify('');
     try {
       const moved = await api.move(current.document.id, current.etag, moveParentId || null);
       if (ticket !== generation.current) return;
       // A move changes metadata only. Preserve native content, undo and peer
       // edits that may arrive while this request drains.
-      setBase(moved); setDraftParentId(moved.document.parentDocumentId); setMoveOpen(false); setNotice('Document moved.');
+      setBase(moved); setDraftParentId(moved.document.parentDocumentId); setMoveOpen(false); notify('Document moved.');
       void listDocuments(space);
     } catch (error) {
       if (ticket !== generation.current) return;
@@ -611,9 +686,9 @@ export function App() {
     const link = new URL(`/spaces/${encodeURIComponent(base.document.spaceSlug)}/documents/${encodeURIComponent(base.document.slug)}`, window.location.origin).href;
     try {
       await navigator.clipboard.writeText(link);
-      if (ticket === generation.current) setNotice('Private link copied. Only people with space access can open it.');
+      if (ticket === generation.current) notify('Private link copied. Only people with space access can open it.');
     } catch {
-      if (ticket === generation.current) setNotice('Copy is unavailable. Copy the document URL from your browser address bar. This does not change access.');
+      if (ticket === generation.current) notify('Copy is unavailable. Copy the document URL from your browser address bar. This does not change access.');
     }
   }
   async function changePublication() {
@@ -629,7 +704,7 @@ export function App() {
       setBase(previous => previous?.document.id === id ? { ...previous, etag: result.etag,
         document: { ...previous.document, lockVersion: result.status.lockVersion } } : previous);
       setPublication(result.status);
-      setNotice(prompt.action === 'publish'
+      notify(prompt.action === 'publish'
         ? `Revision ${prompt.revision.revisionNumber} published. Unsaved edits and later private saves are not included.`
         : 'Publication withdrawn. Future public requests are denied. Your local edits are unchanged.');
     } catch (error) {
@@ -666,25 +741,25 @@ export function App() {
   async function exportDocument(format?: ExportFormat, revisionId?: string) {
     if (!base || accessIssue || blocked) return;
     const ticket = generation.current, id = base.document.id;
-    setSaveError(''); setNotice(''); setBusyLabel('Exporting…'); setBusy(true);
+    setSaveError(''); notify(''); setBusyLabel('Exporting…'); setBusy(true);
     try {
       const exported = format ? await api.exportFile(id, format, revisionId) : await api.export(id, revisionId);
       if (ticket !== generation.current) return;
       downloadFile(exported.blob, exported.filename);
-      setNotice(`Exported ${revisionId ? 'the selected saved revision' : 'the saved revision'} as ${format ? format.toUpperCase() : 'native JSON'}.${dirty ? ' Your unsaved draft is not included.' : ''}`);
+      notify(`Exported ${revisionId ? 'the selected saved revision' : 'the saved revision'} as ${format ? format.toUpperCase() : 'native JSON'}.${dirty ? ' Your unsaved draft is not included.' : ''}`);
     } catch (error) { if (ticket === generation.current && !unavailable(error)) setSaveError(failureMessage(error)); }
     finally { setBusy(false); }
   }
   async function uploadAttachment(file: File) {
     const ticket = generation.current, id = uploadContext.current.id;
     if (!id || !uploadContext.current.editable || busy || conflict) throw new Error('Save an editable document before uploading attachments');
-    setUploading(count => count + 1); setUploadError(''); setUploadMessage('');
+    setUploading(count => count + 1); setUploadError(''); notifyUpload('');
     try {
       const attachment = await api.upload(id, file);
       if (ticket !== generation.current || uploadContext.current.id !== id || !uploadContext.current.editable) {
         throw new Error('The attachment target is no longer available');
       }
-      setUploadMessage('Attachment uploaded. Save to include it in the document revision.');
+      notifyUpload('Attachment uploaded. Save to include it in the document revision.');
       return attachment.url;
     } catch (error) {
       if (ticket === generation.current && uploadContext.current.id === id && !unavailable(error)) {
@@ -700,18 +775,12 @@ export function App() {
   function pickSearchResult(result: SearchResult) {
     setSearchOpen(false);
     guarded(() => {
-      const ticket = generation.current;
-      setBusyLabel('Opening document…'); setBusy(true);
-      void api.space(result.spaceId).then(async selected => {
-        const loaded = await api.document(result.id);
-        if (ticket === generation.current) {
-          rememberSelection(selected.slug, loaded.document.slug, false);
-          await selectSpace(selected, result.id);
-        }
-      }).catch(error => { if (ticket === generation.current && !unavailable(error)) setSaveError(failureMessage(error)); })
-        .finally(() => setBusy(false));
+      // The normal navigation path checks authority and reads the document once,
+      // then replaces this ID-based target with its current canonical slug URL.
+      void navigate(`/?space=${result.spaceId}&document=${result.id}`);
     });
   }
+
   async function logout() {
     setBusyLabel('Logging out…'); setBusy(true); setSaveError('');
     try {
@@ -728,14 +797,13 @@ export function App() {
       {spaces.length > 0 ? <label htmlFor="space">Space</label> : <span>Spaces</span>}
       {user?.role === 'administrator' && !accessIssue && <button ref={spaceTrigger} aria-haspopup="dialog" disabled={blocked || listLoading} onClick={openSpacePrompt}>New space</button>}
     </div>}
-    {spaceNotice && <p role="status" className="muted">{spaceNotice}</p>}
     {spaces.length > 0 && <select id="space" aria-label="Space" value={space?.id ?? ''} disabled={blocked} onChange={event => {
       const selected = spaces.find(item => item.id === event.target.value); if (selected) void navigate(`/spaces/${selected.slug}`);
     }}><option value="" disabled>Select a space</option>{spaces.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select>}
     {space && user?.role === 'administrator' && !accessIssue && <button className="quiet space-access" ref={accessTrigger} aria-haspopup="dialog" disabled={blocked} onClick={() => { setMobileOpen(false); setAccessOpen(true); }}>Space access</button>}
     {spacesCursor && <button disabled={listLoading} onClick={() => { void moreSpaces(spacesCursor); }}>More spaces</button>}
     {space && <><div className="listhead"><span>Documents</span>{space.access === 'editor' && !accessIssue && <button onClick={() => newDocument()} disabled={blocked}>New document</button>}</div>
-      {listLoading && <p role="status" className="muted">Loading documents…</p>}
+      {listLoading && indexedSpace.current !== space.id && <p role="status" className="muted">Loading documents…</p>}
       <DocumentNavigation key={space.id} documents={documents} currentId={base?.document.id ?? null} showArchived={includeArchived} spaceSlug={space.slug} blocked={blocked} />
       {!listLoading && !listError && (includeArchived ? documents.length === 0 : !documents.some(item => !item.archivedAt)) && <p className="muted">No documents in this space.</p>}
 
@@ -744,7 +812,7 @@ export function App() {
     {!space && !listLoading && <p className="muted">{accessIssue ? 'Space access is unavailable.' : 'No accessible spaces.'}</p>}
     {listError && <div role="alert"><p>{listError}</p><button onClick={() => { if (space) void listDocuments(space); else if (user) void workspace(user,Boolean(hasUnsavedWork && draft)); }}>Retry</button></div>}
   </>;
-  const status = accessIssue ? 'Not saved · local draft only' : busy ? busyLabel : uploading > 0 ? 'Uploading attachment…' : conflict ? 'Not saved · resolve conflict'
+  const status = loadingDocument ? 'Opening document…' : accessIssue ? 'Not saved · local draft only' : busy ? busyLabel : favorites.pending ? 'Updating favorite…' : uploading > 0 ? 'Uploading attachment…' : conflict ? 'Not saved · resolve conflict'
     : liveChecking || liveState?.phase === 'connecting' ? 'Connecting shared document…'
     : liveState?.phase === 'closed' ? 'Connection closed · local work retained'
     : liveState?.pending ? 'Syncing changes · not saved as a revision'
@@ -766,7 +834,9 @@ export function App() {
         {(user || hasUnsavedWork && draft) && <div className={`workspace${!user ? ' retained-workspace' : ''}`}>
           {user && !narrow && <aside className="sidebar" aria-label="Workspace navigation">{navigation}</aside>}
           {user && narrow && <Dialog.Root open={mobileOpen} onOpenChange={setMobileOpen}><Dialog.Portal><Dialog.Overlay className="dialog-overlay" /><Dialog.Content className="mobile-navigation" aria-describedby={undefined}><Dialog.Title className="sr">Workspace navigation</Dialog.Title><Dialog.Close className="quiet">Close navigation</Dialog.Close>{navigation}</Dialog.Content></Dialog.Portal></Dialog.Root>}
-          <main className="main">
+          <main className="main" aria-busy={loadingDocument}>
+            {loadingDocument && draft && <span className="sr" role="status">Opening document…</span>}
+            <div inert={loadingDocument && Boolean(draft)}>
             {draft && <div className="documentbar"><span className={dirty || accessIssue || saveError ? 'dirty' : ''} role="status">{status}</span>
               {base && !accessIssue && <><button disabled={blocked} onClick={() => { if (historyOpen) setHistoryOpen(false); else void openHistory(); }}>History</button>
                 <details className="doc-menu"><summary ref={actionsTrigger} aria-label="Document actions">⋯</summary><div className="menu-items">
@@ -784,36 +854,33 @@ export function App() {
                   {mayPublish && publication?.publication?.active && <button disabled={blocked} onClick={event => { event.currentTarget.closest('details')?.removeAttribute('open'); setPublicationPrompt({ action: 'withdraw' }); }}>Withdraw publication</button>}
                   {space?.access === 'editor' && !conflict && <button disabled={blocked || Boolean(liveState?.pending)} onClick={event => { event.currentTarget.closest('details')?.removeAttribute('open'); guarded(() => { void mutate(() => api.archive(base.document.id,base.etag,Boolean(base.document.archivedAt)),base.document.archivedAt ? 'Unarchiving…' : 'Archiving…'); }); }}>{base.document.archivedAt ? 'Unarchive' : 'Archive'}</button>}
                 </div></details></>}
-              {mayEdit && <div className="save-actions">{live ? <><button disabled={blocked || !liveState?.canUndo} aria-label="Undo my changes" onClick={() => live.undo()}>Undo</button><button disabled={blocked || !liveState?.canRedo} aria-label="Redo my changes" onClick={() => live.redo()}>Redo</button></> : <button disabled={blocked || (!hasDraftChanges && !contentError)} onClick={discardChanges}>Discard changes</button>}<button ref={saveTrigger} className="primary" aria-keyshortcuts="Control+s Meta+s" title="Save (Ctrl/Cmd+S)" disabled={blocked || !dirty || Boolean(conflict) || Boolean(contentError) || Boolean(liveState?.pending)} onClick={save}>Save</button></div>}
+              {mayEdit && !editing && <button className="primary edit-document" disabled={blocked} onClick={editDocument}><Pencil size={15} aria-hidden="true" />Edit</button>}
+              {editable && <div className="save-actions">{base && <button disabled={blocked} onClick={finishEditing}>Done editing</button>}{live ? <><button disabled={blocked || !liveState?.canUndo} aria-label="Undo my changes" onClick={() => live.undo()}>Undo</button><button disabled={blocked || !liveState?.canRedo} aria-label="Redo my changes" onClick={() => live.redo()}>Redo</button></> : <button disabled={blocked || (!hasDraftChanges && !contentError)} onClick={discardChanges}>Discard changes</button>}<button ref={saveTrigger} className="primary" aria-keyshortcuts="Control+s Meta+s" title="Save (Ctrl/Cmd+S)" disabled={blocked || !dirty || Boolean(conflict) || Boolean(contentError) || Boolean(liveState?.pending)} onClick={save}>Save</button></div>}
             </div>}
             {accessIssue && <div className="notice" role="alert"><strong>{saveError || (accessIssue === 'session' ? 'Your session expired.' : 'Access to this document is unavailable.')}</strong><p>{dirty ? 'Your complete unsaved title and body are retained in this tab. Nothing was saved. Server actions are unavailable. Copy your draft before closing or reloading.' : commentState.dirty ? 'Your unsent comment text remains in this tab. Nothing was submitted. Server actions are unavailable. Copy it before closing or reloading.' : 'Sign in or ask an administrator to verify your access.'}</p>
-              {dirty && draft && <button onClick={() => { void navigator.clipboard.writeText(draft.title+'\n\n'+extractPlainText(draft.content.document)).then(() => setNotice('Local draft text copied. Nothing was saved.')).catch(() => setNotice('Copy is unavailable. Select and copy the retained title and body.')); }}>Copy local draft text</button>}
+              {dirty && draft && <button onClick={() => { void navigator.clipboard.writeText(draft.title+'\n\n'+extractPlainText(draft.content.document)).then(() => notify('Local draft text copied. Nothing was saved.')).catch(() => notify('Copy is unavailable. Select and copy the retained title and body.')); }}>Copy local draft text</button>}
             </div>}
-            {!accessIssue && saveError && <div className="notice" role="alert"><strong>{saveError}</strong>{dirty && <p>Your complete local draft is retained. It has not been saved.</p>}{!draft && <button onClick={() => { if(requestedDocument.current)void loadDocument(requestedDocument.current); }}>Retry</button>}</div>}
+            {!accessIssue && saveError && <div className="notice" role="alert"><strong>{saveError}</strong>{dirty && <p>Your complete local draft is retained. It has not been saved.</p>}{!draft && <button onClick={() => { const request = requestedDocument.current; if (request) void loadDocument(request.target, generation.current, request.spaceId); }}>Retry</button>}</div>}
             {liveCheckError && !accessIssue && <button disabled={blocked} onClick={() => { setSaveError(''); setLiveRetry(value => value + 1); }}>Retry shared document</button>}
             {sharedEditingUnavailable && !accessIssue && <p className="notice" role="status">Shared editing is disabled. Showing saved revision {base?.document.currentRevisionNumber} read-only. Live changes and comments remain stored but are unavailable.</p>}
-            {notice && <p className="notice" role="status">{notice}</p>}
-            {favorites.pending && <p className="notice" role="status">Updating favorite…</p>}
-            {favorites.notice && !accessIssue && <p className="notice" role="status">{favorites.notice}</p>}
             {favorites.stateError && !accessIssue && <div className="notice" role="alert"><p>{favorites.stateError}</p><button disabled={blocked || favorites.stateLoading} onClick={() => { void favorites.read(); }}>Check favorite status</button></div>}
             {uploadError && !accessIssue && <p className="notice" role="alert">{uploadError}</p>}
-            {uploadMessage && !accessIssue && <p className="notice" role="status">{uploadMessage}</p>}
             {publicationError && !accessIssue && <div className="notice" role="alert"><p>{publicationError}</p><button disabled={blocked} onClick={() => setPublicationRetry(value => value + 1)}>Retry publication status</button></div>}
             {publishing?.mayPublish && publication?.publication && !accessIssue && <p className="publication-status">{publication.publication.active
               ? <>Published revision {publication.publication.revisionNumber} · <a href={`/publications/${publication.publication.publicId}`} target="_blank" rel="noopener noreferrer">View public document</a></>
               : 'Publication inactive. Publishing again requires explicit approval.'}</p>}
-            {loadingDocument ? <p role="status">Loading document…</p> : draft ? <div className={`document-grid${historyOpen || conflict ? ' with-panel' : ''}`}>
-              {liveState && !liveState.initialized && liveState.phase === 'connecting' ? <p role="status">Connecting shared document…</p> : <Editor key={editorKey} initialContent={draft.content} editable={mayEdit && !busy}
+            {loadingDocument && !draft ? <p role="status">Loading document…</p> : draft ? <div className={`document-grid${historyOpen || conflict ? ' with-panel' : ''}`}>
+              {liveState && !liveState.initialized && liveState.phase === 'connecting' ? <p role="status">Connecting shared document…</p> : <Editor key={editorKey} initialContent={draft.content} editable={editable} disabled={busy || loadingDocument}
                 sectionLinks={Boolean(base && !accessIssue && collaborationKnown && !liveChecking && !liveCheckError)} onSectionNavigate={hash => { void navigate(location.pathname + location.search + hash, { preventScrollReset: true }); }} {...(liveState?.initialized && live ? { live, onCommentStateChange: setCommentState } : {})}
-                {...(mayEdit ? { uploadFile: uploadAttachment } : {})} uploadAvailable={Boolean(base && mayEdit && !busy && !conflict)}
-                resolveFileUrl={api.resolveFileUrl} onValidationChange={setContentError} onChange={content => { setDraft(previous => previous ? { ...previous, content } : previous); if (!live) { setSaveError(''); setNotice(''); } }} header={<>
+                {...(editable ? { uploadFile: uploadAttachment } : {})} uploadAvailable={Boolean(base && editable && !busy && !conflict)}
+                resolveFileUrl={api.resolveFileUrl} onValidationChange={setContentError} onChange={content => { setDraft(previous => previous ? { ...previous, content } : previous); if (!live) { setSaveError(''); notify(''); } }} header={<>
                 {space && !accessIssue && <DocumentPath space={space} parentId={base ? base.document.parentDocumentId : draftParentId} documents={documents} blocked={blocked} />}
                 {!base && space && !accessIssue && <label className="draft-location">Location <select aria-label="New document location" value={draftParentId ?? ''} disabled={blocked || listLoading || Boolean(listError)} onChange={event => setDraftParentId(event.target.value || null)}>
                   <option value="">Space root</option><ParentOptions documents={documents} />
                 </select></label>}
-                <p className="meta">{accessIssue ? 'Retained local draft · not a saved server document' : base?.document.archivedAt ? 'Archived document' : space?.access === 'reader' ? 'Reader access' : 'Editor access'}</p>
-                <label className="sr" htmlFor="title">Document title</label><input ref={titleInput} id="title" className="title" aria-label="Document title" value={draft.title} readOnly={!mayEdit} disabled={blocked} onKeyDown={event => { if (live && (event.ctrlKey || event.metaKey) && !event.altKey && ['z', 'y'].includes(event.key.toLowerCase())) { event.preventDefault(); if (event.shiftKey || event.key.toLowerCase() === 'y') live.redo(); else live.undo(); } }} onChange={event => { if (live) live.writeTitle(event.target.value); else setDraft(previous => previous ? { ...previous,title:event.target.value } : previous); setSaveError(''); setNotice(''); }} />
-                {mayEdit && !base && <p className="attachment-help">Save this document before uploading attachments.</p>}
+                {(accessIssue || base?.document.archivedAt || space?.access === 'reader' || editing) && <p className="meta">{accessIssue ? 'Retained local draft · not a saved server document' : base?.document.archivedAt ? 'Archived document' : space?.access === 'reader' ? 'Reader access' : 'Editing'}</p>}
+                {editing ? <><label className="sr" htmlFor="title">Document title</label><input ref={titleInput} id="title" className="title" aria-label="Document title" value={draft.title} readOnly={!editable} disabled={blocked} onKeyDown={event => { if (live && (event.ctrlKey || event.metaKey) && !event.altKey && ['z', 'y'].includes(event.key.toLowerCase())) { event.preventDefault(); if (event.shiftKey || event.key.toLowerCase() === 'y') live.redo(); else live.undo(); } }} onChange={event => { if (live) live.writeTitle(event.target.value); else setDraft(previous => previous ? { ...previous,title:event.target.value } : previous); setSaveError(''); notify(''); }} /></> : <h1 ref={titleHeading} id="document-title" className="title" tabIndex={-1}>{draft.title}</h1>}
+                {editable && !base && <p className="attachment-help">Save this document before uploading attachments.</p>}
               </>} />}
               {liveState?.phase === 'closed' && !accessIssue && <aside className="notice" role="alert"><strong>The shared connection closed.</strong><p>Your complete local title and body remain in this tab. No rejected work will be retried. Reconnecting keeps a separate copy for deliberate comparison.</p>{retainedLiveDraft && <p>Download or discard the earlier retained draft before reconnecting again.</p>}<button disabled={blocked || Boolean(retainedLiveDraft)} onClick={() => { if (commentState.dirty) guarded(() => { void reconnectLive(); }); else void reconnectLive(); }}>Reconnect and compare</button></aside>}
               {retainedLiveDraft && <aside className="notice" aria-label="Retained local draft"><h2>Retained local draft</h2><p>{retainedLiveDraft.title}</p><p>Your previous title and body are kept separately. Review the shared document before reapplying any unsent edits.</p><pre className="retained-draft-text">{extractPlainText(retainedLiveDraft.content.document)}</pre><button onClick={() => downloadFile(new Blob([JSON.stringify(retainedLiveDraft, null, 2)], { type: 'application/json' }), 'scrawl-local-draft.json')}>Download retained local draft</button><button onClick={() => guarded(() => setRetainedLiveDraft(null))}>Discard retained draft</button></aside>}
@@ -821,7 +888,7 @@ export function App() {
                 {conflict.loading && <p role="status">Loading latest server version…</p>}
                 {conflict.error && <div role="alert"><p>{conflict.error}</p><button onClick={() => { if(base)void readConflict(base.document.id); }}>Retry</button></div>}
                 {conflict.latest && <><small>Latest server version · revision {conflict.latest.document.currentRevisionNumber}</small><Editor key={conflict.latest.etag} initialContent={conflict.latest.document.revision.content} label="Latest server content" editable={false} resolveFileUrl={api.resolveFileUrl} onChange={() => {}} header={<h3>{conflict.latest.document.revision.title}</h3>} />
-                  <div className="actions"><button onClick={() => { const latest=conflict.latest!; setMoveNeedsCompare(false); setMoveError(''); setBase(latest); setConflict(null); setSaveError(''); setNotice(live ? "The current shared document is kept, including collaborators' edits. Review against the new checkpoint, then explicitly Save." : 'Your local title and body are kept. Review your changes against the new comparison base, then explicitly Save.'); }}>{live ? 'Use current shared content' : 'Use my changes'}</button>{!live && <button onClick={() => guarded(() => { adopt(conflict.latest!); setNotice('Using the latest saved server version.'); })}>Use server version</button>}</div>
+                  <div className="actions"><button onClick={() => { const latest=conflict.latest!; setMoveNeedsCompare(false); setMoveError(''); setBase(latest); setConflict(null); setSaveError(''); notify(live ? "The current shared document is kept, including collaborators' edits. Review against the new checkpoint, then explicitly Save." : 'Your local title and body are kept. Review your changes against the new comparison base, then explicitly Save.'); }}>{live ? 'Use current shared content' : 'Use my changes'}</button>{!live && <button onClick={() => guarded(() => { adopt(conflict.latest!); notify('Using the latest saved server version.'); })}>Use server version</button>}</div>
                 </>}
               </aside>}
               {historyOpen && !accessIssue && <aside className="side-panel" aria-label="Revision history"><button className="quiet close" onClick={() => setHistoryOpen(false)}>Close history</button><h2>History</h2>
@@ -832,6 +899,7 @@ export function App() {
                 {revision && !historyLoading && <Editor key={revision.id} initialContent={revision.content} label="Revision content" editable={false} resolveFileUrl={api.resolveFileUrl} onChange={() => {}} header={<><h3>{revision.title}</h3>{mayEdit && !conflict && <button className="restore" disabled={blocked || revision.id===base?.document.revision.id || Boolean(live && (dirty || commentState.dirty || liveState?.pending || retainedLiveDraft))} onClick={() => { void restoreRevision(revision.id); }}>Restore revision {revision.revisionNumber}</button>}{mayPublish && <button disabled={blocked || !publication} onClick={() => setPublicationPrompt({ action: 'publish', revision })}>Publish revision {revision.revisionNumber}</button>}<div className="revision-exports">{space?.access === 'editor' && <button disabled={blocked} onClick={() => setDuplicateRevision(revision)}>Duplicate revision {revision.revisionNumber}</button>}<button disabled={blocked} onClick={() => { void exportDocument(undefined, revision.id); }}>Export JSON</button><button disabled={blocked} onClick={() => { void exportDocument('pdf', revision.id); }}>Export PDF</button><button disabled={blocked} onClick={() => { void exportDocument('docx', revision.id); }}>Export DOCX</button></div></>} />}
               </aside>}
             </div> : !loadingDocument && !saveError && !accessIssue && !listLoading && <section className="state"><h1>{space ? 'No documents yet' : 'No accessible spaces'}</h1><p>{space ? space.access === 'editor' ? 'Create a document when you are ready.' : 'An editor can add the first document.' : user?.role === 'administrator' ? 'Create a space to organize your documents.' : 'Ask an administrator for space access.'}</p></section>}
+            </div>
           </main>
         </div>}
       </>}
@@ -840,7 +908,7 @@ export function App() {
     }}><Dialog.Portal><Dialog.Overlay className="dialog-overlay" /><Dialog.Content className="dialog" onCloseAutoFocus={event => {
       event.preventDefault();
       const composer = commentState.dirty && document.querySelector<HTMLElement>('.bn-comment-editor .bn-editor[contenteditable="true"]');
-      if (composer) composer.focus(); else titleInput.current?.focus();
+      if (composer) composer.focus(); else focusDocumentTitle();
     }}><Dialog.Title>{blocked ? 'Please wait' : 'Unsaved changes'}</Dialog.Title><Dialog.Description>{blocked ? 'The current request must finish before leaving this document.' : commentState.dirty ? 'Continuing discards your unsent comment text and any other local draft. Accepted document changes remain shared.' : live ? 'Your shared edits have not been saved as a revision. Accepted changes remain shared; leaving discards only unsent work in this tab.' : 'Your title and body have not been saved. Continuing will discard your local changes.'}</Dialog.Description><div className="actions"><Dialog.Close className="primary">Keep editing</Dialog.Close><button disabled={blocked} onClick={() => {
       const action = pending?.action; setPending(null); resetDraftToBaseline();
       if (navigationBlocker.state === 'blocked') navigationBlocker.proceed(); else action?.();
@@ -852,8 +920,8 @@ export function App() {
         // A lost creation response may still have committed. Refresh only navigation.
         void listDocuments(space); return false;
       }}
-      returnFocus={() => { if (actionsTrigger.current?.isConnected) actionsTrigger.current.focus(); else titleInput.current?.focus(); }} />}
-    <Dialog.Root open={spacePrompt} onOpenChange={open => { if (!creatingSpace) setSpacePrompt(open); }}><Dialog.Portal><Dialog.Overlay className="dialog-overlay" /><Dialog.Content className="dialog" onCloseAutoFocus={event => { event.preventDefault(); if (spaceTrigger.current?.isConnected) spaceTrigger.current.focus(); else titleInput.current?.focus(); }} onEscapeKeyDown={event => { if (creatingSpace) event.preventDefault(); }} onPointerDownOutside={event => { if (creatingSpace) event.preventDefault(); }}>
+      returnFocus={() => { if (actionsTrigger.current?.isConnected) actionsTrigger.current.focus(); else focusDocumentTitle(); }} />}
+    <Dialog.Root open={spacePrompt} onOpenChange={open => { if (!creatingSpace) setSpacePrompt(open); }}><Dialog.Portal><Dialog.Overlay className="dialog-overlay" /><Dialog.Content className="dialog" onCloseAutoFocus={event => { event.preventDefault(); if (spaceTrigger.current?.isConnected) spaceTrigger.current.focus(); else focusDocumentTitle(); }} onEscapeKeyDown={event => { if (creatingSpace) event.preventDefault(); }} onPointerDownOutside={event => { if (creatingSpace) event.preventDefault(); }}>
       <Dialog.Title>New space</Dialog.Title><Dialog.Description>Create a space for private documents. Only administrators have access until members are granted access.</Dialog.Description>
       <form className="space-form" onSubmit={event => { event.preventDefault(); void createSpace(); }}>
         <label htmlFor="new-space-name">Space name</label><input id="new-space-name" required maxLength={200} value={spaceName} disabled={creatingSpace} onChange={event => setSpaceName(event.target.value)} />
@@ -862,7 +930,7 @@ export function App() {
         <div className="actions"><Dialog.Close type="button" disabled={creatingSpace}>Cancel</Dialog.Close><button className="primary" disabled={creatingSpace || !spaceName.trim()}>Create space</button></div>
       </form>
     </Dialog.Content></Dialog.Portal></Dialog.Root>
-    <Dialog.Root open={moveOpen && Boolean(base && space && !accessIssue)} onOpenChange={open => { if (!moveWriting.current) setMoveOpen(open); }}><Dialog.Portal><Dialog.Overlay className="dialog-overlay" /><Dialog.Content className="dialog" onCloseAutoFocus={event => { event.preventDefault(); if (actionsTrigger.current?.isConnected) actionsTrigger.current.focus(); else titleInput.current?.focus(); }} onEscapeKeyDown={event => { if (moveWriting.current) event.preventDefault(); }} onPointerDownOutside={event => { if (moveWriting.current) event.preventDefault(); }}>
+    <Dialog.Root open={moveOpen && Boolean(base && space && !accessIssue)} onOpenChange={open => { if (!moveWriting.current) setMoveOpen(open); }}><Dialog.Portal><Dialog.Overlay className="dialog-overlay" /><Dialog.Content className="dialog" onCloseAutoFocus={event => { event.preventDefault(); if (actionsTrigger.current?.isConnected) actionsTrigger.current.focus(); else focusDocumentTitle(); }} onEscapeKeyDown={event => { if (moveWriting.current) event.preventDefault(); }} onPointerDownOutside={event => { if (moveWriting.current) event.preventDefault(); }}>
       <Dialog.Title>Move document</Dialog.Title><Dialog.Description>Choose a location in this space. Content, history and links stay unchanged.</Dialog.Description>
       <form className="space-form" onSubmit={event => { event.preventDefault(); void moveDocument(); }}>
         <label htmlFor="move-parent">Parent document</label><select id="move-parent" value={moveParentId} disabled={blocked || listLoading || moveNeedsCompare} onChange={event => { setMoveParentId(event.target.value); setMoveError(''); }}>
@@ -876,10 +944,10 @@ export function App() {
       </form>
     </Dialog.Content></Dialog.Portal></Dialog.Root>
     {accessOpen && space && user?.role === 'administrator' && !accessIssue && <SpaceAccess key={`${user.id}:${space.id}`} space={space} onClose={() => setAccessOpen(false)}
-      onCloseFocus={() => { if (accessTrigger.current?.isConnected) accessTrigger.current.focus(); else titleInput.current?.focus(); }} onBusyChange={setAccessBusy}
+      onCloseFocus={() => { if (accessTrigger.current?.isConnected) accessTrigger.current.focus(); else focusDocumentTitle(); }} onBusyChange={setAccessBusy}
       onChanged={updated => { if (accessTicket === generation.current && updated.id === space.id) { setSpace(updated); setSpaces(previous => previous.map(item => item.id === updated.id ? updated : item)); } }} onPermissionFailure={async error => { if (accessTicket === generation.current) await recheckAccess(error); }} />}
     {searchOpen && user && !accessIssue && <SearchDialog spaces={spaces} onClose={() => setSearchOpen(false)} onPick={pickSearchResult} onFailure={unavailable} />}
-    <Dialog.Root open={Boolean(publicationPrompt)} onOpenChange={open => { if (!open) setPublicationPrompt(null); }}><Dialog.Portal><Dialog.Overlay className="dialog-overlay" /><Dialog.Content className="dialog" onCloseAutoFocus={event => { event.preventDefault(); titleInput.current?.focus(); }}>
+    <Dialog.Root open={Boolean(publicationPrompt)} onOpenChange={open => { if (!open) setPublicationPrompt(null); }}><Dialog.Portal><Dialog.Overlay className="dialog-overlay" /><Dialog.Content className="dialog" onCloseAutoFocus={event => { event.preventDefault(); focusDocumentTitle(); }}>
       <Dialog.Title>{publicationPrompt?.action === 'publish' ? `Publish revision ${publicationPrompt.revision.revisionNumber}?` : 'Withdraw publication?'}</Dialog.Title>
       <Dialog.Description>{publicationPrompt?.action === 'publish'
         ? 'Anyone with the public link can read this saved revision, including its content and links. Unsaved edits and later private saves are not included.'
@@ -887,6 +955,7 @@ export function App() {
       {publicationPrompt?.action === 'publish' && <p className="publication-selection">{publicationPrompt.revision.title} · revision {publicationPrompt.revision.revisionNumber}</p>}
       <div className="actions"><Dialog.Close>Keep editing</Dialog.Close><button className="primary" disabled={!mayPublish || blocked} onClick={() => { void changePublication(); }}>{publicationPrompt?.action === 'publish' ? `Publish revision ${publicationPrompt.revision.revisionNumber}` : 'Withdraw publication'}</button></div>
     </Dialog.Content></Dialog.Portal></Dialog.Root>
+    <Notifications manager={notifications} />
     <footer className="footer">Scrawl · <a href="/assets/LICENSE.txt" target="_blank" rel="noopener noreferrer">AGPL-3.0-only</a> · <a href="/assets/THIRD_PARTY_NOTICES.txt" target="_blank" rel="noopener noreferrer">Third-party notices</a> · <a href="/assets/scrawl-source.tar.gz" download>Source for this build</a></footer>
   </>;
 }

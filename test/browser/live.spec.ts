@@ -10,6 +10,7 @@ import { getDocument, OPS } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import sharp from 'sharp';
 import { validateContent } from '../../src/shared/content.js';
 import type { operations } from '../../web/src/api/schema.js';
+import { editDocument, readingTitle, replaceDocumentBody } from './editor-mode.js';
 
 let demo: BrowserDemo, seeded: DemoBResult;
 test.beforeAll(async () => { demo = await createBrowserDemo({ collaboration: true }); });
@@ -41,11 +42,13 @@ async function nativeSelectionEvidence(page: Page) {
   });
 }
 
-async function login(page: Page, role: 'administrator' | 'editor' | 'reader' | 'outsider' = 'editor') {
+async function login(page: Page, role: 'administrator' | 'editor' | 'reader' | 'outsider' = 'editor', mode: 'edit' | 'read' = 'edit') {
   await page.goto(`${demo.origin}/?space=${seeded.spaceId}&document=${seeded.documentId}`);
   await demo.fillCredentials(page.getByLabel('Email', { exact: true }), page.getByLabel('Password', { exact: true }), role);
   await page.getByRole('button', { name: 'Log in', exact: true }).click(); demo.authenticationCompleted();
   await expect(page.getByRole('button', { name: 'Log out', exact: true })).toBeVisible();
+  // Authoring regressions deliberately enter Edit after the default reading view.
+  if (mode === 'edit' && (role === 'administrator' || role === 'editor')) await editDocument(page);
 }
 async function enroll(page: Page) {
   await page.getByLabel('Document actions', { exact: true }).click();
@@ -68,7 +71,7 @@ test('native two-tab title/body convergence, peer-safe undo, explicit checkpoint
   await login(page); await expect(title(page)).toBeVisible(); await enroll(page);
   const second = await context.newPage();
   try {
-    await second.goto(page.url());
+    await second.goto(page.url()); await editDocument(second);
     await expect(second.locator('.document-comments > summary')).toBeVisible();
     await expect(body(second)).toBeEditable();
     expect((await demo.database.prisma.documentLive.findFirstOrThrow({ where: { documentId: seeded.documentId } })).sequence).toBe(0n);
@@ -97,7 +100,8 @@ test('native two-tab title/body convergence, peer-safe undo, explicit checkpoint
     await expect(save(second)).toBeDisabled();
     const current = await latest(context); expect(current.currentRevisionNumber).toBe(3);
     expect(current.revision.title).toBe('Complete second-tab draft after checkpoint'); expect(current.revision.plainText).toContain('peer contribution');
-    await second.reload(); await expect(title(second)).toHaveValue(current.revision.title);
+    await second.reload(); await expect(readingTitle(second)).toHaveText(current.revision.title);
+    await expect(body(second)).not.toBeEditable();
     await expect(body(second)).toContainText('peer contribution');
     expect(await second.evaluate(() => localStorage.length + sessionStorage.length)).toBe(0);
   } finally { second.on('dialog', dialog => dialog.accept()); await second.close(); }
@@ -117,7 +121,7 @@ test('a pending structural move preserves incoming peer edits and checkpoints th
     });
     expect(created.status()).toBe(201);
     const parent = await created.json() as operations['createDocument']['responses'][201]['content']['application/json'];
-    await page.reload(); await expect(title(page)).toHaveValue(original.revision.title);
+    await page.reload(); await expect(readingTitle(page)).toHaveText(original.revision.title);
     await enroll(page);
     const peer = await administrator.newPage(); await login(peer, 'administrator');
     await expect(body(peer)).toBeEditable();
@@ -223,7 +227,7 @@ test('supplied comment composer persists private threads; readers can view but n
   await page.locator('.document-comments > summary').click();
   await expect(page.locator('.document-comments')).toContainText('Check the synthetic recovery procedure.');
   expect((await latest(context)).currentRevisionNumber).toBe(1);
-  await page.reload(); await expect(body(page)).toBeEditable(); await page.locator('.document-comments > summary').click();
+  await page.reload(); await editDocument(page); await expect(body(page)).toBeEditable(); await page.locator('.document-comments > summary').click();
   await expect(page.locator('.document-comments')).toContainText('Check the synthetic recovery procedure.');
   const reader = await browser.newContext(), outsider = await browser.newContext();
   try {
@@ -253,14 +257,16 @@ test('shared restore creates a new epoch and revision; archive/unarchive and exp
   await page.getByRole('button', { name: 'History', exact: true }).click();
   await page.getByRole('button', { name: /^Revision 1\b/ }).click();
   await page.getByRole('button', { name: 'Restore revision 1', exact: true }).click();
-  await expect(title(page)).toHaveValue(original.revision.title);
-  await expect(body(page)).toBeEditable().catch(error => { if (runtimeErrors.length) throw new Error(runtimeErrors.join('\n')); throw error; });
+  await expect(readingTitle(page)).toHaveText(original.revision.title);
+  await expect(body(page)).not.toBeEditable().catch(error => { if (runtimeErrors.length) throw new Error(runtimeErrors.join('\n')); throw error; });
   expect((await latest(context)).currentRevisionNumber).toBe(3);
   expect((await demo.database.prisma.document.findUniqueOrThrow({ where: { id: seeded.documentId } })).liveEpoch).not.toBe(oldEpoch);
   await page.getByLabel('Document actions', { exact: true }).click(); await page.getByRole('button', { name: 'Archive', exact: true }).click();
   await expect(page.getByText(/Archived/).first()).toBeVisible(); await expect(body(page)).not.toBeEditable();
   await page.getByLabel('Document actions', { exact: true }).click(); await page.getByRole('button', { name: 'Unarchive', exact: true }).click();
-  await expect(body(page)).toBeEditable(); expect((await latest(context)).currentRevisionNumber).toBe(3);
+  await expect(page.getByRole('button', { name: 'Edit', exact: true })).toBeEnabled();
+  await expect(body(page)).not.toBeEditable(); await expect(readingTitle(page)).toHaveText(original.revision.title);
+  expect((await latest(context)).currentRevisionNumber).toBe(3);
   const response = await context.request.get(`${demo.origin}/api/v1/documents/${seeded.documentId}/export`);
   expect(response.status()).toBe(200); const exported = await response.json();
   expect(exported.revision.revisionNumber).toBe(3);
@@ -279,7 +285,7 @@ test('an interrupted unsent draft is retained separately and deliberate reconnec
   await login(page); await expect(title(page)).toBeVisible(); const original = await latest(context); await enroll(page);
   forwarding = false;
   await title(page).fill('Complete unsent synthetic title');
-  await body(page).fill('Complete unsent synthetic body with private in-memory work.');
+  await replaceDocumentBody(page, 'Complete unsent synthetic body with private in-memory work.');
   await expect.poll(() => dropped).toBeGreaterThan(0);
   if (!wire) throw new Error('Expected actual routed shared connection');
   await wire.close({ code: 1011, reason: 'Synthetic connection interruption' });
@@ -312,20 +318,23 @@ test('native rich-block and title undo/redo preserve another tab\'s heading, tab
   await login(page); await expect(title(page)).toBeVisible(); const original = await latest(context); await enroll(page);
   const second = await context.newPage();
   try {
-    await second.goto(page.url()); await expect(body(second)).toBeEditable();
-    await body(page).fill('Shared native integration');
+    await second.goto(page.url()); await editDocument(second); await expect(body(second)).toBeEditable();
+    await replaceDocumentBody(page, 'Shared native integration');
     await slashBlock(page, 'h2', 'Heading 2'); await page.keyboard.insertText('Local heading');
     // Supplied peer cursor labels contribute to the heading's accessible name.
     const peerHeading = body(second).getByRole('heading').filter({ hasText: 'Local heading' });
-    await peerHeading.click(); await second.keyboard.press('End'); await second.keyboard.insertText(' peer heading');
+    await second.bringToFront();
+    await peerHeading.click(); await second.keyboard.press('End'); await second.keyboard.type(' peer heading');
+    await expect(peerHeading).toContainText('peer heading');
     await expect(body(page)).toContainText('peer heading');
-    await slashBlock(page, 'table', 'Table');
+    await page.bringToFront(); await slashBlock(page, 'table', 'Table');
     const peerCell = body(second).getByRole('table').getByRole('cell').first();
-    await peerCell.click(); await second.keyboard.insertText('peer table'); await expect(body(page)).toContainText('peer table');
-    await title(page).fill('Local title'); await expect(title(second)).toHaveValue('Local title');
-    await title(second).focus(); await second.keyboard.press('End'); await second.keyboard.insertText(' peer title');
+    await second.bringToFront(); await peerCell.click(); await second.keyboard.type('peer table');
+    await expect(peerCell).toContainText('peer table'); await expect(body(page)).toContainText('peer table');
+    await page.bringToFront(); await title(page).fill('Local title'); await expect(title(second)).toHaveValue('Local title');
+    await second.bringToFront(); await title(second).focus(); await second.keyboard.press('End'); await second.keyboard.insertText(' peer title');
     await expect(title(page)).toHaveValue('Local title peer title');
-    await title(page).focus(); await page.keyboard.press('ControlOrMeta+z');
+    await page.bringToFront(); await title(page).focus(); await page.keyboard.press('ControlOrMeta+z');
     await expect(title(page)).toHaveValue(`${original.revision.title} peer title`); await expect(title(second)).toHaveValue(`${original.revision.title} peer title`);
     await title(page).press('ControlOrMeta+Shift+z'); await expect(title(page)).toHaveValue('Local title peer title');
     await page.getByRole('button', { name: 'Undo my changes', exact: true }).click();
@@ -341,7 +350,7 @@ test('native rich-block and title undo/redo preserve another tab\'s heading, tab
 test('failed checkpoints retain edits; real membership revocation closes the connection and removes server actions', async ({ page, context, browser }) => {
   await login(page); await expect(title(page)).toBeVisible(); await enroll(page);
   await title(page).fill('Unsaved shared title after failed checkpoint');
-  await body(page).fill('The complete shared body remains available in this tab.');
+  await replaceDocumentBody(page, 'The complete shared body remains available in this tab.');
   await expect(save(page)).toBeEnabled();
   const endpoint = `**/api/v1/documents/${seeded.documentId}/live/*/checkpoint`;
   await page.route(endpoint, route => route.fulfill({ status: 500, contentType: 'application/problem+json',
@@ -406,11 +415,11 @@ test('a failed live-state read stays read-only and explicit retry recovers the a
   const endpoint = `**/api/v1/documents/${seeded.documentId}/live`;
   await page.route(endpoint, route => route.request().method() === 'GET'
     ? route.fulfill({ status: 500, contentType: 'application/json', body: '{}' }) : route.continue());
-  await login(page); await expect(title(page)).toBeVisible();
+  await login(page, 'editor', 'read'); await expect(readingTitle(page)).toBeVisible();
   await expect(page.getByRole('alert').filter({ hasText: 'Shared document state could not be checked.' })).toBeVisible();
   await expect(body(page)).not.toBeEditable(); await expect(save(page)).toHaveCount(0);
   await page.unroute(endpoint); await page.getByRole('button', { name: 'Retry shared document', exact: true }).click();
-  await expect(body(page)).toBeEditable(); await enroll(page);
+  await editDocument(page); await enroll(page);
 });
 
 test('a successful enrollment followed by a failed head read cannot fall back to solo writes; retry uses the current checkpoint ETag', async ({ page, context }) => {
@@ -438,9 +447,9 @@ test('unsent native comment text blocks navigation and reload; in-flight submiss
     headers: { Origin: demo.origin }, data: { title: 'Comment navigation target', content: original.revision.content },
   }); expect(other.status()).toBe(201);
   await page.reload(); await page.getByRole('link', { name: 'Comment navigation target', exact: true }).click();
-  await expect(title(page)).toHaveValue('Comment navigation target');
+  await expect(readingTitle(page)).toHaveText('Comment navigation target');
   await page.getByRole('link', { name: original.revision.title, exact: true }).click();
-  await expect(title(page)).toHaveValue(original.revision.title); await enroll(page);
+  await expect(readingTitle(page)).toHaveText(original.revision.title); await enroll(page);
   await body(page).press('ControlOrMeta+Home'); await body(page).press('Shift+End');
   await page.getByRole('button', { name: 'Add comment', exact: true }).click();
   const composer = page.locator('.bn-comment-editor .bn-editor');
@@ -554,7 +563,7 @@ test('restart preserves live content and comments; a disabled runtime shows only
     try {
       await disabled.goto(page.url());
       await expect(disabled.getByRole('status').filter({ hasText: 'Shared editing is disabled.' })).toBeVisible();
-      await expect(title(disabled)).toHaveValue(original.revision.title); await expect(title(disabled)).not.toBeEditable();
+      await expect(readingTitle(disabled)).toHaveText(original.revision.title); await expect(disabled.getByRole('button', { name: 'Edit', exact: true })).toHaveCount(0);
       await expect(body(disabled)).not.toContainText('Live-only durable body.'); await expect(body(disabled)).not.toBeEditable();
       await expect(save(disabled)).toHaveCount(0); await expect(disabled.locator('.document-comments')).toHaveCount(0);
       await expect(disabled.getByText('Durable private comment across process restart.')).toHaveCount(0);
@@ -571,7 +580,7 @@ test('restart preserves live content and comments; a disabled runtime shows only
       await demo.restart(true); enabled = true;
       const recovered = await context.newPage();
       try {
-        await recovered.goto(disabled.url()); await expect(body(recovered)).toBeEditable();
+        await recovered.goto(disabled.url()); await editDocument(recovered); await expect(body(recovered)).toBeEditable();
         await expect(title(recovered)).toHaveValue('Durable live title, not yet checkpointed');
         await expect(body(recovered)).toContainText('Live-only durable body.');
         await recovered.locator('.document-comments > summary').click();
@@ -695,7 +704,7 @@ test('native reply and own-comment editing retain complete text after failures a
   await page.unroute(editEndpoint); await edit.press('ControlOrMeta+Enter');
   await expect(card.locator('.bn-thread-comment [contenteditable="true"]')).toHaveCount(0);
   await expect(card.locator('.bn-thread-comments')).toContainText('Complete retained native reply after an explicit edit.');
-  await page.reload(); await expect(body(page)).toBeEditable(); await sidebar.locator('summary').click();
+  await page.reload(); await editDocument(page); await expect(body(page)).toBeEditable(); await sidebar.locator('summary').click();
   await expect(sidebar.locator('.bn-thread-comment')).toHaveCount(2);
   await expect(sidebar).toContainText('Complete retained native reply after an explicit edit.');
   expect((await latest(context)).currentRevisionNumber).toBe(1); expect(runtimeErrors).toEqual([]);
@@ -802,7 +811,7 @@ test('live-only title, body and comments stay out of native/PDF/DOCX snapshots, 
   const runtimeErrors: string[] = []; page.on('pageerror', error => runtimeErrors.push(error.message));
   await login(page); await expect(title(page)).toBeVisible();
   await title(page).fill('Checkpointed native export snapshot');
-  await body(page).fill('Saved body available in current exports.');
+  await replaceDocumentBody(page, 'Saved body available in current exports.');
   await save(page).click(); await expect(page.getByRole('status').filter({ hasText: 'Saved · revision 2' })).toBeVisible();
   const saved = await latest(context); expect(saved.currentRevisionNumber).toBe(2); await enroll(page);
   const administrator = await browser.newContext(), anonymous = await browser.newContext();
@@ -820,7 +829,7 @@ test('live-only title, body and comments stay out of native/PDF/DOCX snapshots, 
     const path = await link.getAttribute('href'); if (!path) throw new Error('No selected-revision publication link');
     await page.bringToFront();
     await title(page).fill('LiveOnlyExportBoundary title');
-    await body(page).fill('LiveOnlyExportBoundary body, not checkpointed.');
+    await replaceDocumentBody(page, 'LiveOnlyExportBoundary body, not checkpointed.');
     await expect(body(adminPage)).toContainText('LiveOnlyExportBoundary body');
     await body(page).getByText('LiveOnlyExportBoundary body, not checkpointed.', { exact: true }).click({ clickCount: 3 });
     await page.getByRole('button', { name: 'Add comment', exact: true }).click();
@@ -941,16 +950,16 @@ test('native live uploads require a checkpoint for saved exports and never advan
   const availability = new Promise<void>(resolve => { allowAvailability = resolve; });
   await page.route('**/api/v1/collaboration', async route => { await availability; await route.continue(); });
   try {
-    await login(page, 'administrator'); await expect(body(page)).toBeVisible();
+    await login(page, 'administrator', 'read'); await expect(body(page)).toBeVisible();
     await expect(body(page)).not.toBeEditable();
     const checked = page.waitForResponse(response => response.request().method() === 'GET'
       && new URL(response.url()).pathname === `/api/v1/documents/${seeded.documentId}/live`);
     allowAvailability?.();
     const response = await checked; expect(response.status()).toBe(409); await response.finished();
-    await expect(body(page)).toBeEditable();
+    await editDocument(page); await expect(body(page)).toBeEditable();
   } finally { allowAvailability?.(); }
   await page.unroute('**/api/v1/collaboration');
-  await body(page).fill('Synthetic saved image and later shared upload.');
+  await replaceDocumentBody(page, 'Synthetic saved image and later shared upload.');
   async function upload(name: string, bytes: Buffer) {
     await slashBlock(page, 'image', 'Image');
     await expect(page.getByRole('tab', { name: 'Upload', exact: true })).toBeVisible();
@@ -1061,7 +1070,7 @@ test('nested native list undo/redo preserves another account\'s child and checkp
   const administrator = await browser.newContext();
   try {
     const peer = await administrator.newPage(); await login(peer, 'administrator'); await expect(body(peer)).toBeEditable();
-    await body(page).fill('Native nested list checkpoint');
+    await replaceDocumentBody(page, 'Native nested list checkpoint');
     await slashBlock(page, 'bullet', 'Bullet List'); await page.keyboard.insertText('Local parent');
     await page.keyboard.press('Enter'); await page.keyboard.press('Tab'); await page.keyboard.insertText('Local child');
     const peerChild = body(peer).locator('.bn-inline-content').filter({ hasText: 'Local child' });
@@ -1136,9 +1145,9 @@ test('native reaction failures stay visible, preserve accepted threads and requi
     headers: { Origin: demo.origin }, data: { title: 'Reaction navigation target', content: original.revision.content },
   }); expect(target.status()).toBe(201);
   await page.reload(); await page.getByRole('link', { name: 'Reaction navigation target', exact: true }).click();
-  await expect(title(page)).toHaveValue('Reaction navigation target');
+  await expect(readingTitle(page)).toHaveText('Reaction navigation target');
   await page.getByRole('link', { name: original.revision.title, exact: true }).click();
-  await expect(title(page)).toHaveValue(original.revision.title); await enroll(page);
+  await expect(readingTitle(page)).toHaveText(original.revision.title); await enroll(page);
   await body(page).press('ControlOrMeta+Home'); await body(page).press('Shift+End');
   const selection = await nativeSelectionEvidence(page);
   console.info('Native reaction comment selection before click:', JSON.stringify(selection));
@@ -1242,7 +1251,7 @@ test('abrupt process death preserves acknowledged native content and comments ac
     const recovered = await context.newPage(), recoveredPeer = await administrator.newPage();
     try {
       for (const tab of [recovered, recoveredPeer]) {
-        await tab.goto(page.url()); await expect(body(tab)).toBeEditable();
+        await tab.goto(page.url()); await editDocument(tab); await expect(body(tab)).toBeEditable();
         await expect(title(tab)).toHaveValue('Acknowledged live title across abrupt process death');
         await expect(body(tab)).toContainText('Acknowledged native crash recovery body.');
         await tab.locator('.document-comments > summary').click();
@@ -1315,7 +1324,7 @@ test('operator account recovery revokes every live session while preserving an u
 
 test('save shortcut checkpoints shared work but never submits from the native comment composer', async ({ page, context }) => {
   await login(page); await expect(title(page)).toBeVisible(); await enroll(page);
-  await body(page).fill('Native shared shortcut document.'); await expect(save(page)).toBeEnabled();
+  await replaceDocumentBody(page, 'Native shared shortcut document.'); await expect(save(page)).toBeEnabled();
   let checkpoints = 0;
   page.on('request', request => { if (request.method() === 'POST' && new URL(request.url()).pathname.endsWith('/checkpoint')) checkpoints++; });
   await body(page).press('ControlOrMeta+s'); await expect(page.getByText('Saved revision 2.', { exact: true })).toBeVisible(); expect(checkpoints).toBe(1);

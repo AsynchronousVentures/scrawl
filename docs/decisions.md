@@ -28,6 +28,8 @@ These are proposed engineering choices the agent may refine through a short deci
 | Permission model | Space reader/editor; instance administrator has all-space access |
 | Content | Native BlockNote standard blocks, Scrawl version metadata, official shadcn UI/server utilities; strict security/resource validation |
 | Save | Explicit save, immutable revision, optimistic concurrency |
+| Reading and editing | Saved documents open read-only; authorized writers choose Edit. New drafts start editable. Save preserves undo; Done editing protects unsaved solo work and never rolls back shared content |
+| Navigation and feedback | Reuse same-space navigation metadata while rechecking current access and fetching the requested saved document. Retain the inactive previous page until the read settles; never cache dirty bodies/ETags. Transient confirmations use supplied Base UI toasts; failures/conflicts/access loss remain persistent |
 | Private links | Persisted space/document slugs in readable paths; UUIDs remain internal/API identities |
 | Frontend timing | Thin UI after private-core tests, not after all backend capabilities |
 | Publishing | Disabled by default, administrator action, selected-revision grant |
