@@ -1,5 +1,11 @@
 # Validation
 
+## CI run duplication
+
+The local workflow now limits `push` runs to `main`, while retaining `pull_request` runs. An integration-branch update with an open PR will therefore request one complete CI run instead of separate push and PR runs. Default-branch pushes still run the complete checks. The job, PostgreSQL 18 service, permissions, concurrency, timeouts and every regression command are unchanged. This follows GitHub's [branch event filters](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#onpushbranchestagsbranches-ignoretags-ignore).
+
+Local YAML parsing and before/after comparisons verified the event filter and unchanged job/settings/commands. This change is deliberately unpushed and has not been exercised on GitHub. It does not replenish the exhausted 2,000-minute allowance, change billing/security settings or authorize resuming pushes. Development/checks remain local. No path filter or skipped test is being used to present an unverified change as passing.
+
 ## Local development recovery
 
 `npm run recovery` now captures a stopped PostgreSQL 18 development instance with its matching private files and restores only into a new `scrawl_recovery_` database/storage directory. Runtime secrets remain separately managed. Native custom-format dump/restore, complete-manifest and SHA-256 checks, source/restored record comparisons, saved-content integrity and current HTTP authorization are implemented. Existing outputs/targets, connected source applications, production/remote/schema targets, malformed/incomplete manifests, traversal, symlink/tampered files and failed native restore are rejected. Unregistered private UUID files are preserved rather than cleaned implicitly. Exact commands and scope are in [development recovery](docs/recovery.md).
