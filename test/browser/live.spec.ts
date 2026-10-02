@@ -1316,6 +1316,7 @@ test('save shortcut checkpoints shared work but never submits from the native co
   await body(page).press('ControlOrMeta+s'); await expect(page.getByText('Saved revision 2.', { exact: true })).toBeVisible(); expect(checkpoints).toBe(1);
   await title(page).fill('Uncheckpointed shared title'); await expect(save(page)).toBeEnabled();
   await body(page).press('ControlOrMeta+Home'); await body(page).press('Shift+End');
+  console.info('Native save-shortcut comment selection before click:', JSON.stringify(await nativeSelectionEvidence(page)));
   await page.getByRole('button', { name: 'Add comment', exact: true }).click();
   const composer = page.locator('.bn-comment-editor [contenteditable="true"]');
   await composer.fill('Complete unsent private comment.'); await composer.press('ControlOrMeta+s');
