@@ -93,7 +93,7 @@ The final test-source typecheck passed (`artifacts/presence-final-test-typecheck
 
 ## Single database target
 
-The maintainer stopped database-version development. CI now runs the same complete checks, migration deployment, database tests and browser workflows once against PostgreSQL 18, matching the existing demo. The 17/18 strategy matrix is removed; no assertions or test commands were removed. YAML parsing and assertions for the single target and every required regression command passed. Historical multi-version results below are retained as observed evidence, not an ongoing compatibility promise. No database, volume, migration or dependency was changed. Hosted execution of the revised workflow is not yet verified.
+The maintainer stopped database-version development and confirmed that ongoing work must use the existing PostgreSQL 18 instance only. CI runs the same complete checks, migration deployment, database tests and browser workflows once against PostgreSQL 18, matching the existing demo. The 17/18 strategy matrix is removed; no assertions or test commands were removed. YAML parsing and assertions for the single target and every required regression command passed. A follow-up source check confirmed both default Compose definitions use 18 and CI retains all regression commands without a matrix or 17 target. The architecture and legacy Compose comments now match this decision. Historical multi-version results below are retained as observed evidence, not an ongoing compatibility promise. No database, volume, migration or dependency was changed. Later hosted results and the current account infrastructure blocker are recorded in their feature sections.
 
 ## Native reaction readiness and accessible restrictions
 

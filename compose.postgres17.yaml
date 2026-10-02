@@ -1,4 +1,4 @@
-# PostgreSQL 17 compatibility for existing development volumes.
+# Legacy retained PostgreSQL 17 volume definition, not a development/test target.
 # Use this file explicitly to preserve the original postgres_data layout.
 # This is not a production deployment definition or a major-version upgrade.
 services:

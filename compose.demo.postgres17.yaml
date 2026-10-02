@@ -1,4 +1,4 @@
-# PostgreSQL 17 compatibility for the original disposable Demo A volume.
+# Legacy retained PostgreSQL 17 Demo A volume definition, not a development/test target.
 # Keep the same Compose project name used when its database was created.
 # This is not a production deployment definition or a major-version upgrade.
 name: scrawl-demo-a

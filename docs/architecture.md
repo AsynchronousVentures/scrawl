@@ -85,7 +85,7 @@ Search is a core authorized read over current nonarchived revision heads. A stor
 
 ## Runtime and dependencies
 
-One backend process, PostgreSQL, and a private attachment directory outside frontend assets. Fresh development uses PostgreSQL 18; PostgreSQL 17 remains a compatibility target, with one Prisma migration history. No Redis, queue, vector database, dynamic module loading or microservices. Fastify's built-in plugin registration composes first-party route groups. [S12]
+One backend process, PostgreSQL, and a private attachment directory outside frontend assets. Development and testing use the existing PostgreSQL 18 instance only, with one Prisma migration history. PostgreSQL 17 is no longer a compatibility target; its retained data and volumes remain untouched. No Redis, queue, vector database, dynamic module loading or microservices. Fastify's built-in plugin registration composes first-party route groups. [S12]
 
 P1 uses Better Auth 1.7.6 and Prisma 7.10.0, with one pg pool shared by Prisma and readiness. Better Auth's generated auth model layout feeds the reviewed Prisma migration history; no second migration engine is used. Core identity resolves real sessions and rechecks current sessions/roles after transaction locks. Core spaces owns visibility queries and membership transactions. Core documents consumes those authorized space operations, owns document/revision transactions, and uses the browser-safe native content contract and a server-utility adapter. HTTP adapters only validate, translate, and serialize explicit DTOs. [S5]
 
