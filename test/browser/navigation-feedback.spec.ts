@@ -69,7 +69,7 @@ test('warm navigation keeps the tree and page geometry while reading fresh conte
     expect(await tree!.evaluate(element => element.isConnected)).toBe(true);
     expect(await editor!.evaluate(element => element.isConnected)).toBe(true);
     expect(await page.locator('#document-title').boundingBox()).toEqual(before);
-    await expect(page.locator('main [inert]')).toHaveCount(1);
+    await expect(page.locator('main > [inert]')).toHaveCount(1);
     await expect(disclosure).toHaveAttribute('aria-expanded', 'true');
     await expect(page.getByText('Loading documents…', { exact: true })).toHaveCount(0);
     await expect(page.getByText('Loading favorites…', { exact: true })).toHaveCount(0);

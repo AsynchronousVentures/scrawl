@@ -57,7 +57,7 @@ export function Editor({ initialContent, editable, disabled = false, onChange, o
   callbacks.current = { onChange, onValidationChange, uploadFile, resolveFileUrl };
   const [error, setError] = useState<string | null>(null);
   const [activeHeading, setActiveHeading] = useState<string | null>(null);
-  const [outlineOpen, setOutlineOpen] = useState(true);
+  const [outlineOpen, setOutlineOpen] = useState(() => !matchMedia('(max-width: 980px)').matches);
   // Saving changes the comparison baseline, not this editor or its undo stack.
   // The parent remounts for an intentional navigation, restore, or discard.
   const [initial] = useState(() => validateContent(initialContent).content);

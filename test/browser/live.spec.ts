@@ -830,7 +830,7 @@ test('live-only title, body and comments stay out of native/PDF/DOCX snapshots, 
     await page.bringToFront();
     await title(page).fill('LiveOnlyExportBoundary title');
     await replaceDocumentBody(page, 'LiveOnlyExportBoundary body, not checkpointed.');
-    await expect(body(adminPage)).toContainText('LiveOnlyExportBoundary body');
+    await expect(body(adminPage)).toContainText('LiveOnlyExportBoundary body, not checkpointed.');
     await body(page).getByText('LiveOnlyExportBoundary body, not checkpointed.', { exact: true }).click({ clickCount: 3 });
     await page.getByRole('button', { name: 'Add comment', exact: true }).click();
     await page.locator('.bn-comment-editor [contenteditable="true"]').fill('LiveOnlyExportBoundary private comment.');
@@ -844,6 +844,9 @@ test('live-only title, body and comments stay out of native/PDF/DOCX snapshots, 
     expect(validateContent(exported.content).content).toEqual(saved.revision.content);
     expect(JSON.stringify(exported)).not.toContain('LiveOnlyExportBoundary');
     expect(JSON.stringify(exported)).not.toMatch(/"(?:threads|password|token|session|account|email|cookie)"\s*:/i);
+    // Compare duplication against acknowledged content, not the last few queued keystrokes.
+    await expect(save(page)).toBeEnabled();
+    await expect(save(adminPage)).toBeEnabled();
     const sharedBefore = await context.request.get(`${demo.origin}/api/v1/documents/${seeded.documentId}/live`);
     expect(sharedBefore.status()).toBe(200); const sharedSnapshot: unknown = await sharedBefore.json();
     const headBefore = await latest(context);
