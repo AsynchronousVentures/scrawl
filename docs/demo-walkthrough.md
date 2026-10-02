@@ -282,3 +282,13 @@ node --import ../../node_modules/tsx/dist/loader.mjs ../../scripts/content-check
 ```
 
 The observed scan reports `ok: true`, 7 documents, 10 revisions and one attachment, zero integrity errors. Output contains only aggregate counts/categories; missing or inconsistent data returns exit status 1. This command does not check live state/comments or unregistered files and is not a backup. No migration or restart is required for this host-only addition.
+
+## Personal favorites
+
+At https://agentvm.beardie-tone.ts.net:10000/spaces/scrawl-field-guide/documents/start-here, open Document actions and choose Add to favorites or Remove from favorites. Favorites appear above the space selector. Readers can keep their own favorites. Links preserve native new-tab behavior and the same unsaved-navigation guard. Start here is favorited for the synthetic administrator. This preference does not save document edits or create a revision.
+
+Try adding a favorite with unsaved title/body edits, then use its link to another document. Keep editing cancels navigation without replacing your work. An uncertain favorite response shows a separate error; Check favorite status reads the server before allowing another change. Archived or inaccessible documents are omitted; unarchive or restored access can reveal an existing preference again.
+
+The retained preview has the tenth additive migration, with all 12 prior table fingerprints/counts preserved. Fresh role/publication checks and a real favorite workflow pass without changing document content/history/ETags. [Running favorites screenshot](https://uwvqig7mu5.ufs.sh/f/tJOw1mn9psOE3XCvnYOXCby2MI4afdLiu7mWkov5PeT8RzlA), account area masked. Existing credentials remain in the owner-only local `artifacts/demo18/artifacts/demo/credentials.json`; do not publish that file. Restart with `systemctl --user restart scrawl-integration-demo.service`, then wait for `/health/ready` to return 200.
+
+On another installation, run `npm run db:migrate` against its existing PostgreSQL 18 target before starting this backend. Do not reset or create a second version target. The focused command is `NODE_ENV=test npm run test:browser -- --grep 'favorites '`. The full regression and hosted results are recorded in VALIDATION.md; this integration work is not merged or released.

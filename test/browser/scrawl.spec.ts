@@ -37,6 +37,187 @@ async function navigationDocument(context: BrowserContext) {
   return (await readDocument(context, value.id)).data;
 }
 
+async function favoriteAction(page: Page, name = 'Add to favorites') {
+  await page.getByLabel('Document actions', { exact: true }).click();
+  await page.getByRole('button', { name, exact: true }).click();
+}
+
+const favoriteNavigation = (page: Page) => page.getByRole('navigation', { name: 'Favorites', exact: true });
+
+test('favorites preserve complete dirty edits, ETags and conflict reconciliation while guarding navigation', async ({ page, context }) => {
+  await login(page); const baseline = await readDocument(context);
+  const other = await navigationDocument(context);
+  expect((await apiRequest(context, `/api/v1/documents/${other.id}/favorite`, {
+    method: 'PUT', headers: { origin: demo.origin }, data: { favorited: true },
+  })).status()).toBe(200);
+  await title(page).fill('Unsaved favorite title'); await body(page).fill('Complete unsaved favorite body.');
+  await favoriteAction(page);
+  await expect(favoriteNavigation(page).getByRole('link', { name: new RegExp(baseline.data.revision.title) })).toBeVisible();
+  await expect(title(page)).toHaveValue('Unsaved favorite title'); await expect(body(page)).toHaveText('Complete unsaved favorite body.');
+  expect(await readDocument(context)).toEqual(baseline);
+  const opened = context.waitForEvent('page');
+  await favoriteNavigation(page).getByRole('link', { name: /Another handbook/ }).click({ modifiers: ['ControlOrMeta'] });
+  const tab = await opened;
+  try { await expect(title(tab)).toHaveValue(other.revision.title); }
+  finally { await tab.close(); }
+  await expect(title(page)).toHaveValue('Unsaved favorite title');
+  await expect(body(page)).toHaveText('Complete unsaved favorite body.');
+  const changed = await apiRequest(context, `/api/v1/documents/${seeded.documentId}`, {
+    method: 'PATCH', headers: { origin: demo.origin, 'if-match': baseline.etag }, data: { title: 'Newer saved favorite title' },
+  });
+  expect(changed.status()).toBe(200);
+  await save(page).click(); await expect(page.getByRole('complementary', { name: 'Save conflict' })).toBeVisible();
+  await favoriteAction(page, 'Remove from favorites');
+  await expect(favoriteNavigation(page).getByRole('link', { name: /Newer saved favorite title/ })).toHaveCount(0);
+  await expect(title(page)).toHaveValue('Unsaved favorite title'); await expect(body(page)).toHaveText('Complete unsaved favorite body.');
+  await expect(save(page)).toBeDisabled();
+  await favoriteNavigation(page).getByRole('link', { name: /Another handbook/ }).click();
+  const discard = page.getByRole('dialog', { name: 'Unsaved changes', exact: true });
+  await discard.getByRole('button', { name: 'Keep editing', exact: true }).click();
+  await expect(title(page)).toHaveValue('Unsaved favorite title');
+  await favoriteNavigation(page).getByRole('link', { name: /Another handbook/ }).click();
+  await discard.getByRole('button', { name: 'Discard changes', exact: true }).click();
+  await expect(title(page)).toHaveValue(other.revision.title);
+  await expect(page).toHaveURL(`${demo.origin}/spaces/${other.spaceSlug}/documents/${other.slug}`);
+  expect((await readDocument(context)).data.revision.title).toBe('Newer saved favorite title');
+});
+
+test('favorites allow reader preferences, isolate accounts and disappear immediately after logout', async ({ page, context, browser }) => {
+  await login(page, 'reader'); const baseline = await readDocument(context);
+  await expect(body(page)).not.toBeEditable(); await favoriteAction(page);
+  await expect(favoriteNavigation(page).getByRole('link', { name: new RegExp(baseline.data.revision.title) })).toBeVisible();
+  expect(await readDocument(context)).toEqual(baseline);
+  const editorContext = await browser.newContext();
+  try {
+    const editor = await editorContext.newPage(); await login(editor);
+    await expect(favoriteNavigation(editor).getByRole('link', { name: new RegExp(baseline.data.revision.title) })).toHaveCount(0);
+    await editor.getByLabel('Document actions', { exact: true }).click();
+    await expect(editor.getByRole('button', { name: 'Add to favorites', exact: true })).toBeEnabled();
+    await page.getByRole('button', { name: 'Log out', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Log in', exact: true })).toBeVisible();
+    await expect(favoriteNavigation(page)).toHaveCount(0);
+    await signIn(page, 'outsider');
+    await expect(favoriteNavigation(page)).toContainText('No favorites yet.');
+    await expect(page.getByRole('navigation', { name: 'Documents', exact: true })).toHaveCount(0);
+    expect((await apiRequest(context, `/api/v1/documents/${seeded.documentId}/favorite`)).status()).toBe(404);
+  } finally { await editorContext.close(); }
+});
+
+test('favorites never retry an uncertain accepted write and recover only through a deliberate status read', async ({ page, context }) => {
+  await login(page); const baseline = await readDocument(context);
+  await title(page).fill('Draft surviving favorite response failure'); await body(page).fill('Private local work remains unsaved.');
+  let writes = 0;
+  await page.route(`**/api/v1/documents/${seeded.documentId}/favorite`, async route => {
+    if (route.request().method() !== 'PUT') return route.continue();
+    writes++; const accepted = await route.fetch(); expect(accepted.status()).toBe(200);
+    await route.fulfill({ status: 502, contentType: 'application/problem+json', body: JSON.stringify({ status: 502 }) });
+  });
+  await favoriteAction(page);
+  await expect(page.getByRole('alert')).toContainText('The favorite change was not confirmed.');
+  await expect(title(page)).toHaveValue('Draft surviving favorite response failure');
+  await expect(body(page)).toHaveText('Private local work remains unsaved.');
+  expect(await readDocument(context)).toEqual(baseline); expect(writes).toBe(1);
+  await page.getByRole('button', { name: 'Check favorite status', exact: true }).click();
+  await page.getByLabel('Document actions', { exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Remove from favorites', exact: true })).toBeEnabled();
+  expect(writes).toBe(1); expect(await readDocument(context)).toEqual(baseline);
+});
+
+test('favorites use saved titles and hide archived documents without deleting preferences or history', async ({ page, context }) => {
+  await login(page); const baseline = await readDocument(context); await favoriteAction(page);
+  await expect(favoriteNavigation(page).getByRole('link', { name: new RegExp(baseline.data.revision.title) })).toBeVisible();
+  await title(page).fill('Saved navigation title'); await save(page).click();
+  await expect(favoriteNavigation(page).getByRole('link', { name: /Saved navigation title/ })).toBeVisible();
+  const saved = await readDocument(context); expect(saved.data.currentRevisionNumber).toBe(2);
+  await page.getByLabel('Document actions', { exact: true }).click();
+  await page.getByRole('button', { name: 'Archive', exact: true }).click();
+  await expect(page.locator('.documentbar').getByRole('status')).toHaveText('Archived · revision 2');
+  await expect(favoriteNavigation(page).getByRole('link', { name: /Saved navigation title/ })).toHaveCount(0);
+  expect(await (await apiRequest(context, `/api/v1/documents/${seeded.documentId}/favorite`)).json()).toEqual({ favorited: true });
+  await page.getByLabel('Document actions', { exact: true }).click();
+  await page.getByRole('button', { name: 'Unarchive', exact: true }).click();
+  await expect(favoriteNavigation(page).getByRole('link', { name: /Saved navigation title/ })).toBeVisible();
+  expect((await readDocument(context)).data.currentRevisionNumber).toBe(2);
+});
+
+test('favorites expose loading and refresh errors, block pending navigation and remain keyboard usable on mobile', async ({ page, context }) => {
+  await demo.database.prisma.documentFavorite.deleteMany();
+  let releaseList!: () => void; const listWait = new Promise<void>(resolve => { releaseList = resolve; });
+  await page.route('**/api/v1/favorites?*', async route => { await listWait; await route.fulfill({ status: 503, contentType: 'application/problem+json', body: JSON.stringify({ status: 503 }) }); });
+  await login(page);
+  await expect(favoriteNavigation(page)).toContainText('Loading favorites');
+  // Finish document initialization before rejecting its latest list request.
+  // Otherwise a legitimate document-triggered refresh can replace the first error.
+  await page.getByLabel('Document actions', { exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Add to favorites', exact: true })).toBeEnabled();
+  await page.getByLabel('Document actions', { exact: true }).click();
+  releaseList(); await expect(favoriteNavigation(page).getByRole('alert')).toContainText('Favorites could not be loaded.');
+  await page.unroute('**/api/v1/favorites?*');
+  await favoriteNavigation(page).getByRole('button', { name: 'Refresh favorites', exact: true }).click();
+  await expect(favoriteNavigation(page)).toContainText('No favorites yet.');
+  let releaseWrite!: () => void; const writeWait = new Promise<void>(resolve => { releaseWrite = resolve; });
+  await page.route('**/api/v1/documents/*/favorite', async route => {
+    if (route.request().method() !== 'PUT') return route.continue();
+    await writeWait; await route.continue();
+  });
+  await favoriteAction(page); await expect(page.getByRole('status', { name: '' }).filter({ hasText: 'Updating favorite' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Log out', exact: true })).toBeDisabled();
+  releaseWrite();
+  const baseline = await readDocument(context);
+  await expect(favoriteNavigation(page).getByRole('link', { name: new RegExp(baseline.data.revision.title) })).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('button', { name: 'Navigation', exact: true }).click();
+  const link = favoriteNavigation(page).getByRole('link', { name: new RegExp(baseline.data.revision.title) });
+  await link.focus(); await expect(link).toBeFocused();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.getByRole('button', { name: 'Close navigation', exact: true }).click();
+  await evidence(page, 'favorites-mobile');
+});
+
+test('favorites recheck revoked access through an existing session and preserve a complete unsaved draft', async ({ page, context }) => {
+  await login(page); const baseline = await readDocument(context); await favoriteAction(page);
+  await expect(favoriteNavigation(page).getByRole('link', { name: new RegExp(baseline.data.revision.title) })).toBeVisible();
+  const before = await (await apiRequest(context, '/api/v1/favorites')).json() as operations['listFavorites']['responses'][200]['content']['application/json'];
+  await title(page).fill('Retained title after favorite access loss'); await body(page).fill('Retained body after favorite access loss.');
+  await demo.database.prisma.spaceMembership.deleteMany({ where: { spaceId: seeded.spaceId, userId: demo.accountId('editor') } });
+  await favoriteAction(page, 'Remove from favorites');
+  await expect(page.getByRole('alert')).toContainText('Access to this document is unavailable.');
+  await expect(favoriteNavigation(page)).toHaveCount(0);
+  await expect(page.getByRole('navigation', { name: 'Documents', exact: true })).toHaveCount(0);
+  await expect(title(page)).toHaveValue('Retained title after favorite access loss');
+  await expect(body(page)).toHaveText('Retained body after favorite access loss.');
+  await expect(body(page)).not.toBeEditable(); await expect(save(page)).toHaveCount(0);
+  expect((await apiRequest(context, `/api/v1/documents/${seeded.documentId}/favorite`)).status()).toBe(404);
+  expect(await (await apiRequest(context, '/api/v1/favorites')).json()).toEqual({ items: before.items.filter(item => item.spaceId !== seeded.spaceId), nextCursor: null });
+});
+
+test('favorites reject a delayed previous-account response after logout and a new login', async ({ page, context }) => {
+  await login(page); await favoriteAction(page);
+  const original = await readDocument(context);
+  await expect(favoriteNavigation(page).getByRole('link', { name: new RegExp(original.data.revision.title) })).toBeVisible();
+  let release!: () => void; const wait = new Promise<void>(resolve => { release = resolve; });
+  let captured!: () => void; const capture = new Promise<void>(resolve => { captured = resolve; });
+  let reads = 0;
+  await page.route('**/api/v1/favorites?*', async route => {
+    if (++reads !== 1) return route.continue();
+    const response = await route.fetch(); expect(response.status()).toBe(200);
+    captured(); await wait; await route.fulfill({ response });
+  });
+  try {
+    await page.reload(); await capture;
+    await expect(favoriteNavigation(page)).toContainText('Loading favorites');
+    await page.getByRole('button', { name: 'Log out', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Log in', exact: true })).toBeVisible();
+    await signIn(page, 'outsider');
+    await expect(favoriteNavigation(page)).toContainText('No favorites yet.');
+    const lateResponse = page.waitForResponse(response => response.url().includes('/api/v1/favorites?'));
+    release(); await lateResponse;
+    await expect.poll(() => reads).toBeGreaterThan(1);
+    await expect(favoriteNavigation(page).getByRole('link')).toHaveCount(0);
+    await expect(title(page)).toHaveCount(0);
+  } finally { release(); }
+});
+
 test('duplicate saved document retains a complete dirty draft, selects its known revision and guards opening the copy', async ({ page, context }) => {
   await login(page);
   const baseline = await readDocument(context);
@@ -534,7 +715,7 @@ async function confirmDiscard(page: Page) {
 }
 
 async function evidence(page: Page, name: 'editing' | 'conflict' | 'history' | 'access-loss' | 'mobile'
-  | 'organization' | 'organization-depth' | 'private-link' | 'editor-toolbar' | 'link-editor' | 'discard-changes' | 'search' | 'attachments' | 'publication' | 'public-document' | 'duplicate-mobile') {
+  | 'organization' | 'organization-depth' | 'private-link' | 'editor-toolbar' | 'link-editor' | 'discard-changes' | 'search' | 'attachments' | 'publication' | 'public-document' | 'duplicate-mobile' | 'favorites-mobile') {
   if (process.env.SCRAWL_BROWSER_EVIDENCE !== '1') return;
   const password = page.getByLabel('Password', { exact: true });
   if (await password.isVisible() && await password.inputValue() !== '') {

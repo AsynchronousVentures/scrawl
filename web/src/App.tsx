@@ -10,6 +10,7 @@ import { Editor } from './Editor';
 import { SearchDialog } from './SearchDialog';
 import { SpaceAccess } from './SpaceAccess';
 import { DuplicateDocument } from './DuplicateDocument';
+import { FavoritesNavigation, useFavorites } from './Favorites';
 import { DocumentNavigation, DocumentPath, ParentOptions, documentAncestors, initialDocument } from './DocumentOrganization';
 import { LiveSession, type LiveState } from './live';
 import type { CommentState } from './PrivateComments';
@@ -140,10 +141,13 @@ export function App() {
   const hasUnsavedWork = commentState.dirty || Boolean(retainedLiveDraft) || (liveState ? liveState.pending > 0 || liveState.localChanges && dirty : dirty);
   const dirtyRef = useRef(hasUnsavedWork); dirtyRef.current = hasUnsavedWork;
   const sharedEditingUnavailable = Boolean(base?.document.editingMode === 'live' && collaborationKnown && !collaborationEnabled);
+  const favoritesOwner = user && !accessIssue && (!owner.current || owner.current === user.id) ? user.id : null;
+  const favorites = useFavorites(favoritesOwner, base?.document.id ?? null,
+    base?.document.currentRevisionNumber ?? null, base?.document.archivedAt ?? null, unavailable);
   const mayEdit = Boolean(user && !accessIssue && collaborationKnown && !liveChecking && !liveCheckError && space?.access === 'editor' && !base?.document.archivedAt
     && (!base || base.document.editingMode === 'solo' || collaborationEnabled && liveState?.initialized)
     && (!live || liveState?.phase === 'connected' && liveState.metadata.canWrite));
-  const blocked = busy || accessBusy || creatingSpace || uploading > 0 || commentState.pending;
+  const blocked = busy || accessBusy || creatingSpace || uploading > 0 || commentState.pending || favorites.pending;
   const parentId = base?.document.parentDocumentId ?? null;
   const atNestingLimit = useMemo(() => documentAncestors(parentId, new Map(documents.map(item => [item.id, item]))).length >= 31, [parentId, documents]);
   const blockedRef = useRef(blocked); blockedRef.current = blocked;
@@ -719,6 +723,7 @@ export function App() {
 
   const accessTicket = generation.current;
   const navigation = <>
+    {favoritesOwner && <FavoritesNavigation favorites={favorites} currentId={base?.document.id ?? null} blocked={blocked} />}
     {(spaces.length > 0 || user?.role === 'administrator' && !accessIssue) && <div className="listhead space-heading">
       {spaces.length > 0 ? <label htmlFor="space">Space</label> : <span>Spaces</span>}
       {user?.role === 'administrator' && !accessIssue && <button ref={spaceTrigger} aria-haspopup="dialog" disabled={blocked || listLoading} onClick={openSpacePrompt}>New space</button>}
@@ -766,6 +771,9 @@ export function App() {
               {base && !accessIssue && <><button disabled={blocked} onClick={() => { if (historyOpen) setHistoryOpen(false); else void openHistory(); }}>History</button>
                 <details className="doc-menu"><summary ref={actionsTrigger} aria-label="Document actions">⋯</summary><div className="menu-items">
                   <button disabled={blocked} onClick={event => { event.currentTarget.closest('details')?.removeAttribute('open'); actionsTrigger.current?.focus(); void copyPrivateLink(); }}>Copy private link</button>
+                  <button disabled={blocked || favorites.stateLoading || favorites.value === null || Boolean(base.document.archivedAt && !favorites.value)} onClick={event => {
+                    event.currentTarget.closest('details')?.removeAttribute('open'); actionsTrigger.current?.focus(); void favorites.change();
+                  }}>{favorites.stateLoading ? 'Checking favorite status…' : favorites.value ? 'Remove from favorites' : 'Add to favorites'}</button>
                   {space?.access === 'editor' && <button disabled={blocked} onClick={event => { event.currentTarget.closest('details')?.removeAttribute('open'); setDuplicateRevision(base.document.revision); }}>Duplicate saved document</button>}
                   {space?.access === 'editor' && !base.document.archivedAt && <><button disabled={blocked || listLoading || Boolean(listError) || atNestingLimit} aria-describedby={atNestingLimit ? 'document-nesting-limit' : undefined} onClick={event => { event.currentTarget.closest('details')?.removeAttribute('open'); newDocument(base.document.id); }}>New child document</button>{atNestingLimit && <small id="document-nesting-limit">Nesting limit reached (32 levels).</small>}</>}
                   {space?.access === 'editor' && !conflict && <button disabled={blocked || hasUnsavedWork || Boolean(liveState?.pending)} onClick={event => { event.currentTarget.closest('details')?.removeAttribute('open'); setMoveParentId(base.document.parentDocumentId ?? ''); if (!moveNeedsCompare) setMoveError(''); setMoveOpen(true); }}>Move document</button>}
@@ -785,6 +793,9 @@ export function App() {
             {liveCheckError && !accessIssue && <button disabled={blocked} onClick={() => { setSaveError(''); setLiveRetry(value => value + 1); }}>Retry shared document</button>}
             {sharedEditingUnavailable && !accessIssue && <p className="notice" role="status">Shared editing is disabled. Showing saved revision {base?.document.currentRevisionNumber} read-only. Live changes and comments remain stored but are unavailable.</p>}
             {notice && <p className="notice" role="status">{notice}</p>}
+            {favorites.pending && <p className="notice" role="status">Updating favorite…</p>}
+            {favorites.notice && !accessIssue && <p className="notice" role="status">{favorites.notice}</p>}
+            {favorites.stateError && !accessIssue && <div className="notice" role="alert"><p>{favorites.stateError}</p><button disabled={blocked || favorites.stateLoading} onClick={() => { void favorites.read(); }}>Check favorite status</button></div>}
             {uploadError && !accessIssue && <p className="notice" role="alert">{uploadError}</p>}
             {uploadMessage && !accessIssue && <p className="notice" role="status">{uploadMessage}</p>}
             {publicationError && !accessIssue && <div className="notice" role="alert"><p>{publicationError}</p><button disabled={blocked} onClick={() => setPublicationRetry(value => value + 1)}>Retry publication status</button></div>}

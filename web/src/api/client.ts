@@ -16,6 +16,7 @@ export type MemberProfile = JsonResponse<'lookupUser', 200>;
 export type DocumentSummary = JsonResponse<'listDocuments', 200>['items'][number];
 export type RevisionSummary = JsonResponse<'listDocumentRevisions', 200>['items'][number];
 export type SearchResult = JsonResponse<'searchDocuments', 200>['items'][number];
+export type FavoriteSummary = JsonResponse<'listFavorites', 200>['items'][number];
 export type Attachment = JsonResponse<'uploadDocumentAttachment', 201>;
 export type ExportFormat = 'pdf' | 'docx';
 export type PublishingAvailability = JsonResponse<'getPublishingAvailability', 200>;
@@ -90,6 +91,19 @@ async function auth(path: 'sign-in/email' | 'sign-out', body: object) {
 export const api = {
   async collaboration() { return (await checked(client.GET('/api/v1/collaboration'))).data; },
   async me() { return (await checked(client.GET('/api/v1/me'))).data; },
+  async favorites(cursor?: string) {
+    return (await checked(client.GET('/api/v1/favorites', { params: { query: { limit: 20, ...(cursor ? { cursor } : {}) } } }))).data;
+  },
+  async favorite(id: string) {
+    const { data } = await checked(client.GET('/api/v1/documents/{id}/favorite', { params: { path: { id } } }));
+    if (typeof data.favorited !== 'boolean') throw new ApiError(0);
+    return data.favorited;
+  },
+  async setFavorite(id: string, favorited: boolean) {
+    const { data } = await checked(client.PUT('/api/v1/documents/{id}/favorite', { params: { path: { id } }, body: { favorited } }));
+    if (typeof data.favorited !== 'boolean') throw new ApiError(0);
+    return data.favorited;
+  },
   async login(email: string, password: string) { await auth('sign-in/email', { email, password }); return this.me(); },
   logout() { return auth('sign-out', {}); },
   async spaces(cursor?: string) { return (await checked(client.GET('/api/v1/spaces', {
