@@ -1,5 +1,23 @@
 # Validation
 
+## Holding handoff
+
+The maintainer requested a holding checkpoint and push to the existing draft PR #6. The holding commit contains `[skip ci]`, which GitHub [documents for push and pull-request events](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/skip-workflow-runs). This avoids spending more Actions minutes on the checkpoint. Required checks may remain pending; no skipped hosted execution is claimed as passing. No workflow/billing/security setting is disabled or changed for this handoff. The earlier unpushed notes below describe the state before the requested publication.
+
+No application implementation changed during the handoff. Latest evidence remains 101 standard checks, the preceding 178-case PostgreSQL 18 regression with final 12-case recovery verification, and browser regression 116/117 followed by the corrected test's separate 1/1 pass. The complete browser suite has not been repeated after that test-only assertion correction. Fresh retained-preview verification and saved-content integrity passed, with no reset or new revisions. Collaboration remains disabled pending its explicit activation audit and deployment-origin live checks.
+
+## Manual-only CI
+
+At the maintainer's request, `.github/workflows/ci.yml` now uses only `workflow_dispatch`. Push and pull-request triggers are removed; the PostgreSQL 18 job, permissions, concurrency, timeouts and every install/build/database/browser/API check remain unchanged. Local YAML parsing and a before/after comparison verify that only the event configuration changed. No hosted run was dispatched, and no application checks were rerun for this workflow/documentation handoff.
+
+GitHub requires the manual trigger on the default branch before dispatch is available. The change is included in draft PR #6; `main` is unchanged. After a later authorized merge, use Actions > Foundation checks > Run workflow and select the branch, or run:
+
+```sh
+gh workflow run ci.yml --repo AsynchronousVentures/scrawl --ref integration/blocknote-demo
+```
+
+This command is documented, not executed. Hosted verification remains outstanding. Billing, repository security and branch-protection settings are unchanged. See [GitHub's manual workflow documentation](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow). This supersedes the earlier automatic duplicate-run reduction described below.
+
 ## Native document-end keyboard integration
 
 The local editor now resolves Ctrl/Cmd+End and Ctrl/Cmd+Shift+End through BlockNote's public extension API and the native ProseMirror selection. BlockNote 0.55's noneditable trailing widget is outside saved content; a browser endpoint can enter it and return to the earlier caret. A numeric-only event probe reproduced this twice in three genuine two-account runs while the editor remained focused, connected and editable. The pinned `TrailingNode` implementation guards arrow navigation but does not handle these document-end shortcuts. Temporary event probes were removed; the existing peer insertion, immutable checkpoint and undo assertions remain unchanged.

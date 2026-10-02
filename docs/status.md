@@ -1,5 +1,13 @@
 # Implementation status
 
+## Holding checkpoint
+
+Development is on hold at the maintainer's request. The integration checkpoint includes PostgreSQL 18 development recovery (`a073d38`), CI duplicate-run prevention (`c9c59b6`), native document-end selection (`bd147c7`) and the corrected solo-save assertion/results (`83a0b29`). The existing draft PR is [#6](https://github.com/AsynchronousVentures/scrawl/pull/6); nothing is merged or released. The holding commit uses `[skip ci]` to preserve the exhausted Actions allowance. Hosted verification remains outstanding, not passing. Earlier references to these commits being local/unpushed describe their pre-handoff state.
+
+The actual preview remains running at [Scrawl](https://agentvm.beardie-tone.ts.net:10000/spaces/scrawl-field-guide/documents/start-here). Its retained seven documents, ten revisions and private attachment are preserved. Collaboration stays disabled; no enrollment or new live fixture was performed. Next work is the remaining ADR 0003 activation audit and authenticated live verification through the actual preview origin. Resume only when requested, using the walkthrough and issues #5/#11.
+
+The maintainer also requested manual-only Actions. The integration workflow now contains only `workflow_dispatch`, preserving all check commands. Manual dispatch becomes available after this change reaches the default branch through a later authorized merge. No Actions run was triggered for the holding push; hosted checks remain unverified.
+
 ## Integration branch, current
 
 The maintainer expanded this session to a cohesive BlockNote demo. Work is on `integration/blocknote-demo`, not merged or released. The original remote `main` contains completed P4 `445bae2`. [The integration backlog](integration-backlog.md) tracks issues and dependencies.

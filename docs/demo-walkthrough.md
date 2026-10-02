@@ -210,6 +210,8 @@ Reset removes synthetic rows and the credential/workspace/result/export manifest
 
 ## Resume implementation
 
+Development is now on hold at the maintainer's request, with the current checkpoint prepared for draft PR #6. No new shared fixture or enrollment was performed. After an explicit resume, start with the current holding section in status and the recorded validation results; older checkpoint paragraphs below are historical. Finish the ADR 0003 activation audit and verify authenticated live editing through the existing preview origin before enabling collaboration. Keep retained content/history intact, use PostgreSQL 18 only and do not start hosted CI merely to repeat already observed local checks while the Actions allowance is exhausted.
+
 Read status, validation, the integration issues and accepted ADRs. Continue on `integration/blocknote-demo` and keep draft PR #6 unmerged. The next substantial work is isolated durable collaboration/comments under [ADR 0003](adr/0003-collaboration-checkpoints.md), with real storage/permission/reconnect/undo gates before enabling it. No paid AI calls, new provider accounts or generic extension framework are needed. Keep the existing demo runnable and preserve its history/private files.
 
 The optional runtime and supplied client are integrated and browser tested, with the current results in validation. The retained preview keeps collaboration disabled and its documents remain solo. Continue the solo walkthrough there; experimental enabled-fixture behavior does not claim that this preview supports multiplayer editing. Finish the remaining activation gates before enabling or enrolling retained synthetic documents.
