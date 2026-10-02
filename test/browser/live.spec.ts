@@ -1136,9 +1136,11 @@ test('native reaction failures stay visible, preserve accepted threads and requi
   await expect(title(page)).toHaveValue(original.revision.title); await enroll(page);
   await body(page).press('ControlOrMeta+Home'); await body(page).press('Shift+End');
   const selection = await nativeSelectionEvidence(page);
+  console.info('Native reaction comment selection before click:', JSON.stringify(selection));
   try { await page.getByRole('button', { name: 'Add comment', exact: true }).click(); }
   catch (error) {
-    console.error('Native reaction comment selection:', JSON.stringify({ before: selection, after: await nativeSelectionEvidence(page) }));
+    const after = await nativeSelectionEvidence(page).catch(() => ({ unavailable: true }));
+    console.error('Native reaction comment selection:', JSON.stringify({ before: selection, after }));
     throw error;
   }
   await page.locator('.bn-comment-editor [contenteditable="true"]').fill('Synthetic thread for native reaction recovery.');
