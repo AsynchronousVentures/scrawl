@@ -105,6 +105,8 @@ Dry-run checks every source snapshot without writing it. Apply writes an exclusi
 
 `ATTACHMENT_STORAGE_DIR` names the private application-owned byte directory, defaulting to `var/private-attachments`. Keep it outside frontend/static roots and preserve it with the database. Files are immutable and retained by revision history; discarding a draft or resetting synthetic rows does not wipe a directory. Process-crash orphan inspection and cleanup remain explicit operator work.
 
+On the trusted host, `npm run content:check` checks saved heads, all native revisions/derived text, attachment references and registered file sizes/hashes using the configured database and private storage. It prints only aggregate counts/categories and exits nonzero on integrity errors. It never repairs or deletes data and does not inspect authentication records. Run it against the matching database/storage pair. This is not a backup or complete live-room audit; unregistered files, live state/comments and operating-system permissions are outside its scope. See [validation](VALIDATION.md#read-only-saved-content-and-private-storage-check) for commands and actual results.
+
 Publishing uses `PUBLIC_PUBLISHING_ENABLED=false` by default. To exercise it on a local demo, deliberately set the value to `true` in that demo's private configuration and restart; each selected revision still needs administrator approval. Global disabling pauses public reads, while unpublish or archive revokes a grant. Re-enabling can resume a still-valid grant, so it must not be described as permanent revocation. This does not authorize public exposure of the development application.
 
 ## Local accounts and access

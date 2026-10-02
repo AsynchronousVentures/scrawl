@@ -6,7 +6,7 @@ import test from 'node:test';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { request as httpRequest, type IncomingHttpHeaders } from 'node:http';
-import { mkdtemp, readdir, readFile, rm, stat } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -19,6 +19,7 @@ import { createOperator } from '../../src/core/identity/operator.js';
 import { HttpProblem } from '../../src/http/problems.js';
 import { buildApp } from '../../src/app.js';
 import { richDemoContent } from '../../scripts/demo-content.js';
+import { checkContent } from '../../scripts/content-check.js';
 
 function object(value: unknown): Record<string, unknown> {
   assert(value && typeof value === 'object' && !Array.isArray(value), 'Expected response object');
@@ -446,6 +447,97 @@ test('private document attachments retain immutable bytes and revision ownership
     const unarchive = await editor.send('POST', `/api/v1/documents/${main.id}/unarchive`, {}, { 'if-match': main.etag });
     assert.equal(unarchive.status, 200); main.etag = string(unarchive.headers.etag);
     assert.deepEqual(await database.prisma.documentRevision.findMany({ orderBy: { id: 'asc' } }), revisions);
+  });
+
+  await t.test('read-only content verification accepts native rich history and independent copies without exposing private values', async () => {
+    // Cross both keyset boundaries with actual authorized writes and registered bytes.
+    for (let index = 0; index < 101; index++) {
+      const fixture = await document(`Synthetic paginated integrity ${index}`);
+      assert.equal((await editor.upload(fixture.id, 'Synthetic integrity batch.txt', textBytes)).status, 201);
+    }
+    const before = await snapshots();
+    const result = await checkContent(database.pool, storageRoot);
+    assert.equal(result.ok, true);
+    assert(result.revisions > 100); assert(result.attachments > 100);
+    assert.equal(result.documents, await database.prisma.document.count());
+    assert.equal(result.revisions, await database.prisma.documentRevision.count());
+    assert.equal(result.attachments, await database.prisma.attachment.count());
+    const output = JSON.stringify(result);
+    for (const privateValue of [storageRoot, file.id, file.name, selectedCopy.title, owner.email, password]) {
+      assert(!output.includes(privateValue));
+    }
+    assert.deepEqual(await snapshots(), before);
+  });
+
+  await t.test('content verification detects missing, truncated, corrupt and symlinked private bytes without repairing them', async () => {
+    const path = join(storageRoot, file.id), original = await readFile(path);
+    const before = await snapshots();
+    try {
+      await rm(path);
+      assert.equal((await checkContent(database.pool, storageRoot)).issues.missingFile, 1);
+      const command = spawnSync(process.execPath, ['--import', 'tsx', 'scripts/content-check.ts'], {
+        env: { ...process.env, DATABASE_URL: target.href, ATTACHMENT_STORAGE_DIR: storageRoot }, encoding: 'utf8', timeout: 15_000,
+      });
+      assert.equal(command.status, 1);
+      assert.equal(object(JSON.parse(command.stdout) as unknown).ok, false);
+      assert.equal(object(object(JSON.parse(command.stdout) as unknown).issues).missingFile, 1);
+      assert(!command.stdout.includes(file.name)); assert(!command.stdout.includes(target.href));
+      assert.equal(command.stderr, '');
+      await writeFile(path, original.subarray(1), { mode: 0o600 });
+      assert.equal((await checkContent(database.pool, storageRoot)).issues.sizeMismatch, 1);
+      const corrupt = Buffer.from(original); corrupt[0] = corrupt[0]! ^ 1;
+      await writeFile(path, corrupt);
+      const corrupted = await checkContent(database.pool, storageRoot);
+      assert.equal(corrupted.ok, false); assert.equal(corrupted.issues.hashMismatch, 1);
+      assert.deepEqual(await readFile(path), corrupt);
+      await rm(path); await symlink(join(storageRoot, image.id), path);
+      const linked = await checkContent(database.pool, storageRoot);
+      assert.equal(linked.ok, false); assert.equal(linked.issues.invalidFile, 1);
+      assert.deepEqual(await readFile(join(storageRoot, image.id)), (await reader.send('GET', image.url)).bytes);
+    } finally { await rm(path, { force: true }); await writeFile(path, original, { mode: 0o600 }); }
+    assert.deepEqual(await snapshots(), before);
+    assert.equal((await checkContent(database.pool, storageRoot)).ok, true);
+  });
+
+  await t.test('content verification keeps one read-only snapshot across concurrent committed content changes', async () => {
+    const lock = await database.pool.connect(); let pending: ReturnType<typeof checkContent> | undefined;
+    const before = await snapshots();
+    try {
+      await lock.query('BEGIN'); await lock.query('LOCK TABLE "Attachment" IN ACCESS EXCLUSIVE MODE');
+      const pid = (await lock.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]!.pid;
+      pending = checkContent(database.pool, storageRoot);
+      let waiting = false;
+      for (let attempt = 0; attempt < 100; attempt++) {
+        const blocked = await database.pool.query<{ waiting: boolean }>(`SELECT EXISTS(
+          SELECT 1 FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))
+            AND query LIKE '%FROM "DocumentRevision" r WHERE%') AS waiting`, [pid]);
+        if (blocked.rows[0]!.waiting) { waiting = true; break; }
+        await delay(10);
+      }
+      assert.equal(waiting, true, 'Revision scan must be blocked after its head snapshot');
+      // Corruption is confined to this disposable synthetic schema and restored below.
+      await lock.query('UPDATE "DocumentRevision" SET "plainText" = $2 WHERE "id" = $1::uuid',
+        [selectedCopy.id, 'Synthetic inconsistent derived text']);
+      await lock.query('COMMIT');
+      assert.equal((await pending).ok, true, 'A committed change must not alter the existing scan snapshot');
+      const changed = await checkContent(database.pool, storageRoot);
+      assert.equal(changed.ok, false); assert.equal(changed.issues.plainTextMismatch, 1);
+      await database.pool.query('UPDATE "DocumentRevision" SET "body" = $2::jsonb WHERE "id" = $1::uuid',
+        [selectedCopy.id, JSON.stringify(content('Synthetic missing ledger entry', {
+          name: 'Synthetic absent file.txt', url: `/api/v1/attachments/${randomUUID()}/content`,
+        }).document)]);
+      assert.equal((await checkContent(database.pool, storageRoot)).issues.attachmentReferencesMismatch, 1);
+      await database.pool.query('UPDATE "DocumentRevision" SET "body" = $2::jsonb WHERE "id" = $1::uuid',
+        [selectedCopy.id, JSON.stringify([{ type: 'unsupported-synthetic-block' }])]);
+      assert.equal((await checkContent(database.pool, storageRoot)).issues.invalidContent, 1);
+    } finally {
+      await lock.query('ROLLBACK'); lock.release();
+      if (pending) await Promise.allSettled([pending]);
+      await database.pool.query('UPDATE "DocumentRevision" SET "plainText" = $2, "body" = $3::jsonb WHERE "id" = $1::uuid',
+        [selectedCopy.id, selectedCopy.plainText, JSON.stringify(selectedCopy.body)]);
+    }
+    assert.deepEqual(await snapshots(), before);
+    assert.equal((await checkContent(database.pool, storageRoot)).ok, true);
   });
 
   await t.test('upload rechecks membership under locks, and HTTP revocation blocks existing sessions without changing private bytes', async () => {

@@ -273,3 +273,12 @@ The connected search dialog now includes "Search in" with all accessible spaces 
 Section-link navigation is shown in this [running-application screenshot](https://uwvqig7mu5.ufs.sh/f/tJOw1mn9psOEt3l9S9xn9psOEgi62D1HuWBIdXRlvM5wjaer). It contains synthetic content; the account area is masked.
 
 Saved-copy work is pushed in `ec18d44` on the integration branch and running at the existing URL. [Actual duplication dialog](https://uwvqig7mu5.ufs.sh/f/tJOw1mn9psOEALRsfrJQwKgCvrG4dfBPDk3UtpaVSO2ny9Aj), account area masked. Fresh role and keyboard-cancellation verification passes without changing retained documents. Restart the existing service with `systemctl --user restart scrawl-integration-demo.service`, wait for `/health/ready` to return 200, then use the existing `demo-verify.ts` command. This follow-up requires no migration or reset. The full updated browser suite finishes 108/109, including all seven copy workflows, with one experimental native Add comment setup timeout. Eight fresh-session repetitions pass after a diagnostic-only correction; this is not a demonstrated fix. Hosted PR verification passes all 109 browser cases; the push finishes 108/109 with a native Add comment setup timeout in the shared save-shortcut case. Retained collaboration stays disabled.
+
+Operators can check the current preview's saved content and private storage without changing data:
+
+```sh
+cd /home/dev/t3/projects/scrawl/artifacts/demo18
+node --import ../../node_modules/tsx/dist/loader.mjs ../../scripts/content-check.ts --demo
+```
+
+The observed scan reports `ok: true`, 7 documents, 10 revisions and one attachment, zero integrity errors. Output contains only aggregate counts/categories; missing or inconsistent data returns exit status 1. This command does not check live state/comments or unregistered files and is not a backup. No migration or restart is required for this host-only addition.
